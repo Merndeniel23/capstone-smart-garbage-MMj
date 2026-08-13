@@ -13,7 +13,8 @@ import {
   ShieldAlert, 
   Leaf, 
   CheckCircle,
-  HelpCircle
+  HelpCircle,
+  Loader2
 } from 'lucide-react';
 
 interface RegistrationBarangay {
@@ -61,6 +62,10 @@ const [forgotStep, setForgotStep] = useState<'email' | 'reset'>('email');
 const [forgotOtp, setForgotOtp] = useState('');
 const [newPassword, setNewPassword] = useState('');
 const [confirmNewPassword, setConfirmNewPassword] = useState('');
+
+const [forgotLoading, setForgotLoading] = useState(false);
+const [resetLoading, setResetLoading] = useState(false);
+const [resendCountdown, setResendCountdown] = useState(0);
 
   const filteredRegistrationPuroks = useMemo(() => {
     const barangayId = Number(regBarangayId);
@@ -121,6 +126,36 @@ const [confirmNewPassword, setConfirmNewPassword] = useState('');
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (resendCountdown <= 0) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setResendCountdown((current) =>
+        current > 0 ? current - 1 : 0,
+      );
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [resendCountdown]);
+
+  const resetForgotPasswordState = () => {
+    setShowForgotModal(false);
+    setForgotStep('email');
+    setForgotPasswordEmail('');
+    setForgotOtp('');
+    setNewPassword('');
+    setConfirmNewPassword('');
+    setForgotLoading(false);
+    setResetLoading(false);
+    setResendCountdown(0);
+    setError('');
+    setSuccessMessage('');
+  };
 
   const validateEmail = (emailStr: string) => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr);
@@ -330,9 +365,7 @@ const [confirmNewPassword, setConfirmNewPassword] = useState('');
       setError('Cannot connect to the server.');
     }
   };
-const handleForgotPasswordSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-
+const sendForgotPasswordOtp = async () => {
   setError('');
   setSuccessMessage('');
 
@@ -340,98 +373,158 @@ const handleForgotPasswordSubmit = async (e: React.FormEvent) => {
 
   if (!email) {
     setError('Please enter your email.');
-    return;
+    return false;
   }
 
   if (!validateEmail(email)) {
     setError('Please enter a valid email address.');
-    return;
+    return false;
   }
+
+  setForgotLoading(true);
 
   try {
     const response = await fetch(
-      'http://localhost:3001/api/auth/forgot-password',
+      '/api/auth/forgot-password',
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ email }),
-      }
+      },
     );
 
-    const data = await response.json();
+    const data = await response
+      .json()
+      .catch(() => ({}));
 
     if (!response.ok) {
-      setError(data.message || 'Unable to send OTP.');
-      return;
+      setError(
+        data.message || 'Unable to send OTP.',
+      );
+      return false;
     }
 
-    setSuccessMessage('OTP has been sent to your email.');
+    setSuccessMessage(
+      data.message ||
+        'If the account exists, an OTP has been sent.',
+    );
+
     setForgotStep('reset');
+    setResendCountdown(60);
+    return true;
   } catch (err) {
     console.error(err);
     setError('Cannot connect to the server.');
+    return false;
+  } finally {
+    setForgotLoading(false);
   }
 };
 
-const handleResetPasswordSubmit = async (e: React.FormEvent) => {
+const handleForgotPasswordSubmit = async (
+  e: React.FormEvent,
+) => {
   e.preventDefault();
+  await sendForgotPasswordOtp();
+};
 
-  setError("");
-  setSuccessMessage("");
-
-  if (!forgotOtp.trim() || !newPassword || !confirmNewPassword) {
-    setError("Please fill in the OTP and password fields.");
+const handleResendOtp = async () => {
+  if (forgotLoading || resendCountdown > 0) {
     return;
   }
 
-  if (newPassword.length < 6) {
-    setError("New password must be at least 6 characters.");
+  await sendForgotPasswordOtp();
+};
+
+const handleResetPasswordSubmit = async (
+  e: React.FormEvent,
+) => {
+  e.preventDefault();
+
+  setError('');
+  setSuccessMessage('');
+
+  const normalizedEmail =
+    forgotPasswordEmail.trim().toLowerCase();
+
+  if (!/^\d{6}$/.test(forgotOtp.trim())) {
+    setError('Please enter a valid 6-digit OTP.');
+    return;
+  }
+
+  if (!newPassword || !confirmNewPassword) {
+    setError(
+      'Please fill in both password fields.',
+    );
+    return;
+  }
+
+  if (newPassword.length < 8) {
+    setError(
+      'New password must be at least 8 characters.',
+    );
     return;
   }
 
   if (newPassword !== confirmNewPassword) {
-    setError("New passwords do not match.");
+    setError('New passwords do not match.');
     return;
   }
 
+  setResetLoading(true);
+
   try {
     const response = await fetch(
-      "http://localhost:3001/api/auth/reset-password",
+      '/api/auth/reset-password',
       {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          email: forgotPasswordEmail.trim(),
+          email: normalizedEmail,
           otp: forgotOtp.trim(),
           newPassword,
         }),
-      }
+      },
     );
 
-    const data = await response.json();
+    const data = await response
+      .json()
+      .catch(() => ({}));
 
     if (!response.ok) {
-      setError(data.message || "Unable to reset password.");
+      setError(
+        data.message ||
+          'Unable to reset password.',
+      );
       return;
     }
 
+    setLoginEmail(normalizedEmail);
+    setForgotOtp('');
+    setNewPassword('');
+    setConfirmNewPassword('');
+
     setSuccessMessage(
-      "Password changed successfully. You may now sign in."
+      data.message ||
+        'Password changed successfully. You may now sign in.',
     );
 
-    setShowForgotModal(false);
-    setForgotStep("email");
-    setForgotPasswordEmail("");
-    setForgotOtp("");
-    setNewPassword("");
-    setConfirmNewPassword("");
+    window.setTimeout(() => {
+      resetForgotPasswordState();
+      setActiveTab('login');
+      setSuccessMessage(
+        'Password changed successfully. You may now sign in.',
+      );
+    }, 1200);
   } catch (err) {
     console.error(err);
-    setError("Cannot connect to the server.");
+    setError('Cannot connect to the server.');
+  } finally {
+    setResetLoading(false);
   }
 };
 
@@ -575,7 +668,19 @@ const handleResetPasswordSubmit = async (e: React.FormEvent) => {
                 </label>
                 <button
                   type="button"
-                  onClick={() => setShowForgotModal(true)}
+                  onClick={() => {
+                    setShowForgotModal(true);
+                    setForgotStep('email');
+                    setForgotPasswordEmail(
+                      loginEmail.trim().toLowerCase(),
+                    );
+                    setForgotOtp('');
+                    setNewPassword('');
+                    setConfirmNewPassword('');
+                    setResendCountdown(0);
+                    setError('');
+                    setSuccessMessage('');
+                  }}
                   className="text-[11px] font-bold text-emerald-700 hover:underline cursor-pointer"
                 >
                   Forgot Password?
@@ -870,21 +975,20 @@ const handleResetPasswordSubmit = async (e: React.FormEvent) => {
                 <div className="flex gap-2.5 pt-1">
                   <button
                     type="button"
-                    onClick={() => {
-                      setShowForgotModal(false);
-                      setForgotPasswordEmail('');
-                      setError('');
-                      setSuccessMessage('');
-                    }}
+                    onClick={resetForgotPasswordState}
                     className="flex-1 py-2.5 border border-stone-200 rounded-xl text-[10px] font-extrabold text-stone-500 hover:bg-stone-50 transition-colors uppercase tracking-wider"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-[10px] font-extrabold transition-colors uppercase tracking-wider border-none cursor-pointer"
+                    disabled={forgotLoading}
+                    className="flex flex-1 items-center justify-center gap-2 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-[10px] font-extrabold transition-colors uppercase tracking-wider border-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Send OTP
+                    {forgotLoading && (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    )}
+                    {forgotLoading ? 'Sending...' : 'Send OTP'}
                   </button>
                 </div>
               </form>
@@ -901,10 +1005,32 @@ const handleResetPasswordSubmit = async (e: React.FormEvent) => {
                   className="w-full px-4 py-3 text-center tracking-[0.35em] bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-sm font-bold text-stone-800"
                 />
 
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-[10px] font-semibold text-stone-500">
+                    OTP expires after 10 minutes.
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={handleResendOtp}
+                    disabled={
+                      forgotLoading ||
+                      resendCountdown > 0
+                    }
+                    className="text-[10px] font-extrabold text-emerald-700 hover:underline disabled:cursor-not-allowed disabled:text-stone-400 disabled:no-underline"
+                  >
+                    {forgotLoading
+                      ? 'Sending...'
+                      : resendCountdown > 0
+                        ? `Resend in ${resendCountdown}s`
+                        : 'Resend OTP'}
+                  </button>
+                </div>
+
                 <input
                   type={showPassword ? 'text' : 'password'}
                   required
-                  minLength={6}
+                  minLength={8}
                   placeholder="New password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
@@ -914,7 +1040,7 @@ const handleResetPasswordSubmit = async (e: React.FormEvent) => {
                 <input
                   type={showPassword ? 'text' : 'password'}
                   required
-                  minLength={6}
+                  minLength={8}
                   placeholder="Confirm new password"
                   value={confirmNewPassword}
                   onChange={(e) => setConfirmNewPassword(e.target.value)}
@@ -937,6 +1063,7 @@ const handleResetPasswordSubmit = async (e: React.FormEvent) => {
                       setForgotOtp('');
                       setNewPassword('');
                       setConfirmNewPassword('');
+                      setResendCountdown(0);
                       setError('');
                       setSuccessMessage('');
                     }}
@@ -946,9 +1073,15 @@ const handleResetPasswordSubmit = async (e: React.FormEvent) => {
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-[10px] font-extrabold transition-colors uppercase tracking-wider border-none cursor-pointer"
+                    disabled={resetLoading}
+                    className="flex flex-1 items-center justify-center gap-2 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-[10px] font-extrabold transition-colors uppercase tracking-wider border-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Change Password
+                    {resetLoading && (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    )}
+                    {resetLoading
+                      ? 'Updating...'
+                      : 'Change Password'}
                   </button>
                 </div>
               </form>

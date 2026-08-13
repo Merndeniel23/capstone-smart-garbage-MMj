@@ -638,6 +638,202 @@ router.get(
   },
 );
 
+
+router.get(
+  "/analytics",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    try {
+      if (!requireBarangayCaptain(req, res)) return;
+
+      const userId = parsePositiveInteger(req.user?.id);
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required.",
+        });
+      }
+
+      const [viewerRows]: any = await db.query(
+        `
+        SELECT id, role, barangay_id
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+        `,
+        [userId],
+      );
+
+      const viewer = viewerRows[0];
+
+      if (!viewer) {
+        return res.status(401).json({
+          success: false,
+          message: "Administrator account was not found.",
+        });
+      }
+
+      const isSuperAdmin = viewer.role === "super_admin";
+      const barangayId = parsePositiveInteger(viewer.barangay_id);
+
+      if (!isSuperAdmin && !barangayId) {
+        return res.status(400).json({
+          success: false,
+          message: "The Barangay Captain account has no assigned barangay.",
+        });
+      }
+
+      const userFilter = isSuperAdmin ? "" : "AND u.barangay_id = ?";
+      const complaintFilter = isSuperAdmin ? "" : "AND p.barangay_id = ?";
+      const binFilter = isSuperAdmin ? "" : "AND p.barangay_id = ?";
+      const collectionFilter = isSuperAdmin ? "" : "AND p.barangay_id = ?";
+
+      const userParams = isSuperAdmin ? [] : [barangayId];
+      const complaintParams = isSuperAdmin ? [] : [barangayId];
+      const binParams = isSuperAdmin ? [] : [barangayId];
+      const collectionParams = isSuperAdmin ? [] : [barangayId];
+
+      const results = await Promise.allSettled([
+        db.query(
+          `
+          SELECT u.role, COUNT(*) AS total
+          FROM users u
+          WHERE u.role IN ('resident', 'collector', 'purok_leader', 'admin')
+            ${userFilter}
+          GROUP BY u.role
+          `,
+          userParams,
+        ),
+        db.query(
+          `
+          SELECT
+            DATE_FORMAT(c.created_at, '%Y-%m') AS month_key,
+            DATE_FORMAT(c.created_at, '%b %Y') AS month_label,
+            COUNT(*) AS total
+          FROM complaints c
+          LEFT JOIN puroks p ON p.id = c.purok_id
+          WHERE c.created_at >= DATE_SUB(CURDATE(), INTERVAL 11 MONTH)
+            ${complaintFilter}
+          GROUP BY
+            DATE_FORMAT(c.created_at, '%Y-%m'),
+            DATE_FORMAT(c.created_at, '%b %Y')
+          ORDER BY month_key ASC
+          `,
+          complaintParams,
+        ),
+        db.query(
+          `
+          SELECT
+            DATE_FORMAT(u.created_at, '%Y-%m') AS month_key,
+            DATE_FORMAT(u.created_at, '%b %Y') AS month_label,
+            COUNT(*) AS total
+          FROM users u
+          WHERE u.created_at >= DATE_SUB(CURDATE(), INTERVAL 11 MONTH)
+            ${userFilter}
+          GROUP BY
+            DATE_FORMAT(u.created_at, '%Y-%m'),
+            DATE_FORMAT(u.created_at, '%b %Y')
+          ORDER BY month_key ASC
+          `,
+          userParams,
+        ),
+        db.query(
+          `
+          SELECT gb.current_status AS status, COUNT(*) AS total
+          FROM garbage_bins gb
+          LEFT JOIN puroks p ON p.id = gb.purok_id
+          WHERE 1 = 1
+            ${binFilter}
+          GROUP BY gb.current_status
+          ORDER BY gb.current_status ASC
+          `,
+          binParams,
+        ),
+        db.query(
+          `
+          SELECT
+            DATE_FORMAT(cr.requested_at, '%Y-%m') AS month_key,
+            DATE_FORMAT(cr.requested_at, '%b %Y') AS month_label,
+            COUNT(*) AS total,
+            SUM(cr.status = 'completed') AS completed
+          FROM collection_requests cr
+          INNER JOIN garbage_bins gb ON gb.id = cr.bin_id
+          LEFT JOIN puroks p ON p.id = gb.purok_id
+          WHERE cr.requested_at >= DATE_SUB(CURDATE(), INTERVAL 11 MONTH)
+            ${collectionFilter}
+          GROUP BY
+            DATE_FORMAT(cr.requested_at, '%Y-%m'),
+            DATE_FORMAT(cr.requested_at, '%b %Y')
+          ORDER BY month_key ASC
+          `,
+          collectionParams,
+        ),
+        db.query(
+          `
+          SELECT c.status, COUNT(*) AS total
+          FROM complaints c
+          LEFT JOIN puroks p ON p.id = c.purok_id
+          WHERE 1 = 1
+            ${complaintFilter}
+          GROUP BY c.status
+          ORDER BY c.status ASC
+          `,
+          complaintParams,
+        ),
+      ]);
+
+      const sourceNames = [
+        "usersByRole",
+        "complaintsPerMonth",
+        "registrationsPerMonth",
+        "binsByStatus",
+        "collectionsPerMonth",
+        "complaintsByStatus",
+      ];
+
+      const analytics: Record<string, any[]> = {
+        usersByRole: [],
+        complaintsPerMonth: [],
+        registrationsPerMonth: [],
+        binsByStatus: [],
+        collectionsPerMonth: [],
+        complaintsByStatus: [],
+      };
+
+      const unavailableSources: string[] = [];
+
+      results.forEach((result, index) => {
+        const key = sourceNames[index];
+
+        if (result.status === "fulfilled") {
+          const rows: any = result.value[0];
+          analytics[key] = Array.isArray(rows) ? rows : [];
+        } else {
+          unavailableSources.push(key);
+          console.error(`Analytics source failed: ${key}`, result.reason);
+        }
+      });
+
+      return res.json({
+        success: true,
+        generatedAt: new Date().toISOString(),
+        scope: isSuperAdmin ? "municipality" : "barangay",
+        barangayId: isSuperAdmin ? null : barangayId,
+        analytics,
+        unavailableSources,
+      });
+    } catch (error) {
+      console.error("Admin analytics error:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Unable to load analytics.",
+      });
+    }
+  },
+);
+
 router.get("/users", requireAuth, async (req: AuthRequest, res) => {
   try {
     if (!requireBarangayCaptain(req, res)) return;
@@ -1016,6 +1212,77 @@ router.post("/barangay-captains", requireAuth, async (req: AuthRequest, res) => 
     });
   }
 });
+router.delete(
+  "/users/:id",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    try {
+      if (!requireBarangayCaptain(req, res)) return;
 
+      const userId = Number(req.params.id);
+
+      if (!Number.isInteger(userId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid user ID.",
+        });
+      }
+
+      if (req.user?.id === userId) {
+        return res.status(400).json({
+          success: false,
+          message: "You cannot delete your own account.",
+        });
+      }
+
+      const [rows]: any = await db.query(
+        `
+        SELECT id, role, full_name
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+        `,
+        [userId],
+      );
+
+      if (!rows.length) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found.",
+        });
+      }
+
+      if (
+        rows[0].role === "admin" ||
+        rows[0].role === "super_admin"
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: "Administrator accounts cannot be deleted.",
+        });
+      }
+
+      await db.execute(
+        `
+        DELETE FROM users
+        WHERE id = ?
+        `,
+        [userId],
+      );
+
+      return res.json({
+        success: true,
+        message: "User deleted successfully.",
+      });
+    } catch (error) {
+      console.error("Delete user error:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Unable to delete user.",
+      });
+    }
+  },
+);
 
 export default router;

@@ -6,6 +6,7 @@ import {
   MapPin,
   MessageSquareWarning,
   Navigation,
+  LocateFixed,
   Package,
   RefreshCw,
   ShieldCheck,
@@ -15,6 +16,7 @@ import {
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -82,7 +84,9 @@ type DashboardBin = GarbageBin & {
 function getToken(): string {
   return (
     localStorage.getItem("token") ||
+    sessionStorage.getItem("token") ||
     localStorage.getItem("authToken") ||
+    sessionStorage.getItem("authToken") ||
     ""
   );
 }
@@ -220,6 +224,110 @@ export default function CollectorDashboard({
     setSuccessMessage,
   ] = useState("");
 
+  const [tracking, setTracking] =
+    useState(
+      () =>
+        localStorage.getItem(
+          "sg_collector_location_sharing",
+        ) === "true",
+    );
+
+  const [locationStatus, setLocationStatus] =
+    useState("Location sharing is off.");
+
+  const [lastLocationUpdate, setLastLocationUpdate] =
+    useState<string | null>(null);
+
+  const watchIdRef =
+    useRef<number | null>(null);
+
+  const lastSentAtRef =
+    useRef(0);
+
+  const sendCollectorLocation = async (
+    position: GeolocationPosition,
+  ) => {
+    const now = Date.now();
+
+    if (now - lastSentAtRef.current < 15000) {
+      return;
+    }
+
+    lastSentAtRef.current = now;
+
+    const { latitude, longitude, accuracy, heading, speed } =
+      position.coords;
+
+    try {
+      await apiRequest(
+        "/api/collector-locations/me",
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            latitude,
+            longitude,
+            accuracyMeters: accuracy,
+            headingDegrees: heading,
+            speedMps: speed,
+            isOnDuty: true,
+          }),
+        },
+      );
+
+      const updatedAt = new Date().toISOString();
+      setLastLocationUpdate(updatedAt);
+      setLocationStatus("Live location is being shared.");
+    } catch (error) {
+      setLocationStatus(
+        error instanceof Error
+          ? error.message
+          : "Unable to send live location.",
+      );
+    }
+  };
+
+  const startLocationTracking = () => {
+    if (!("geolocation" in navigator)) {
+      setLocationStatus(
+        "This browser does not support GPS location.",
+      );
+      return;
+    }
+
+    localStorage.setItem(
+      "sg_collector_location_sharing",
+      "true",
+    );
+
+    setTracking(true);
+    setLocationStatus(
+      "Live location sharing is on. It will stay active while you use other collector features.",
+    );
+
+    window.dispatchEvent(
+      new Event(
+        "collector-location-sharing-change",
+      ),
+    );
+  };
+
+  const stopLocationTracking = async () => {
+    localStorage.removeItem(
+      "sg_collector_location_sharing",
+    );
+
+    setTracking(false);
+    setLocationStatus(
+      "Location sharing is off.",
+    );
+
+    window.dispatchEvent(
+      new Event(
+        "collector-location-sharing-change",
+      ),
+    );
+  };
+
   const loadData = async () => {
     setLoading(true);
     setErrorMessage("");
@@ -275,6 +383,51 @@ export default function CollectorDashboard({
 
   useEffect(() => {
     loadData();
+  }, []);
+
+  useEffect(() => {
+    const onLocationUpdate = (
+      event: Event,
+    ) => {
+      const customEvent =
+        event as CustomEvent<{
+          accuracy?: number;
+          timestamp?: number;
+        }>;
+
+      setTracking(true);
+      setLastLocationUpdate(
+        new Date(
+          customEvent.detail?.timestamp ||
+            Date.now(),
+        ).toISOString(),
+      );
+
+      const accuracy =
+        Number(
+          customEvent.detail?.accuracy,
+        );
+
+      setLocationStatus(
+        Number.isFinite(accuracy)
+          ? `Live location is being shared. Accuracy: about ${Math.round(
+              accuracy,
+            )} meters.`
+          : "Live location is being shared.",
+      );
+    };
+
+    window.addEventListener(
+      "collector-location-update",
+      onLocationUpdate,
+    );
+
+    return () => {
+      window.removeEventListener(
+        "collector-location-update",
+        onLocationUpdate,
+      );
+    };
   }, []);
 
   const activeRequestByBin =
@@ -622,6 +775,61 @@ export default function CollectorDashboard({
           {errorMessage}
         </div>
       )}
+
+      <section className="rounded-3xl border border-emerald-100 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <div className={`rounded-2xl p-3 ${
+              tracking
+                ? "bg-emerald-100 text-emerald-700"
+                : "bg-slate-100 text-slate-500"
+            }`}>
+              <LocateFixed className={`h-6 w-6 ${
+                tracking ? "animate-pulse" : ""
+              }`} />
+            </div>
+
+            <div>
+              <h2 className="font-black text-slate-900">
+                Collector Live Location
+              </h2>
+
+              <p className="mt-1 text-sm text-slate-600">
+                {locationStatus}
+              </p>
+
+              <p className="mt-1 text-xs text-slate-400">
+                Only the Barangay Captain, Municipal Administrator,
+                and Purok Leader can view this location.
+              </p>
+
+              {lastLocationUpdate && (
+                <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-emerald-700">
+                  Last sent: {formatDate(lastLocationUpdate)}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() =>
+              tracking
+                ? void stopLocationTracking()
+                : startLocationTracking()
+            }
+            className={`rounded-xl px-5 py-3 text-sm font-black text-white ${
+              tracking
+                ? "bg-rose-600 hover:bg-rose-700"
+                : "bg-emerald-700 hover:bg-emerald-800"
+            }`}
+          >
+            {tracking
+              ? "Stop Sharing Location"
+              : "Start Sharing Location"}
+          </button>
+        </div>
+      </section>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         {[

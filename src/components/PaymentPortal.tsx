@@ -1,819 +1,1319 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  CreditCard, 
-  History, 
-  CheckCircle, 
-  Clock, 
-  AlertCircle, 
-  TrendingUp, 
-  ShieldCheck, 
-  PlusCircle, 
-  Search, 
-  Filter, 
-  Check, 
-  X, 
-  Sparkles, 
-  Database,
-  ArrowDownToLine,
-  ThumbsDown,
-  UserCheck,
-  AlertOctagon
-} from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
-import { useAppState } from '../context/AppStateContext';
-
-export interface PaymentRecord {
-  id: string;
-  date: string;
-  billingPeriod: string;
-  amount: number;
-  method: string;
-  referenceNo: string;
-  category: 'Weekly Fee' | 'Special Heavy Trash' | 'Hazardous Disposal';
-  status: 'Paid' | 'Pending Verification' | 'Flagged';
-  householdName: string;
-  purok: string;
-  householdId?: string;
-}
-
-const INITIAL_PAYMENTS: PaymentRecord[] = [];
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import {
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  Clock3,
+  CreditCard,
+  Eye,
+  FileImage,
+  Loader2,
+  RefreshCw,
+  Search,
+  Send,
+  ShieldCheck,
+  Upload,
+  X,
+} from "lucide-react";
 
 interface PaymentPortalProps {
-  role?: 'household' | 'collector' | 'leader' | 'admin';
+  role?:
+    | "household"
+    | "collector"
+    | "leader"
+    | "admin"
+    | "super_admin";
 }
 
-export default function PaymentPortal({ role = 'household' }: PaymentPortalProps) {
-  const { currentUser, userProfile } = useAppState();
-  const activeUser = currentUser || userProfile;
-  const displayName = activeUser?.name || 'Household';
-  const displayZone = activeUser?.communalZone || 'Purok 4';
-  
-  const getPurokName = (zoneStr: string) => {
-    if (!zoneStr) return 'Purok 4';
-    const match = zoneStr.match(/Purok\s*\d+/i);
-    return match ? match[0] : zoneStr;
-  };
-  const userPurok = getPurokName(displayZone);
+type PaymentStatus =
+  | "pending_leader_verification"
+  | "rejected_by_leader"
+  | "pending_remittance"
+  | "pending_admin_confirmation"
+  | "discrepancy"
+  | "completed";
 
-  const [payments, setPayments] = useState<PaymentRecord[]>([]);
-  const [showPayModal, setShowPayModal] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<'Weekly Fee' | 'Special Heavy Trash' | 'Hazardous Disposal'>('Weekly Fee');
-  const [paymentMethod, setPaymentMethod] = useState('G-Cash');
-  const [referenceNo, setReferenceNo] = useState('');
-  const [amountInput, setAmountInput] = useState('5');
-  const [notification, setNotification] = useState('');
-  
-  // Auditing filters & search
-  const [purokFilter, setPurokFilter] = useState('All');
-  const [statusFilter, setStatusFilter] = useState('All');
-  const [searchQuery, setSearchQuery] = useState('');
+interface PaymentRecord {
+  id: number;
+  transaction_code: string;
+  resident_name: string;
+  resident_email: string;
+  barangay_name: string;
+  purok_name: string;
+  category:
+    | "weekly_fee"
+    | "special_heavy_trash"
+    | "hazardous_disposal";
+  billing_period: string;
+  amount: number | string;
+  payment_method:
+    | "gcash"
+    | "maya"
+    | "over_the_counter";
+  payment_reference: string;
+  receipt_proof: string;
+  status: PaymentStatus;
+  leader_name?: string | null;
+  leader_verified_at?: string | null;
+  leader_remarks?: string | null;
+  remittance_reference?: string | null;
+  remittance_proof?: string | null;
+  remitted_at?: string | null;
+  admin_name?: string | null;
+  admin_confirmed_at?: string | null;
+  admin_remarks?: string | null;
+  discrepancy_amount?: number | string | null;
+  created_at: string;
+}
 
-  const isNameMatch = (paymentName: string, userName: string) => {
-    if (!paymentName || !userName) return false;
-    const pName = paymentName.toLowerCase().trim();
-    const uName = userName.toLowerCase().trim();
-    if (pName === uName) return true;
-    
-    // Clean common words to compare core names
-    const clean = (s: string) => s.replace(/\b(family|household|residence|house|home|purok\s*\d*)\b/gi, '').replace(/[^a-z0-9]/gi, '').trim();
-    const pClean = clean(pName);
-    const uClean = clean(uName);
-    
-    if (pClean && uClean) {
-      return pClean === uClean || pClean.includes(uClean) || uClean.includes(pClean);
-    }
-    return false;
-  };
+const CATEGORY_OPTIONS = [
+  {
+    value: "weekly_fee",
+    label: "Weekly Purok Maintenance Fee",
+    amount: 5,
+  },
+  {
+    value: "special_heavy_trash",
+    label: "Special Heavy Trash Pickup",
+    amount: 80,
+  },
+  {
+    value: "hazardous_disposal",
+    label: "Hazardous / E-Waste Disposal",
+    amount: 120,
+  },
+] as const;
 
-  const isUserPayment = (p: PaymentRecord) => {
-    if (!p) return false;
-    if (p.householdId && activeUser?.householdId) {
-      return p.householdId === activeUser.householdId;
-    }
-    return isNameMatch(p.householdName, displayName);
-  };
+function token() {
+  return (
+    localStorage.getItem("token") ||
+    localStorage.getItem("authToken") ||
+    sessionStorage.getItem("token") ||
+    sessionStorage.getItem("authToken") ||
+    ""
+  );
+}
 
-  const migratePayments = (rawList: any[]): PaymentRecord[] => {
-    return rawList.map((p: any) => {
-      let updated = { ...p };
-      if (p.category === 'Monthly Fee') {
-        updated.category = 'Weekly Fee';
+async function apiRequest(
+  endpoint: string,
+  options: RequestInit = {},
+) {
+  const response = await fetch(
+    `/api/payments${endpoint}`,
+    {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token()}`,
+        ...(options.headers || {}),
+      },
+    },
+  );
+
+  const data = await response
+    .json()
+    .catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      data.message || "Request failed.",
+    );
+  }
+
+  return data;
+}
+
+function imageToDataUrl(
+  file: File,
+): Promise<string> {
+  return new Promise(
+    (resolve, reject) => {
+      if (
+        !file.type.startsWith("image/")
+      ) {
+        reject(
+          new Error(
+            "Please select an image file.",
+          ),
+        );
+        return;
       }
-      if (updated.category === 'Weekly Fee' && updated.amount === 30) {
-        updated.amount = 5;
+
+      if (file.size > 3_500_000) {
+        reject(
+          new Error(
+            "Image must be smaller than 3.5 MB.",
+          ),
+        );
+        return;
       }
-      return updated;
-    });
+
+      const reader = new FileReader();
+
+      reader.onload = () =>
+        resolve(String(reader.result));
+
+      reader.onerror = () =>
+        reject(
+          new Error(
+            "Unable to read the image.",
+          ),
+        );
+
+      reader.readAsDataURL(file);
+    },
+  );
+}
+
+function categoryLabel(
+  category: PaymentRecord["category"],
+) {
+  return (
+    CATEGORY_OPTIONS.find(
+      (item) =>
+        item.value === category,
+    )?.label || category
+  );
+}
+
+function methodLabel(
+  method: PaymentRecord["payment_method"],
+) {
+  if (method === "gcash") {
+    return "GCash";
+  }
+
+  if (method === "maya") {
+    return "Maya";
+  }
+
+  return "Over-the-Counter";
+}
+
+function statusLabel(
+  status: PaymentStatus,
+) {
+  const labels: Record<
+    PaymentStatus,
+    string
+  > = {
+    pending_leader_verification:
+      "Pending Leader Verification",
+    rejected_by_leader:
+      "Rejected by Leader",
+    pending_remittance:
+      "Pending Remittance",
+    pending_admin_confirmation:
+      "Pending Admin Confirmation",
+    discrepancy:
+      "Remittance Discrepancy",
+    completed: "Completed",
   };
 
-  // Synchronized state fetcher
-  const loadPayments = () => {
-    const saved = localStorage.getItem('sg_payment_history');
-    const version = localStorage.getItem('sg_payment_version_v3');
-    
-    if (saved && version === 'v3') {
-      try {
-        const parsed = JSON.parse(saved);
-        const migrated = migratePayments(parsed);
-        if (JSON.stringify(parsed) !== JSON.stringify(migrated)) {
-          localStorage.setItem('sg_payment_history', JSON.stringify(migrated));
-        }
-        setPayments(migrated);
-      } catch (e) {
-        setPayments([]);
-      }
-    } else {
-      // Force clean start with NO transactions first for the user as requested
-      localStorage.setItem('sg_payment_history', JSON.stringify([]));
-      localStorage.setItem('sg_payment_version_v3', 'v3');
-      setPayments([]);
+  return labels[status];
+}
+
+function statusClasses(
+  status: PaymentStatus,
+) {
+  if (status === "completed") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+
+  if (
+    status === "rejected_by_leader" ||
+    status === "discrepancy"
+  ) {
+    return "border-rose-200 bg-rose-50 text-rose-700";
+  }
+
+  return "border-amber-200 bg-amber-50 text-amber-700";
+}
+
+export default function PaymentPortal({
+  role = "household",
+}: PaymentPortalProps) {
+  const [payments, setPayments] =
+    useState<PaymentRecord[]>([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [submitting, setSubmitting] =
+    useState(false);
+
+  const [message, setMessage] =
+    useState<{
+      type: "success" | "error";
+      text: string;
+    } | null>(null);
+
+  const [search, setSearch] =
+    useState("");
+
+  const [showPaymentForm, setShowPaymentForm] =
+    useState(false);
+
+  const [showImage, setShowImage] =
+    useState<string | null>(null);
+
+  const [category, setCategory] =
+    useState<
+      PaymentRecord["category"]
+    >("weekly_fee");
+
+  const [amount, setAmount] =
+    useState("5");
+
+  const [billingPeriod, setBillingPeriod] =
+    useState(
+      new Date().toLocaleDateString(
+        "en-US",
+        {
+          month: "long",
+          year: "numeric",
+        },
+      ),
+    );
+
+  const [method, setMethod] =
+    useState<
+      PaymentRecord["payment_method"]
+    >("gcash");
+
+  const [reference, setReference] =
+    useState("");
+
+  const [receiptProof, setReceiptProof] =
+    useState("");
+
+  const [reviewRemarks, setReviewRemarks] =
+    useState("");
+
+  const [remittanceReference, setRemittanceReference] =
+    useState("");
+
+  const [remittanceProof, setRemittanceProof] =
+    useState("");
+
+  const [discrepancyAmount, setDiscrepancyAmount] =
+    useState("");
+
+  const isResident = role === "household";
+  const isLeader = role === "leader";
+  const isAdmin =
+    role === "admin" ||
+    role === "super_admin";
+
+  const loadPayments = async () => {
+    setLoading(true);
+
+    try {
+      const data =
+        await apiRequest("/");
+
+      setPayments(
+        Array.isArray(data.payments)
+          ? data.payments
+          : [],
+      );
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Unable to load payments.",
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadPayments();
-    // Watch for cross-storage shifts
-    const handleStorageChange = () => {
-      loadPayments();
-    };
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
-  }, []);
+    void loadPayments();
+  }, [role]);
 
-  const handlePay = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!referenceNo.trim()) {
-      alert('Please enter your transaction reference number.');
+  const filteredPayments =
+    useMemo(() => {
+      const query =
+        search.trim().toLowerCase();
+
+      if (!query) {
+        return payments;
+      }
+
+      return payments.filter(
+        (payment) =>
+          [
+            payment.transaction_code,
+            payment.resident_name,
+            payment.payment_reference,
+            payment.purok_name,
+            statusLabel(payment.status),
+          ].some((value) =>
+            String(value || "")
+              .toLowerCase()
+              .includes(query),
+          ),
+      );
+    }, [payments, search]);
+
+  const completedTotal = payments
+    .filter(
+      (payment) =>
+        payment.status === "completed",
+    )
+    .reduce(
+      (total, payment) =>
+        total + Number(payment.amount),
+      0,
+    );
+
+  const pendingTotal = payments
+    .filter(
+      (payment) =>
+        payment.status !== "completed" &&
+        payment.status !==
+          "rejected_by_leader",
+    )
+    .reduce(
+      (total, payment) =>
+        total + Number(payment.amount),
+      0,
+    );
+
+  const resetForm = () => {
+    setReference("");
+    setReceiptProof("");
+    setReviewRemarks("");
+    setRemittanceReference("");
+    setRemittanceProof("");
+    setDiscrepancyAmount("");
+  };
+
+  const submitPayment = async (
+    event: React.FormEvent,
+  ) => {
+    event.preventDefault();
+
+    setSubmitting(true);
+    setMessage(null);
+
+    try {
+      const data = await apiRequest(
+        "/",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            category,
+            billingPeriod,
+            amount: Number(amount),
+            paymentMethod: method,
+            paymentReference:
+              reference.trim(),
+            receiptProof,
+          }),
+        },
+      );
+
+      setMessage({
+        type: "success",
+        text:
+          data.message ||
+          "Payment submitted successfully.",
+      });
+
+      setShowPaymentForm(false);
+      resetForm();
+      await loadPayments();
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Unable to submit payment.",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const leaderReview = async (
+    paymentId: number,
+    action: "approve" | "reject",
+  ) => {
+    setSubmitting(true);
+    setMessage(null);
+
+    try {
+      const data = await apiRequest(
+        `/${paymentId}/leader-review`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            action,
+            remarks:
+              reviewRemarks.trim(),
+          }),
+        },
+      );
+
+      setMessage({
+        type: "success",
+        text: data.message,
+      });
+
+      setReviewRemarks("");
+      await loadPayments();
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Unable to review payment.",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const submitRemittance = async (
+    paymentId: number,
+  ) => {
+    setSubmitting(true);
+    setMessage(null);
+
+    try {
+      const data = await apiRequest(
+        `/${paymentId}/remit`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            remittanceReference:
+              remittanceReference.trim(),
+            remittanceProof,
+          }),
+        },
+      );
+
+      setMessage({
+        type: "success",
+        text: data.message,
+      });
+
+      setRemittanceReference("");
+      setRemittanceProof("");
+      await loadPayments();
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Unable to submit remittance.",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const adminReview = async (
+    paymentId: number,
+    action:
+      | "confirm"
+      | "discrepancy",
+  ) => {
+    setSubmitting(true);
+    setMessage(null);
+
+    try {
+      const data = await apiRequest(
+        `/${paymentId}/admin-review`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            action,
+            remarks:
+              reviewRemarks.trim(),
+            discrepancyAmount:
+              Number(
+                discrepancyAmount,
+              ),
+          }),
+        },
+      );
+
+      setMessage({
+        type: "success",
+        text: data.message,
+      });
+
+      setReviewRemarks("");
+      setDiscrepancyAmount("");
+      await loadPayments();
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Unable to review remittance.",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleImage = async (
+    file: File | undefined,
+    target:
+      | "receipt"
+      | "remittance",
+  ) => {
+    if (!file) {
       return;
     }
 
-    const newPayment: PaymentRecord = {
-      id: `TXN-${Math.floor(1000000 + Math.random() * 9000000)}`,
-      date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-      billingPeriod: selectedCategory === 'Weekly Fee' ? 'May 2026' : 'Ad-hoc Request',
-      amount: Number(amountInput) || 150,
-      method: paymentMethod,
-      referenceNo: referenceNo.trim(),
-      category: selectedCategory,
-      status: 'Pending Verification',
-      householdName: displayName,
-      purok: userPurok,
-      householdId: activeUser?.householdId
-    };
+    try {
+      const dataUrl =
+        await imageToDataUrl(file);
 
-    const updated = [newPayment, ...payments];
-    setPayments(updated);
-    localStorage.setItem('sg_payment_history', JSON.stringify(updated));
-
-    setShowPayModal(false);
-    setReferenceNo('');
-    setNotification('Payment slip submitted successfully! Awaiting Leader or Admin verification.');
-    setTimeout(() => setNotification(''), 4000);
-  };
-
-  // Change action for Review Desk
-  const updatePaymentStatus = (id: string, newStatus: 'Paid' | 'Flagged') => {
-    const updated = payments.map(p => {
-      if (p.id === id) {
-        return { ...p, status: newStatus };
+      if (target === "receipt") {
+        setReceiptProof(dataUrl);
+      } else {
+        setRemittanceProof(dataUrl);
       }
-      return p;
-    });
-    setPayments(updated);
-    localStorage.setItem('sg_payment_history', JSON.stringify(updated));
-
-    // Also toggle the Member compliance status in MembersList
-    const targetTxn = payments.find(p => p.id === id);
-    if (targetTxn) {
-      const savedMembers = localStorage.getItem('sg_purok_members');
-      if (savedMembers) {
-        try {
-          const mList = JSON.parse(savedMembers);
-          const updatedM = mList.map((m: any) => {
-            const matchesName = (m.name || '').toLowerCase().includes((targetTxn.householdName || '').toLowerCase()) ||
-                                (targetTxn.householdName || '').toLowerCase().includes((m.name || '').toLowerCase());
-            if (matchesName) {
-              return { ...m, status: newStatus === 'Paid' ? 'Compliant' : 'Warning' };
-            }
-            return m;
-          });
-          localStorage.setItem('sg_purok_members', JSON.stringify(updatedM));
-        } catch (e) {
-          console.error(e);
-        }
-      }
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Unable to load image.",
+      });
     }
-
-    setNotification(`Transaction ${id} is successfully updated to [${newStatus}]!`);
-    setTimeout(() => setNotification(''), 4000);
   };
-
-  // Simulation of dynamic resident payment to showcase live reactive feedback
-  const handleSimulatePayment = () => {
-    const names = ['Delacruz Household', 'Daro Family', 'Deatras Residence', 'Estrella Family', 'Salvador Household'];
-    const randomName = names[Math.floor(Math.random() * names.length)];
-    const randomPurok = `Purok ${Math.floor(1 + Math.random() * 4)}`;
-    const randomCategory = Math.random() > 0.6 ? 'Special Heavy Trash' : 'Weekly Fee';
-    const randomAmount = randomCategory === 'Weekly Fee' ? 5 : 80;
-    
-    const simulated: PaymentRecord = {
-      id: `TXN-${Math.floor(1000000 + Math.random() * 9000000)}`,
-      date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-      billingPeriod: randomCategory === 'Weekly Fee' ? 'May 2026' : 'Ad-hoc Request',
-      amount: randomAmount,
-      method: Math.random() > 0.5 ? 'G-Cash' : 'PayMaya',
-      referenceNo: `SIM-${Math.floor(1000000000 + Math.random() * 9000000000)}`,
-      category: randomCategory as any,
-      status: 'Pending Verification',
-      householdName: randomName,
-      purok: randomPurok,
-    };
-
-    const updated = [simulated, ...payments];
-    setPayments(updated);
-    localStorage.setItem('sg_payment_history', JSON.stringify(updated));
-    setNotification(`🔔 Simulated incoming payment check from ${randomName} (${randomPurok})!`);
-    setTimeout(() => setNotification(''), 4000);
-  };
-
-  const isCurrentMonthPaid = payments.some(
-    (p) => p && isUserPayment(p) && p.billingPeriod === 'May 2026' && p.status === 'Paid'
-  );
-  
-  const isCurrentMonthPending = payments.some(
-    (p) => p && isUserPayment(p) && p.billingPeriod === 'May 2026' && p.status === 'Pending Verification'
-  );
-
-  const getStatusText = () => {
-    if (isCurrentMonthPaid) return 'Paid';
-    if (isCurrentMonthPending) return 'Pending Verification';
-    return 'Unpaid';
-  };
-
-  // Audit Metrics Calculations
-  const verifiedTotal = payments.filter(p => p && p.status === 'Paid').reduce((acc, curr) => acc + (curr.amount || 0), 0);
-  const pendingCount = payments.filter(p => p && p.status === 'Pending Verification').length;
-  const flaggedCount = payments.filter(p => p && p.status === 'Flagged').length;
-
-  // Filter computation
-  const filteredPayments = payments.filter(p => {
-    if (!p) return false;
-    const matchesPurok = purokFilter === 'All' || p.purok === purokFilter;
-    const matchesStatus = statusFilter === 'All' || p.status === statusFilter;
-    const matchesSearch = (p.householdName || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          (p.id || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          (p.referenceNo || '').toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesPurok && matchesStatus && matchesSearch;
-  });
-
-  const handleResetHistory = () => {
-    localStorage.setItem('sg_payment_history', JSON.stringify([]));
-    setPayments([]);
-    setNotification('Ledger Database Reset: All payment logs cleared successfully.');
-    setTimeout(() => setNotification(''), 4000);
-  };
-
-  const isAuditor = role === 'leader' || role === 'admin';
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500 pb-20 md:pb-0">
-      
-      {/* HEADER SECTION */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="space-y-6 pb-20 md:pb-0">
+      <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <div className="flex items-center gap-2 text-emerald-600 font-extrabold text-[10px] uppercase tracking-[0.2em] mb-1">
-            <Database className="w-3.5 h-3.5" />
-            <span>{isAuditor ? 'Bookkeeper Audit Console' : 'Resident Sinking Ledger'}</span>
-          </div>
-          <h1 className="text-3.5xl font-black text-slate-9 tracking-tight leading-none">
-            {isAuditor ? (role === 'admin' ? 'Financial Control Center' : 'Sector 4 Payment Hub') : 'My Bills & Payments'}
+          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">
+            Accountable Collection Workflow
+          </span>
+
+          <h1 className="mt-1 text-3xl font-black text-slate-900">
+            {isResident
+              ? "My Payments"
+              : isLeader
+                ? "Purok Payment Verification"
+                : "Barangay Remittance Control"}
           </h1>
-          <p className="text-slate-500 text-xs mt-1">
-            {isAuditor 
-              ? 'Authorize GCash/PayMaya reference claims, inspect billing coverage schedules, and certify Purok compliance status.' 
-              : 'Keep track of local environment conservation fees, query payment slips, and confirm clearance compliance status.'}
+
+          <p className="mt-1 text-xs font-medium text-slate-500">
+            Every payment records who submitted, verified, remitted, and confirmed it.
           </p>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
-          {isAuditor && (
-            <button 
-              onClick={handleSimulatePayment}
-              className="px-5 py-3.5 bg-indigo-50 font-black text-xs text-indigo-700 uppercase tracking-wider rounded-2xl hover:bg-indigo-100 flex items-center gap-2 transition-all cursor-pointer shadow-sm border border-indigo-200"
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              void loadPayments()
+            }
+            disabled={loading}
+            className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-black text-slate-700"
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${
+                loading
+                  ? "animate-spin"
+                  : ""
+              }`}
+            />
+            Refresh
+          </button>
+
+          {isResident && (
+            <button
+              type="button"
+              onClick={() =>
+                setShowPaymentForm(true)
+              }
+              className="flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-xs font-black uppercase text-white"
             >
-              <Sparkles className="w-4 h-4 text-indigo-500 animate-pulse" />
-              <span>Simulate Citizen Payment →</span>
+              <CreditCard className="h-4 w-4" />
+              Submit Payment
             </button>
           )}
-
-          <button 
-            onClick={handleResetHistory}
-            className="px-5 py-3.5 bg-rose-50 font-black text-xs text-rose-700 uppercase tracking-wider rounded-2xl hover:bg-rose-100 flex items-center gap-2 transition-all cursor-pointer shadow-sm border border-rose-200"
-            title="Wipe payments for testing a blank state"
-          >
-            <span>✕ Clear All Receipts</span>
-          </button>
         </div>
       </header>
 
-      {notification && (
-        <div className="bg-emerald-50 border border-emerald-250 text-emerald-800 px-6 py-4 rounded-[1.8rem] flex items-center gap-3 shadow-md animate-bounce">
-          <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0" />
-          <span className="text-xs font-black">{notification}</span>
+      {message && (
+        <div
+          className={`rounded-2xl border px-5 py-4 text-sm font-bold ${
+            message.type === "success"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+              : "border-rose-200 bg-rose-50 text-rose-700"
+          }`}
+        >
+          {message.text}
         </div>
       )}
 
-      {/* RENDER VIEW ACCORDING TO USER ROLE */}
-      {!isAuditor ? (
-        /* RESIDENT / HOUSEHOLD VIEW */
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            
-            {/* Status Settle Card */}
-            <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col justify-between md:col-span-2 relative overflow-hidden">
-              <div>
-                <div className="flex justify-between items-start mb-6">
-                  <div>
-                    <span className="text-slate-400 text-[9px] font-black uppercase tracking-widest block mb-1">CURRENT HOUSEHOLD STATUS</span>
-                    <p className="text-2xl font-black text-slate-800">Weekly Environment Fee</p>
-                  </div>
-                  <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
-                    getStatusText() === 'Paid' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' :
-                    getStatusText() === 'Pending Verification' ? 'bg-amber-50 text-amber-600 border-amber-200' :
-                    'bg-rose-50 text-rose-500 border-rose-200'
-                  }`}>
-                    {getStatusText() === 'Paid' ? 'Verified (Paid)' : getStatusText() === 'Pending Verification' ? 'Under Audit' : 'Unpaid'}
-                  </span>
-                </div>
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <Metric
+          label="Transactions"
+          value={String(payments.length)}
+        />
+        <Metric
+          label="Completed Total"
+          value={`₱${completedTotal.toFixed(2)}`}
+        />
+        <Metric
+          label="Pending Accountability"
+          value={`₱${pendingTotal.toFixed(2)}`}
+        />
+      </section>
 
-                <div className="flex items-baseline gap-2 mb-6">
-                  <span className="text-4xl font-black text-slate-900">₱5.00</span>
-                  <span className="text-xs text-slate-400 font-semibold">/ weekly community rate</span>
-                </div>
+      <div className="relative">
+        <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <input
+          value={search}
+          onChange={(event) =>
+            setSearch(event.target.value)
+          }
+          placeholder="Search transaction, resident, reference, purok, or status"
+          className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-11 pr-4 text-sm outline-none focus:border-emerald-500"
+        />
+      </div>
 
-                <p className="text-xs text-slate-500 leading-relaxed mb-6">
-                  Environmental compliance fees support waste collection trucks, local trash-bin optimization audits, and community recycling systems. Kindly declare reference numbers before billing periods terminate.
-                </p>
-              </div>
-
-              {getStatusText() === 'Unpaid' ? (
-                <button
-                  onClick={() => {
-                    setAmountInput('5');
-                    setSelectedCategory('Weekly Fee');
-                    setShowPayModal(true);
-                  }}
-                  className="w-full py-4 bg-emerald-500 hover:bg-emerald-600 active:scale-95 transition-all text-white font-extrabold text-xs uppercase tracking-widest rounded-2xl shadow-lg shadow-emerald-500/10 flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <CreditCard className="w-4 h-4" />
-                  Settle Weekly Environment Fee
-                </button>
-              ) : getStatusText() === 'Pending Verification' ? (
-                <div className="bg-amber-50/50 text-amber-800 p-5 rounded-2xl text-xs font-bold flex items-center gap-3 border border-amber-100/85">
-                  <Clock className="w-5 h-5 text-amber-600 shrink-0 animate-spin-slow" />
-                  <div>
-                    <h5 className="font-extrabold text-amber-900">Payment receipt is currently awaiting Leader Audit</h5>
-                    <p className="text-[10px] text-amber-700 font-medium mt-1">Status will auto-confirm once your Purok Leader authorizes the G-Cash ledger reference.</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="bg-emerald-50/50 text-emerald-800 p-5 rounded-2xl text-xs font-bold flex items-center gap-3 border border-emerald-110">
-                  <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
-                  <div>
-                    <h5 className="font-extrabold text-emerald-950">You are certified Environmental-Paid & Compliant!</h5>
-                    <p className="text-[10px] text-emerald-700 mt-1">Your May 2026 credentials are verified and locked. Barangay clearance endorsement is active.</p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Total Payments Side Wallet */}
-            <div className="bg-gradient-to-br from-[#059669] to-emerald-800 text-white p-6 rounded-[2.5rem] shadow-lg flex flex-col justify-between relative overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-tr from-emerald-800/50 to-transparent pointer-events-none" />
-              <div className="relative z-10 space-y-6">
-                <div>
-                  <p className="text-white/70 text-[10px] font-black uppercase tracking-widest mb-1">CERTIFIED CONTRIBUTIONS</p>
-                  <p className="text-4xl font-black">
-                    ₱{payments.filter(p => p && isUserPayment(p) && p.status === 'Paid').reduce((acc, curr) => acc + (curr.amount || 0), 0)}.00
-                  </p>
-                </div>
-                
-                <div className="p-4 bg-white/10 rounded-2xl border border-white/10 text-xs leading-relaxed">
-                  <p className="font-bold mb-1">Compliance Status Verification</p>
-                  <p className="text-white/80">Certified <strong className="text-white">Eco-Compliant</strong>. Perfect calendar dump history has maintained your record safely.</p>
-                </div>
-              </div>
-              <div className="text-[10px] text-emerald-200/80 font-black tracking-widest mt-6 relative z-10 flex items-center justify-between">
-                <span>BARANGAY CENTRAL LEDGER</span>
-                <TrendingUp className="w-4 h-4 text-emerald-200" />
-              </div>
-            </div>
-          </div>
-
-          {/* Citizen Log Table */}
-          <section className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <h2 className="font-black text-slate-800 flex items-center gap-2">
-                <History className="w-5 h-5 text-slate-600" />
-                Receipt Tracking Ledger
-              </h2>
-              <button 
-                onClick={() => {
-                  setSelectedCategory('Special Heavy Trash');
-                  setAmountInput('80');
-                  setShowPayModal(true);
-                }} 
-                className="text-xs bg-slate-900 hover:bg-slate-800 active:scale-95 text-white font-black px-4 py-2.5 rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
-              >
-                <PlusCircle className="w-4 h-4" />
-                Declare Ad-hoc Fee
-              </button>
-            </div>
-
-            {/* Visual horizontal scroll indicator guide for mobile */}
-            <div className="flex items-center justify-between px-6 py-2.5 bg-emerald-50/40 border-b border-slate-100/60 lg:hidden">
-              <span className="text-[10px] font-extrabold text-emerald-700 tracking-wide uppercase flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
-                Ledger View Details
-              </span>
-              <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1 animate-pulse-slide">
-                ← Swipe horizontally to see full row data →
-              </span>
-            </div>
-
-            <div className="overflow-x-auto pb-2 scrollbar-visible">
-              <table className="w-full text-left min-w-[700px]">
-                <thead>
-                  <tr className="text-[9px] font-black text-slate-400 border-b border-slate-100 uppercase tracking-widest bg-slate-50">
-                    <th className="px-6 py-4">Transaction ID</th>
-                    <th className="px-6 py-4">Settle Area</th>
-                    <th className="px-6 py-4">Reference No</th>
-                    <th className="px-6 py-4">Payment Sump</th>
-                    <th className="px-6 py-4">Mode & Date</th>
-                    <th className="px-6 py-4 text-right">Verification</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-xs">
-                  {payments.filter(p => p && isUserPayment(p)).map((p) => (
-                    <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="px-6 py-5 font-mono text-slate-450 font-black">{p.id}</td>
-                      <td className="px-6 py-5">
-                        <div>
-                          <p className="font-extrabold text-slate-800">{p.category}</p>
-                          <p className="text-[10px] text-slate-400 font-extrabold uppercase mt-0.5">{p.billingPeriod}</p>
-                        </div>
-                      </td>
-                      <td className="px-6 py-5">
-                        <span className="font-mono text-xs bg-slate-50 border border-slate-200 text-slate-600 px-2 py-1 rounded-md font-bold">
-                          {p.referenceNo}
-                        </span>
-                      </td>
-                      <td className="px-6 py-5">
-                        <p className="font-black text-slate-800">₱{p.amount}.00</p>
-                      </td>
-                      <td className="px-6 py-5">
-                        <div>
-                          <p className="font-bold text-slate-700">{p.method}</p>
-                          <p className="text-[10px] text-slate-400 font-medium">{p.date}</p>
-                        </div>
-                      </td>
-                      <td className="px-6 py-5 text-right">
-                        <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border ${
-                          p.status === 'Paid' ? 'bg-emerald-50 text-emerald-600 border-emerald-150' :
-                          p.status === 'Pending Verification' ? 'bg-amber-50 text-amber-600 border-amber-150' :
-                          'bg-rose-50 text-rose-500 border-rose-150'
-                        }`}>
-                          {p.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                  {payments.filter(p => p && isUserPayment(p)).length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="text-center py-12 text-slate-400 font-bold text-xs uppercase">No receipts logged yet.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </>
+      {loading ? (
+        <div className="flex min-h-[300px] items-center justify-center rounded-[2rem] border bg-white">
+          <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
+        </div>
       ) : (
-        /* AUDITOR / LEADER & ADMIN WORKSPACE */
-        <>
-          {/* Executive Metrics Overview */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            
-            <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col justify-between">
-              <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center mb-4">
-                <CheckCircle className="w-5 h-5" />
-              </div>
-              <div>
-                <p className="text-3xl font-black text-slate-900 leading-none">₱{verifiedTotal}.00</p>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Verified Settle Sump</p>
-              </div>
-            </div>
+        <div className="space-y-4">
+          {filteredPayments.map(
+            (payment) => (
+              <article
+                key={payment.id}
+                className="rounded-[2rem] border border-slate-100 bg-white p-5 shadow-sm"
+              >
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-black text-slate-900">
+                        {payment.transaction_code}
+                      </h3>
 
-            <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col justify-between">
-              <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center mb-4 animate-pulse">
-                <Clock className="w-5 h-5" />
-              </div>
-              <div>
-                <p className="text-3xl font-black text-slate-900 leading-none">{pendingCount}</p>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Receipt Audit Queue</p>
-              </div>
-            </div>
+                      <span
+                        className={`rounded-full border px-2.5 py-1 text-[9px] font-black uppercase ${statusClasses(
+                          payment.status,
+                        )}`}
+                      >
+                        {statusLabel(
+                          payment.status,
+                        )}
+                      </span>
+                    </div>
 
-            <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col justify-between">
-              <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center mb-4">
-                <AlertOctagon className="w-5 h-5" />
-              </div>
-              <div>
-                <p className="text-3xl font-black text-slate-900 leading-none">{flaggedCount}</p>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Flagged Receipts</p>
-              </div>
-            </div>
+                    <p className="mt-2 text-sm font-black text-slate-800">
+                      {payment.resident_name}
+                    </p>
 
-            <div className="bg-slate-900 text-white p-6 rounded-[2.5rem] shadow-sm flex flex-col justify-between">
-              <div className="w-10 h-10 rounded-xl bg-white/10 text-emerald-400 flex items-center justify-center mb-4">
-                <TrendingUp className="w-5 h-5" />
-              </div>
-              <div>
-                <p className="text-3xl font-black text-white leading-none">
-                  {payments.length > 0 ? Math.round((payments.filter(p => p.status === 'Paid').length / payments.length) * 100) : 100}%
-                </p>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Collection Clearance %</p>
-              </div>
-            </div>
-          </div>
+                    <p className="text-xs text-slate-500">
+                      {payment.purok_name}, {payment.barangay_name}
+                    </p>
+                  </div>
 
-          {/* Integrated Ledger Audit Queue */}
-          <section className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden">
-            
-            {/* Control Bar Filters */}
-            <div className="p-6 border-b border-slate-100 bg-slate-50 flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center">
-              <div>
-                <h3 className="font-black text-slate-800 flex items-center gap-2">
-                  <Database className="w-5 h-5 text-emerald-600" />
-                  Barangay Payments Verifier Space
-                </h3>
-                <p className="text-[10px] text-slate-400 mt-0.5 font-bold uppercase">Showing {filteredPayments.length} of {payments.length} declared entries</p>
-              </div>
+                  <div className="text-left lg:text-right">
+                    <p className="text-2xl font-black text-slate-900">
+                      ₱{Number(payment.amount).toFixed(2)}
+                    </p>
 
-              {/* Filtering Controls */}
-              <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto">
-                
-                {/* Search query box */}
-                <div className="relative flex-1 md:w-60 min-w-[200px]">
-                  <Search className="absolute left-3 w-4 h-4 text-slate-400 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    placeholder="Search Household or TxID..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                    <p className="text-[10px] font-black uppercase text-slate-400">
+                      {methodLabel(
+                        payment.payment_method,
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <Info
+                    label="Category"
+                    value={categoryLabel(
+                      payment.category,
+                    )}
+                  />
+                  <Info
+                    label="Billing Period"
+                    value={
+                      payment.billing_period
+                    }
+                  />
+                  <Info
+                    label="Payment Reference"
+                    value={
+                      payment.payment_reference
+                    }
                   />
                 </div>
 
-                {/* Purok filter dropdown */}
-                <select
-                  value={purokFilter}
-                  onChange={(e) => setPurokFilter(e.target.value)}
-                  className="p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black cursor-pointer"
-                >
-                  <option value="All">All Puroks</option>
-                  <option value="Purok 1">Purok 1</option>
-                  <option value="Purok 2">Purok 2</option>
-                  <option value="Purok 3">Purok 3</option>
-                  <option value="Purok 4">Purok 4</option>
-                </select>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShowImage(
+                        payment.receipt_proof,
+                      )
+                    }
+                    className="flex items-center gap-2 rounded-xl border px-3 py-2 text-[10px] font-black uppercase text-slate-700"
+                  >
+                    <Eye className="h-4 w-4" />
+                    Resident Receipt
+                  </button>
 
-                {/* Status filter dropdown */}
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                  className="p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black cursor-pointer"
-                >
-                  <option value="All">All Status</option>
-                  <option value="Pending Verification">Pending verification</option>
-                  <option value="Paid">Verified Paid</option>
-                  <option value="Flagged">Flagged / Recalled</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Visual horizontal scroll indicator guide for administrator */}
-            <div className="flex items-center justify-between px-6 py-2.5 bg-emerald-50/40 border-b border-slate-100/60 xl:hidden">
-              <span className="text-[10px] font-extrabold text-emerald-700 tracking-wide uppercase flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
-                Auditor Ledger Board
-              </span>
-              <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1 animate-pulse-slide">
-                ← Swipe horizontally to see all columns & choices →
-              </span>
-            </div>
-
-            <div className="overflow-x-auto pb-2 scrollbar-visible">
-              <table className="w-full text-left min-w-[950px]">
-                <thead>
-                  <tr className="text-[9px] font-black text-slate-400 border-b border-slate-100 uppercase tracking-widest bg-slate-50/50">
-                    <th className="px-6 py-4">Household & Purok</th>
-                    <th className="px-6 py-4">Billing Category</th>
-                    <th className="px-6 py-4">Receipt Details</th>
-                    <th className="px-6 py-4">Declared Amount</th>
-                    <th className="px-6 py-4">Status Log</th>
-                    <th className="px-6 py-4 text-center">Decisions Console</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-xs">
-                  {filteredPayments.map((p) => (
-                    <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="px-6 py-5">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-emerald-50 text-emerald-700 flex items-center justify-center font-black rounded-xl text-xs border border-emerald-100">
-                            {(p.householdName || '').charAt(0)}
-                          </div>
-                          <div>
-                            <p className="font-extrabold text-slate-900 text-sm">{p.householdName || 'Environmental Contributor'}</p>
-                            <p className="text-[10px] text-emerald-600 font-extrabold uppercase mt-0.5 tracking-wider">{p.purok}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-5">
-                        <div>
-                          <p className="font-black text-slate-700">{p.category}</p>
-                          <p className="text-[10px] text-slate-400 font-bold uppercase">{p.billingPeriod}</p>
-                        </div>
-                      </td>
-                      <td className="px-6 py-5">
-                        <div className="space-y-1">
-                          <span className="font-mono text-xs bg-slate-100 border border-slate-200 text-slate-700 px-2 py-1 rounded-md font-extrabold select-all" title="Click to copy">
-                            {p.referenceNo}
-                          </span>
-                          <p className="text-[10px] text-slate-400 mt-1 font-bold">Via {p.method} • On {p.date}</p>
-                        </div>
-                      </td>
-                      <td className="px-6 py-5">
-                        <span className="font-black text-slate-900 text-sm">₱{p.amount}.00</span>
-                      </td>
-                      <td className="px-6 py-5">
-                        <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border ${
-                          p.status === 'Paid' ? 'bg-emerald-50 text-emerald-600 border-emerald-150' :
-                          p.status === 'Pending Verification' ? 'bg-amber-50 text-amber-600 border-amber-150' :
-                          'bg-rose-50 text-rose-500 border-rose-150'
-                        }`}>
-                          {p.status === 'Pending Verification' ? 'Awaiting Sign' : p.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-5">
-                        <div className="flex justify-center gap-2">
-                          {p.status === 'Pending Verification' ? (
-                            <>
-                              <button
-                                onClick={() => updatePaymentStatus(p.id, 'Paid')}
-                                className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-605 active:scale-95 text-white font-black uppercase text-[10px] tracking-widest rounded-lg flex items-center gap-1 cursor-pointer transition-all shadow-sm hover:scale-105"
-                                title="Authorize Deposit"
-                              >
-                                <Check className="w-3.5 h-3.5" />
-                                Approve
-                              </button>
-                              <button
-                                onClick={() => updatePaymentStatus(p.id, 'Flagged')}
-                                className="px-3 py-1.5 bg-rose-50 text-rose-600 hover:bg-rose-100 active:scale-95 border border-rose-200 font-black uppercase text-[10px] tracking-widest rounded-lg flex items-center gap-1 cursor-pointer transition-all"
-                                title="Reject Reference Number"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                                Flag Ref
-                              </button>
-                            </>
-                          ) : p.status === 'Flagged' ? (
-                            <button
-                              onClick={() => updatePaymentStatus(p.id, 'Paid')}
-                              className="px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 font-black uppercase text-[9px] tracking-wider rounded-lg hover:bg-emerald-120 cursor-pointer transition-all"
-                            >
-                              Overrule & Approve
-                            </button>
-                          ) : (
-                            <div className="flex items-center gap-1.5 text-slate-400 font-bold text-[10px]">
-                              <CheckCircle className="w-4 h-4 text-emerald-500" />
-                              Synced Ledger Locks
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {filteredPayments.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="text-center py-12 text-slate-400 font-bold text-xs uppercase">No relevant receipts found matching search.</td>
-                    </tr>
+                  {payment.remittance_proof && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setShowImage(
+                          payment.remittance_proof!,
+                        )
+                      }
+                      className="flex items-center gap-2 rounded-xl border px-3 py-2 text-[10px] font-black uppercase text-slate-700"
+                    >
+                      <Eye className="h-4 w-4" />
+                      Remittance Proof
+                    </button>
                   )}
-                </tbody>
-              </table>
+                </div>
+
+                {isLeader &&
+                  payment.status ===
+                    "pending_leader_verification" && (
+                    <ActionBox title="Leader Verification">
+                      <textarea
+                        value={reviewRemarks}
+                        onChange={(event) =>
+                          setReviewRemarks(
+                            event.target.value,
+                          )
+                        }
+                        placeholder="Optional verification or rejection remarks"
+                        className="w-full rounded-xl border p-3 text-xs"
+                      />
+
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={submitting}
+                          onClick={() =>
+                            void leaderReview(
+                              payment.id,
+                              "approve",
+                            )
+                          }
+                          className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-xs font-black text-white"
+                        >
+                          <Check className="h-4 w-4" />
+                          Verify
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={submitting}
+                          onClick={() =>
+                            void leaderReview(
+                              payment.id,
+                              "reject",
+                            )
+                          }
+                          className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-rose-600 py-3 text-xs font-black text-white"
+                        >
+                          <X className="h-4 w-4" />
+                          Reject
+                        </button>
+                      </div>
+                    </ActionBox>
+                  )}
+
+                {isLeader &&
+                  payment.status ===
+                    "pending_remittance" && (
+                    <ActionBox title="Remit to Barangay">
+                      <input
+                        value={
+                          remittanceReference
+                        }
+                        onChange={(event) =>
+                          setRemittanceReference(
+                            event.target.value,
+                          )
+                        }
+                        placeholder="Barangay remittance reference / OR number"
+                        className="w-full rounded-xl border p-3 text-xs"
+                      />
+
+                      <UploadField
+                        label="Upload remittance proof"
+                        ready={
+                          Boolean(
+                            remittanceProof,
+                          )
+                        }
+                        onFile={(file) =>
+                          void handleImage(
+                            file,
+                            "remittance",
+                          )
+                        }
+                      />
+
+                      <button
+                        type="button"
+                        disabled={
+                          submitting ||
+                          !remittanceReference.trim() ||
+                          !remittanceProof
+                        }
+                        onClick={() =>
+                          void submitRemittance(
+                            payment.id,
+                          )
+                        }
+                        className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 py-3 text-xs font-black text-white disabled:opacity-50"
+                      >
+                        <Send className="h-4 w-4" />
+                        Submit Remittance
+                      </button>
+                    </ActionBox>
+                  )}
+
+                {isAdmin &&
+                  [
+                    "pending_admin_confirmation",
+                    "discrepancy",
+                  ].includes(
+                    payment.status,
+                  ) && (
+                    <ActionBox title="Barangay Final Confirmation">
+                      <input
+                        value={
+                          reviewRemarks
+                        }
+                        onChange={(event) =>
+                          setReviewRemarks(
+                            event.target.value,
+                          )
+                        }
+                        placeholder="Admin remarks"
+                        className="w-full rounded-xl border p-3 text-xs"
+                      />
+
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={
+                          discrepancyAmount
+                        }
+                        onChange={(event) =>
+                          setDiscrepancyAmount(
+                            event.target.value,
+                          )
+                        }
+                        placeholder="Discrepancy amount, only when reporting a mismatch"
+                        className="w-full rounded-xl border p-3 text-xs"
+                      />
+
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={submitting}
+                          onClick={() =>
+                            void adminReview(
+                              payment.id,
+                              "confirm",
+                            )
+                          }
+                          className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-xs font-black text-white"
+                        >
+                          <ShieldCheck className="h-4 w-4" />
+                          Confirm Received
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={
+                            submitting ||
+                            Number(
+                              discrepancyAmount,
+                            ) <= 0
+                          }
+                          onClick={() =>
+                            void adminReview(
+                              payment.id,
+                              "discrepancy",
+                            )
+                          }
+                          className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-rose-600 py-3 text-xs font-black text-white disabled:opacity-50"
+                        >
+                          <AlertTriangle className="h-4 w-4" />
+                          Report Difference
+                        </button>
+                      </div>
+                    </ActionBox>
+                  )}
+
+                <div className="mt-5 border-t pt-4">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+                    Audit Trail
+                  </p>
+
+                  <div className="mt-2 grid grid-cols-1 gap-2 text-[11px] text-slate-600 md:grid-cols-3">
+                    <p>
+                      <strong>Submitted:</strong>{" "}
+                      {new Date(
+                        payment.created_at,
+                      ).toLocaleString()}
+                    </p>
+                    <p>
+                      <strong>Leader:</strong>{" "}
+                      {payment.leader_name ||
+                        "Not yet verified"}
+                    </p>
+                    <p>
+                      <strong>Admin:</strong>{" "}
+                      {payment.admin_name ||
+                        "Not yet confirmed"}
+                    </p>
+                  </div>
+                </div>
+              </article>
+            ),
+          )}
+
+          {filteredPayments.length ===
+            0 && (
+            <div className="rounded-[2rem] border-2 border-dashed p-12 text-center text-sm font-bold text-slate-400">
+              No payment records found.
             </div>
-          </section>
-        </>
+          )}
+        </div>
       )}
 
-      {/* RETAIN DIALOG OR PAY MODAL FOR THE CITIZEN SUBMISSION */}
-      <AnimatePresence>
-        {showPayModal && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-[2.5rem] w-full max-w-lg p-6 space-y-6 shadow-2xl relative overflow-hidden"
+      {showPaymentForm && (
+        <Modal
+          title="Submit Payment"
+          onClose={() =>
+            setShowPaymentForm(false)
+          }
+        >
+          <form
+            onSubmit={submitPayment}
+            className="space-y-4"
+          >
+            <select
+              value={category}
+              onChange={(event) => {
+                const selected =
+                  CATEGORY_OPTIONS.find(
+                    (item) =>
+                      item.value ===
+                      event.target.value,
+                  );
+
+                setCategory(
+                  event.target.value as PaymentRecord["category"],
+                );
+
+                if (selected) {
+                  setAmount(
+                    String(selected.amount),
+                  );
+                }
+              }}
+              className="w-full rounded-xl border p-3 text-sm"
             >
-              <div className="flex justify-between items-center">
-                <h3 className="text-2xl font-black text-slate-900">Declare Settle Receipt</h3>
-                <button 
-                  onClick={() => setShowPayModal(false)}
-                  className="w-10 h-10 rounded-full bg-slate-105 text-slate-500 flex items-center justify-center hover:bg-slate-200 transition-colors cursor-pointer border border-transparent hover:scale-105 duration-200"
-                >
-                  ✕
-                </button>
-              </div>
-
-              <form onSubmit={handlePay} className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-slate-600 font-extrabold text-xs uppercase tracking-wider block">Billing Directory Category</label>
-                  <select 
-                    value={selectedCategory}
-                    onChange={(e) => {
-                      const val = e.target.value as any;
-                      setSelectedCategory(val);
-                      if (val === 'Weekly Fee') setAmountInput('5');
-                      else if (val === 'Special Heavy Trash') setAmountInput('80');
-                      else setAmountInput('120');
-                    }}
-                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-slate-900 font-bold focus:ring-2 focus:ring-emerald-500/20 text-sm"
+              {CATEGORY_OPTIONS.map(
+                (item) => (
+                  <option
+                    key={item.value}
+                    value={item.value}
                   >
-                    <option value="Weekly Fee">Weekly Purok Maintenance Fee (₱5)</option>
-                    <option value="Special Heavy Trash">Special Construction/Heavy Trash Pickup (₱80)</option>
-                    <option value="Hazardous Disposal">E-Waste / Electronic hazardous disposal (₱120)</option>
-                  </select>
-                </div>
+                    {item.label} — ₱{item.amount}
+                  </option>
+                ),
+              )}
+            </select>
 
-                <div className="space-y-2">
-                  <label className="text-slate-600 font-extrabold text-xs uppercase tracking-wider block">Amount Settled (PHP)</label>
-                  <input 
-                    type="number"
-                    value={amountInput}
-                    onChange={(e) => setAmountInput(e.target.value)}
-                    className="w-full p-4 bg-slate-50 border border-slate-250 rounded-2xl text-xl font-black focus:ring-2 focus:ring-emerald-500/20"
-                    required
-                  />
-                </div>
+            <input
+              value={billingPeriod}
+              onChange={(event) =>
+                setBillingPeriod(
+                  event.target.value,
+                )
+              }
+              placeholder="Billing period"
+              className="w-full rounded-xl border p-3 text-sm"
+              required
+            />
 
-                <div className="space-y-2">
-                  <label className="text-slate-600 font-extrabold text-xs uppercase tracking-wider block">Submitting Gateway Partner</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {['G-Cash', 'PayMaya', 'Over-the-Counter'].map((method) => (
-                      <button
-                        key={method}
-                        type="button"
-                        onClick={() => setPaymentMethod(method)}
-                        className={`p-3 rounded-xl text-xs font-black border transition-all cursor-pointer ${
-                          paymentMethod === method 
-                            ? 'bg-emerald-50 border-emerald-500 text-emerald-600 font-bold' 
-                            : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'
-                        }`}
-                      >
-                        {method}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+            <input
+              type="number"
+              min="1"
+              step="0.01"
+              value={amount}
+              onChange={(event) =>
+                setAmount(
+                  event.target.value,
+                )
+              }
+              className="w-full rounded-xl border p-3 text-sm"
+              required
+            />
 
-                <div className="bg-slate-50 p-4 border border-slate-150 rounded-2xl text-xs text-slate-600 leading-relaxed">
-                  <p className="font-extrabold text-slate-800 mb-1">GC-MONITOR Ledger Memo:</p>
-                  <p>Send exactly ₱{amountInput}.00 to CG-MONITOR at GCash/PayMaya. Save the reference number from your receipt and insert it below.</p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-slate-600 font-extrabold text-xs uppercase tracking-wider block">Gateway Transaction Reference Number</label>
-                  <input 
-                    type="text"
-                    required
-                    placeholder="e.g. GC-991204128"
-                    value={referenceNo}
-                    onChange={(e) => setReferenceNo(e.target.value)}
-                    className="w-full p-4 bg-white border border-slate-200 rounded-2xl text-sm font-mono font-bold focus:ring-2 focus:ring-emerald-500/20 uppercase"
-                  />
-                </div>
-
-                <button 
-                  type="submit"
-                  className="w-full py-4 bg-emerald-500 hover:bg-emerald-600 active:scale-95 transition-all text-white font-extrabold uppercase text-xs tracking-widest rounded-2xl shadow-xl shadow-emerald-500/10 cursor-pointer"
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                ["gcash", "GCash"],
+                ["maya", "Maya"],
+                [
+                  "over_the_counter",
+                  "Over-the-Counter",
+                ],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() =>
+                    setMethod(
+                      value as PaymentRecord["payment_method"],
+                    )
+                  }
+                  className={`rounded-xl border p-3 text-[10px] font-black ${
+                    method === value
+                      ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                      : "text-slate-500"
+                  }`}
                 >
-                  Submit Payment Settle Request
+                  {label}
                 </button>
-              </form>
-            </motion.div>
-          </div>
+              ))}
+            </div>
+
+            <div className="rounded-xl bg-slate-50 p-4 text-xs text-slate-600">
+              {method ===
+              "over_the_counter"
+                ? "Pay the Purok Leader in person. Enter the official receipt number and upload a photo of the signed receipt."
+                : "Pay only to the official Purok collection account shown by your local office. The uploaded screenshot is supporting evidence; the Leader must still verify the actual transaction."}
+            </div>
+
+            <input
+              value={reference}
+              onChange={(event) =>
+                setReference(
+                  event.target.value,
+                )
+              }
+              placeholder={
+                method ===
+                "over_the_counter"
+                  ? "Official receipt number"
+                  : "GCash / Maya reference number"
+              }
+              className="w-full rounded-xl border p-3 text-sm"
+              required
+            />
+
+            <UploadField
+              label={
+                method ===
+                "over_the_counter"
+                  ? "Upload signed official receipt"
+                  : "Upload payment screenshot"
+              }
+              ready={Boolean(receiptProof)}
+              onFile={(file) =>
+                void handleImage(
+                  file,
+                  "receipt",
+                )
+              }
+            />
+
+            <button
+              type="submit"
+              disabled={
+                submitting ||
+                !receiptProof
+              }
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-4 text-xs font-black uppercase text-white disabled:opacity-50"
+            >
+              {submitting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <CreditCard className="h-4 w-4" />
+              )}
+              Submit for Verification
+            </button>
+          </form>
+        </Modal>
+      )}
+
+      {showImage && (
+        <Modal
+          title="Payment Evidence"
+          onClose={() =>
+            setShowImage(null)
+          }
+        >
+          <img
+            src={showImage}
+            alt="Payment evidence"
+            className="max-h-[65vh] w-full rounded-xl object-contain"
+          />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function Metric({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-[1.8rem] border border-slate-100 bg-white p-5 shadow-sm">
+      <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">
+        {label}
+      </p>
+      <p className="mt-2 text-2xl font-black text-slate-900">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function Info({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-xl bg-slate-50 p-3">
+      <p className="text-[9px] font-black uppercase text-slate-400">
+        {label}
+      </p>
+      <p className="mt-1 break-words text-xs font-bold text-slate-700">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function ActionBox({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mt-5 space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+        {title}
+      </p>
+      {children}
+    </div>
+  );
+}
+
+function UploadField({
+  label,
+  ready,
+  onFile,
+}: {
+  label: string;
+  ready: boolean;
+  onFile: (
+    file: File | undefined,
+  ) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center justify-between rounded-xl border border-dashed border-slate-300 bg-white p-4">
+      <div className="flex items-center gap-3">
+        {ready ? (
+          <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+        ) : (
+          <FileImage className="h-5 w-5 text-slate-400" />
         )}
-      </AnimatePresence>
+
+        <span className="text-xs font-bold text-slate-600">
+          {ready
+            ? "Image ready"
+            : label}
+        </span>
+      </div>
+
+      <Upload className="h-4 w-4 text-slate-400" />
+
+      <input
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="hidden"
+        onChange={(event) =>
+          onFile(
+            event.target.files?.[0],
+          )
+        }
+      />
+    </label>
+  );
+}
+
+function Modal({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/70 p-4">
+      <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-[2rem] bg-white p-6 shadow-2xl">
+        <div className="mb-5 flex items-center justify-between">
+          <h2 className="text-xl font-black text-slate-900">
+            {title}
+          </h2>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl bg-slate-100 p-2"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {children}
+      </div>
     </div>
   );
 }

@@ -21,6 +21,7 @@ type CollectionStatus = (typeof allowedStatuses)[number];
 function canViewRequests(role?: string): boolean {
   return (
     role === "admin" ||
+    role === "super_admin" ||
     role === "collector" ||
     role === "purok_leader" ||
     role === "leader"
@@ -79,12 +80,25 @@ router.get(
       const params: number[] = [];
 
       if (req.user?.role === "collector") {
+        if (!req.user.barangay_id) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Your Garbage Collector account has no assigned barangay.",
+          });
+        }
+
         sql += `
-          WHERE
-            cr.assigned_collector_id IS NULL
-            OR cr.assigned_collector_id = ?
+          WHERE b.id = ?
+            AND (
+              cr.assigned_collector_id IS NULL
+              OR cr.assigned_collector_id = ?
+            )
         `;
-        params.push(req.user.id);
+        params.push(
+          Number(req.user.barangay_id),
+          Number(req.user.id),
+        );
       } else if (
         req.user?.role === "purok_leader" ||
         req.user?.role === "leader"
@@ -310,6 +324,49 @@ router.patch(
           success: false,
           message: "Collection request was not found.",
         });
+      }
+
+      if (req.user.role === "collector") {
+        if (!req.user.barangay_id) {
+          await connection.rollback();
+          return res.status(400).json({
+            success: false,
+            message:
+              "Your Garbage Collector account has no assigned barangay.",
+          });
+        }
+
+        const [scopeRows] =
+          await connection.query<any[]>(
+            `
+            SELECT b.id AS barangay_id
+            FROM collection_requests cr
+            INNER JOIN garbage_bins gb
+              ON gb.id = cr.bin_id
+            LEFT JOIN puroks p
+              ON p.id = gb.purok_id
+            LEFT JOIN barangays b
+              ON b.id = p.barangay_id
+            WHERE cr.id = ?
+            LIMIT 1
+            `,
+            [requestId],
+          );
+
+        const requestBarangayId =
+          Number(scopeRows[0]?.barangay_id || 0);
+
+        if (
+          requestBarangayId !==
+          Number(req.user.barangay_id)
+        ) {
+          await connection.rollback();
+          return res.status(403).json({
+            success: false,
+            message:
+              "This collection request is outside your assigned barangay.",
+          });
+        }
       }
 
       if (

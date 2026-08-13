@@ -15,7 +15,7 @@ export default function ChatbotWidget() {
     {
       id: 'greeting',
       role: 'assistant',
-      text: "Hello! I am EcoTrack Assistant, your Smart Garbage guide. 👋\n\nHow can I help you navigate your dashboard, trigger ad-hoc pickups, or verify environmental ledger payments today?",
+      text: "Hello! I am the Smart Garbage Monitoring Assistant. 👋\n\nI can help with login, registration, profiles, manual bin inspections, collection requests, collector GPS tracking, complaints, notifications, payments, reports, and role-based dashboards.",
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
   ]);
@@ -24,10 +24,30 @@ export default function ChatbotWidget() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const presetQuestions = [
-    { label: "Request Instant Pickup", text: "How do I request an ad-hoc garbage collection?" },
-    { label: "Pay Contribution Fee", text: "Where can I view and pay my monthly garbage fee?" },
-    { label: "Check Purok 4 Status", text: "What is the trash compliance rate of Purok 4?" },
-    { label: "Change Admin Settings", text: "As an Administrator, how do I adjust trash limit thresholds?" },
+    {
+      label: "Manual Inspection",
+      text: "How do I submit a manual garbage bin inspection?",
+    },
+    {
+      label: "Collection Request",
+      text: "How do I create or track a collection request?",
+    },
+    {
+      label: "Collector GPS",
+      text: "Where can an authorized user view the collector location?",
+    },
+    {
+      label: "Notifications",
+      text: "How do system notifications and emergency alerts work?",
+    },
+    {
+      label: "Complaints",
+      text: "How do I submit and monitor a complaint?",
+    },
+    {
+      label: "Profile",
+      text: "How do I update my profile information?",
+    },
   ];
 
   useEffect(() => {
@@ -68,16 +88,22 @@ export default function ChatbotWidget() {
         })
       });
 
-      if (!res.ok) {
-        throw new Error('Network response not ok.');
-      }
+      const data = await res
+        .json()
+        .catch(() => ({}));
 
-      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(
+          data.message ||
+            data.error ||
+            'Unable to contact the assistant.',
+        );
+      }
       
       const assistantMessage: ChatMessage = {
         id: `ai-${Date.now()}`,
         role: 'assistant',
-        text: data.text || "I apologize, I didn't get that. Cloud services are starting up, please try again in a moment.",
+        text: data.text || "I could not prepare a response. Please try again.",
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
 
@@ -87,7 +113,7 @@ export default function ChatbotWidget() {
       const errorMessage: ChatMessage = {
         id: `ai-err-${Date.now()}`,
         role: 'assistant',
-        text: "My apologies, I am having trouble reaching our server. Please ensure the development server has loaded or try again in a few seconds.",
+        text: err instanceof Error ? err.message : "I am having trouble reaching the server. Please try again.",
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
       setMessages(prev => [...prev, errorMessage]);
@@ -101,7 +127,7 @@ export default function ChatbotWidget() {
       {
         id: 'greeting',
         role: 'assistant',
-        text: "Welcome back! What can I help you find on the Smart Garbage dashboard?",
+        text: "Welcome back! Ask me anything related to the Smart Garbage Monitoring System.",
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }
     ]);
@@ -190,10 +216,10 @@ export default function ChatbotWidget() {
                   <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-slate-950 animate-pulse" />
                 </div>
                 <div>
-                  <h3 className="text-xs font-black uppercase text-slate-100 tracking-wider">EcoTrack Assistant</h3>
+                  <h3 className="text-xs font-black uppercase text-slate-100 tracking-wider">Smart Garbage Assistant</h3>
                   <div className="flex items-center gap-1 text-[9px] font-extrabold text-emerald-400 tracking-tight uppercase">
                     <Sparkles className="w-2.5 h-2.5 animate-pulse" />
-                    Resident & Auditor Guide
+                    Official In-App Guide
                   </div>
                 </div>
               </div>
@@ -258,10 +284,26 @@ export default function ChatbotWidget() {
                   <div className="w-6 h-6 shrink-0 bg-slate-900 rounded-lg border border-slate-800 flex items-center justify-center animate-pulse">
                     <Bot className="w-3.5 h-3.5 text-emerald-400" />
                   </div>
-                  <div className="px-3.5 py-3 rounded-2xl bg-slate-900 border border-slate-800 rounded-tl-none flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+
+                  <div className="px-3.5 py-3 rounded-2xl bg-slate-900 border border-slate-800 rounded-tl-none">
+                    <p className="mb-2 text-[10px] font-semibold text-slate-400">
+                      AI is thinking...
+                    </p>
+
+                    <div className="flex items-center gap-1">
+                      <span
+                        className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-bounce"
+                        style={{ animationDelay: '0ms' }}
+                      />
+                      <span
+                        className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-bounce"
+                        style={{ animationDelay: '150ms' }}
+                      />
+                      <span
+                        className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-bounce"
+                        style={{ animationDelay: '300ms' }}
+                      />
+                    </div>
                   </div>
                 </div>
               )}
@@ -297,7 +339,7 @@ export default function ChatbotWidget() {
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                placeholder="Ask EcoTrack AI..."
+                placeholder={isLoading ? 'Please wait...' : 'Ask about the system...'}
                 className="flex-1 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder-slate-500 outline-none transition-colors"
                 disabled={isLoading}
               />

@@ -11,6 +11,7 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock,
+  Crosshair,
   MapPin,
   Navigation,
   RefreshCw,
@@ -68,8 +69,45 @@ type BinWithRequest = GarbageBin & {
   request: CollectionRequest | null;
 };
 
+type CollectorLocation = {
+  collector_id: number;
+  full_name: string;
+  email: string;
+  phone?: string | null;
+  barangay_id?: number | null;
+  barangay_name?: string | null;
+  latitude: number | string;
+  longitude: number | string;
+  accuracy_meters?: number | string | null;
+  heading_degrees?: number | string | null;
+  speed_mps?: number | string | null;
+  is_on_duty: number | boolean;
+  last_updated_at: string;
+  location_status: "online" | "idle" | "offline" | string;
+};
+
+type CollectorHistoryPoint = {
+  id: number;
+  collector_id: number;
+  full_name: string;
+  latitude: number | string;
+  longitude: number | string;
+  accuracy_meters?: number | string | null;
+  heading_degrees?: number | string | null;
+  speed_mps?: number | string | null;
+  recorded_at: string;
+};
+
 type MapViewProps = {
   viewOnly?: boolean;
+};
+
+type CurrentUserProfile = {
+  id: number;
+  role: string;
+  barangay_id?: number | null;
+  barangay_name?: string | null;
+  full_name?: string;
 };
 
 const DEFAULT_CENTER: L.LatLngExpression = [
@@ -77,12 +115,41 @@ const DEFAULT_CENTER: L.LatLngExpression = [
   123.9494,
 ];
 
+const MAX_USABLE_ACCURACY_METERS = 1000;
+
+function hasUsableCollectorCoordinates(
+  collector?: CollectorLocation | null,
+): collector is CollectorLocation {
+  if (!collector) return false;
+
+  const latitude = Number(collector.latitude);
+  const longitude = Number(collector.longitude);
+  const accuracy = Number(collector.accuracy_meters);
+
+  return (
+    Number.isFinite(latitude) &&
+    latitude >= -90 && latitude <= 90 &&
+    Number.isFinite(longitude) &&
+    longitude >= -180 && longitude <= 180 &&
+    !(latitude === 0 && longitude === 0) &&
+    (!Number.isFinite(accuracy) || accuracy <= MAX_USABLE_ACCURACY_METERS)
+  );
+}
+
 function getToken(): string {
   return (
     localStorage.getItem("token") ||
+    sessionStorage.getItem("token") ||
     localStorage.getItem("authToken") ||
+    sessionStorage.getItem("authToken") ||
     ""
   );
+}
+
+function getStoredRole(): string {
+  return (localStorage.getItem("sg_user_role") || sessionStorage.getItem("sg_user_role") || "")
+    .trim()
+    .toLowerCase();
 }
 
 async function apiRequest(
@@ -224,16 +291,78 @@ function makeMarkerIcon(bin: GarbageBin): L.DivIcon {
   });
 }
 
+function collectorMarkerColor(
+  status?: string,
+): string {
+  if (status === "online") return "#16a34a";
+  if (status === "idle") return "#f59e0b";
+  return "#64748b";
+}
+
+function makeCollectorMarkerIcon(
+  collector: CollectorLocation,
+): L.DivIcon {
+  const color = collectorMarkerColor(
+    collector.location_status,
+  );
+
+  return L.divIcon({
+    className: "",
+    html: `
+      <div style="
+        width: 38px;
+        height: 38px;
+        border-radius: 999px;
+        background: ${color};
+        border: 4px solid white;
+        box-shadow: 0 8px 20px rgba(15,23,42,.25);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 18px;
+      ">🚛</div>
+    `,
+    iconSize: [38, 38],
+    iconAnchor: [19, 19],
+    popupAnchor: [0, -22],
+  });
+}
+
 export default function MapView({
   viewOnly = false,
 }: MapViewProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markerLayerRef = useRef<L.LayerGroup | null>(null);
+  const collectorLayerRef =
+    useRef<L.LayerGroup | null>(null);
+  const routeHistoryLayerRef =
+    useRef<L.LayerGroup | null>(null);
+  const destinationLayerRef =
+    useRef<L.LayerGroup | null>(null);
+
+  const hasAutoFocusedRef =
+    useRef(false);
+
+  const userMovedMapRef =
+    useRef(false);
 
   const [bins, setBins] = useState<GarbageBin[]>([]);
+  const [collectorLocations, setCollectorLocations] =
+    useState<CollectorLocation[]>([]);
+  const [collectorHistory, setCollectorHistory] =
+    useState<CollectorHistoryPoint[]>([]);
+  const [ownCollectorLocation, setOwnCollectorLocation] =
+    useState<CollectorLocation | null>(null);
+  const [collectorLocationError, setCollectorLocationError] =
+    useState("");
   const [requests, setRequests] =
     useState<CollectionRequest[]>([]);
+
+  const [currentUser, setCurrentUser] =
+    useState<CurrentUserProfile | null>(null);
+
   const [selectedId, setSelectedId] =
     useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -245,20 +374,79 @@ export default function MapView({
   const loadData = async () => {
     setLoading(true);
     setErrorMessage("");
+    setCollectorLocationError("");
 
     try {
-      const [binResult, requestResult] = await Promise.all([
+      const [
+        binResult,
+        requestResult,
+        profileResult,
+      ] = await Promise.all([
         apiRequest("/api/garbage-bins"),
         apiRequest("/api/collection-requests"),
+        apiRequest("/api/auth/me"),
       ]);
 
-      setBins(binResult.bins || []);
-      setRequests(requestResult.requests || []);
+      setBins(
+        Array.isArray(binResult.bins)
+          ? binResult.bins
+          : [],
+      );
+
+      setRequests(
+        Array.isArray(requestResult.requests)
+          ? requestResult.requests
+          : [],
+      );
+
+      setCurrentUser(
+        profileResult?.user || null,
+      );
     } catch (error) {
       setErrorMessage(
         error instanceof Error
           ? error.message
           : "Failed to load collector route data.",
+      );
+    }
+
+    const storedRole = getStoredRole();
+
+    try {
+      if (storedRole === "collector") {
+        const ownResult = await apiRequest(
+          "/api/collector-locations/me",
+        );
+        setOwnCollectorLocation(ownResult.collector || null);
+        setCollectorLocations(ownResult.collector ? [ownResult.collector] : []);
+      } else {
+        const collectorResult = await apiRequest(
+          "/api/collector-locations",
+        );
+        setCollectorLocations(
+          Array.isArray(collectorResult.collectors)
+            ? collectorResult.collectors
+            : [],
+        );
+        setOwnCollectorLocation(null);
+      }
+
+      const historyResult = await apiRequest(
+        "/api/collector-locations/history",
+      );
+      setCollectorHistory(
+        Array.isArray(historyResult.history)
+          ? historyResult.history
+          : [],
+      );
+    } catch (error) {
+      setCollectorLocations([]);
+      setCollectorHistory([]);
+      setOwnCollectorLocation(null);
+      setCollectorLocationError(
+        error instanceof Error
+          ? error.message
+          : "Collector locations are unavailable.",
       );
     } finally {
       setLoading(false);
@@ -270,6 +458,100 @@ export default function MapView({
   }, []);
 
   useEffect(() => {
+    if (getStoredRole() !== "collector") {
+      return;
+    }
+
+    const onLocationUpdate = (
+      event: Event,
+    ) => {
+      const customEvent =
+        event as CustomEvent<{
+          latitude?: number;
+          longitude?: number;
+          accuracy?: number;
+          timestamp?: number;
+        }>;
+
+      const latitude =
+        Number(
+          customEvent.detail?.latitude,
+        );
+      const longitude =
+        Number(
+          customEvent.detail?.longitude,
+        );
+
+      if (
+        !Number.isFinite(latitude) ||
+        !Number.isFinite(longitude)
+      ) {
+        return;
+      }
+
+      setOwnCollectorLocation(
+        (previous) => ({
+          collector_id:
+            previous?.collector_id ||
+            Number(currentUser?.id || 0),
+          full_name:
+            previous?.full_name ||
+            currentUser?.full_name ||
+            "Garbage Collector",
+          email:
+            previous?.email || "",
+          phone:
+            previous?.phone || null,
+          barangay_id:
+            previous?.barangay_id ||
+            currentUser?.barangay_id ||
+            null,
+          barangay_name:
+            previous?.barangay_name ||
+            currentUser?.barangay_name ||
+            null,
+          latitude,
+          longitude,
+          accuracy_meters:
+            customEvent.detail?.accuracy ??
+            previous?.accuracy_meters ??
+            null,
+          heading_degrees:
+            previous?.heading_degrees ??
+            null,
+          speed_mps:
+            previous?.speed_mps ??
+            null,
+          is_on_duty: 1,
+          last_updated_at:
+            new Date(
+              customEvent.detail?.timestamp ||
+                Date.now(),
+            ).toISOString(),
+          location_status: "online",
+        }),
+      );
+    };
+
+    window.addEventListener(
+      "collector-location-update",
+      onLocationUpdate,
+    );
+
+    return () => {
+      window.removeEventListener(
+        "collector-location-update",
+        onLocationUpdate,
+      );
+    };
+  }, [
+    currentUser?.id,
+    currentUser?.full_name,
+    currentUser?.barangay_id,
+    currentUser?.barangay_name,
+  ]);
+
+  useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
     const map = L.map(mapContainerRef.current).setView(
@@ -277,16 +559,28 @@ export default function MapView({
       14,
     );
 
-    L.tileLayer(
+    const tileLayer = L.tileLayer(
       "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
       {
         maxZoom: 19,
         attribution: "&copy; OpenStreetMap contributors",
+        crossOrigin: true,
       },
     ).addTo(map);
 
+    tileLayer.on("tileerror", () => {
+      window.setTimeout(() => tileLayer.redraw(), 1000);
+    });
+
     markerLayerRef.current = L.layerGroup().addTo(map);
+    routeHistoryLayerRef.current = L.layerGroup().addTo(map);
+    destinationLayerRef.current = L.layerGroup().addTo(map);
+    collectorLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
+
+    map.on("dragstart zoomstart", () => {
+      userMovedMapRef.current = true;
+    });
 
     window.setTimeout(() => map.invalidateSize(), 150);
 
@@ -294,8 +588,21 @@ export default function MapView({
       map.remove();
       mapRef.current = null;
       markerLayerRef.current = null;
+      routeHistoryLayerRef.current = null;
+      destinationLayerRef.current = null;
+      collectorLayerRef.current = null;
     };
   }, []);
+
+  const currentCollectorId =
+    getStoredRole() === "collector"
+      ? Number(currentUser?.id || 0)
+      : 0;
+
+  const currentBarangayId =
+    getStoredRole() === "collector"
+      ? Number(currentUser?.barangay_id || 0)
+      : 0;
 
   const activeRequestsByBin = useMemo(() => {
     const map = new Map<number, CollectionRequest>();
@@ -304,34 +611,138 @@ export default function MapView({
       .sort((a, b) => b.id - a.id)
       .forEach((request) => {
         if (
-          request.status !== "cancelled" &&
-          !map.has(request.bin_id)
+          request.status === "cancelled" ||
+          request.status === "completed" ||
+          map.has(request.bin_id)
         ) {
-          map.set(request.bin_id, request);
+          return;
         }
+
+        if (
+          getStoredRole() === "collector" &&
+          request.assigned_collector_id &&
+          Number(request.assigned_collector_id) !==
+            currentCollectorId
+        ) {
+          return;
+        }
+
+        map.set(request.bin_id, request);
       });
 
     return map;
-  }, [requests]);
+  }, [requests, currentCollectorId]);
 
   const visibleBins = useMemo<BinWithRequest[]>(
     () =>
       bins
         .filter((bin) => Number(bin.is_active) === 1)
+        .filter((bin) =>
+          getStoredRole() === "collector"
+            ? (
+                currentBarangayId > 0 &&
+                Number(bin.barangay_id) ===
+                  currentBarangayId
+              )
+            : true,
+        )
         .map((bin) => ({
           ...bin,
-          request: activeRequestsByBin.get(bin.id) || null,
+          request:
+            activeRequestsByBin.get(bin.id) || null,
         }))
         .sort((a, b) => {
-          const aPriority = needsCollection(a) ? 1 : 0;
-          const bPriority = needsCollection(b) ? 1 : 0;
+          if (getStoredRole() === "collector") {
+            const statusRank = (
+              request: CollectionRequest | null,
+            ) => {
+              if (request?.status === "in_progress")
+                return 4;
+              if (request?.status === "assigned")
+                return 3;
+              if (request?.status === "approved")
+                return 2;
+              if (request?.status === "pending")
+                return 1;
+              return 0;
+            };
+
+            const statusDifference =
+              statusRank(b.request) -
+              statusRank(a.request);
+
+            if (statusDifference !== 0) {
+              return statusDifference;
+            }
+
+            const priorityRank = {
+              urgent: 4,
+              high: 3,
+              normal: 2,
+              low: 1,
+            };
+
+            return (
+              (priorityRank[
+                b.request?.priority || "low"
+              ] || 0) -
+              (priorityRank[
+                a.request?.priority || "low"
+              ] || 0)
+            );
+          }
+
+          const aPriority =
+            needsCollection(a) ? 1 : 0;
+          const bPriority =
+            needsCollection(b) ? 1 : 0;
+
           return bPriority - aPriority;
         }),
-    [bins, activeRequestsByBin],
+    [
+      bins,
+      activeRequestsByBin,
+      currentBarangayId,
+    ],
   );
 
   const selectedBin =
-    visibleBins.find((bin) => bin.id === selectedId) || null;
+    visibleBins.find(
+      (bin) => bin.id === selectedId,
+    ) || null;
+
+  const nextCollectionBin = useMemo(
+    () =>
+      visibleBins.find(
+        (bin) =>
+          hasCoordinates(bin) &&
+          bin.request?.status === "in_progress",
+      ) ||
+      visibleBins.find(
+        (bin) =>
+          hasCoordinates(bin) &&
+          bin.request?.status === "assigned",
+      ) ||
+      visibleBins.find(
+        (bin) =>
+          hasCoordinates(bin) &&
+          bin.request?.status === "approved",
+      ) ||
+      visibleBins.find(
+        (bin) =>
+          hasCoordinates(bin) &&
+          bin.request?.status === "pending",
+      ) ||
+      (getStoredRole() !== "collector"
+        ? visibleBins.find(
+            (bin) =>
+              hasCoordinates(bin) &&
+              needsCollection(bin),
+          )
+        : null) ||
+      null,
+    [visibleBins],
+  );
 
   useEffect(() => {
     const markerLayer = markerLayerRef.current;
@@ -350,10 +761,17 @@ export default function MapView({
         <div style="min-width: 210px; line-height: 1.5;">
           <strong>${bin.bin_code}</strong><br />
           ${bin.location_name}<br />
-          ${bin.purok_name || "No purok"}<br />
+          ${bin.purok_name || "No purok"}${
+            bin.barangay_name
+              ? `, ${bin.barangay_name}`
+              : ""
+          }<br />
           Bin status: ${statusLabel(bin.current_status)}<br />
-          Scheduled today: ${
-            isScheduledToday(bin) ? "Yes" : "No"
+          ${
+            getStoredRole() === "collector" &&
+            bin.request
+              ? `Collection task: ${statusLabel(bin.request.status)}<br />Priority: ${statusLabel(bin.request.priority)}`
+              : `Scheduled today: ${isScheduledToday(bin) ? "Yes" : "No"}`
           }
         </div>
       `);
@@ -363,27 +781,219 @@ export default function MapView({
 
     if (!mapRef.current) return;
 
-    if (mappedBins.length > 0) {
-      const bounds = L.latLngBounds(
-        mappedBins.map((bin) => [
-          Number(bin.latitude),
-          Number(bin.longitude),
-        ]),
-      );
+    if (
+      !hasAutoFocusedRef.current &&
+      !userMovedMapRef.current
+    ) {
+      if (mappedBins.length > 0) {
+        const points: L.LatLngTuple[] =
+          mappedBins.map((bin) => [
+            Number(bin.latitude),
+            Number(bin.longitude),
+          ]);
 
-      mapRef.current.fitBounds(bounds, {
-        padding: [40, 40],
-        maxZoom: 17,
-      });
-    } else {
-      mapRef.current.setView(DEFAULT_CENTER, 14);
+        if (
+          getStoredRole() === "collector" &&
+          ownCollectorLocation
+        ) {
+          const collectorLatitude =
+            Number(
+              ownCollectorLocation.latitude,
+            );
+          const collectorLongitude =
+            Number(
+              ownCollectorLocation.longitude,
+            );
+
+          if (
+            hasUsableCollectorCoordinates(ownCollectorLocation) &&
+            Number.isFinite(collectorLatitude) &&
+            Number.isFinite(collectorLongitude)
+          ) {
+            points.push([
+              collectorLatitude,
+              collectorLongitude,
+            ]);
+          }
+        }
+
+        mapRef.current.fitBounds(
+          L.latLngBounds(points),
+          {
+            padding: [50, 50],
+            maxZoom: 17,
+          },
+        );
+      } else if (
+        getStoredRole() === "collector" &&
+        ownCollectorLocation
+      ) {
+        const collectorLatitude =
+          Number(
+            ownCollectorLocation.latitude,
+          );
+        const collectorLongitude =
+          Number(
+            ownCollectorLocation.longitude,
+          );
+
+        if (
+          hasUsableCollectorCoordinates(ownCollectorLocation) &&
+          Number.isFinite(collectorLatitude) &&
+          Number.isFinite(collectorLongitude)
+        ) {
+          mapRef.current.setView(
+            [collectorLatitude, collectorLongitude],
+            17,
+          );
+        } else {
+          mapRef.current.setView(DEFAULT_CENTER, 14);
+        }
+      } else if (mappedBins.length === 0) {
+        mapRef.current.setView(DEFAULT_CENTER, 14);
+      }
+
+      hasAutoFocusedRef.current = true;
     }
 
     window.setTimeout(
       () => mapRef.current?.invalidateSize(),
       100,
     );
-  }, [visibleBins]);
+  }, [visibleBins, ownCollectorLocation]);
+
+  useEffect(() => {
+    const historyLayer = routeHistoryLayerRef.current;
+    if (!historyLayer) return;
+    historyLayer.clearLayers();
+
+    const grouped = new Map<number, CollectorHistoryPoint[]>();
+    collectorHistory.forEach((point) => {
+      const list = grouped.get(point.collector_id) || [];
+      list.push(point);
+      grouped.set(point.collector_id, list);
+    });
+
+    grouped.forEach((points) => {
+      const coordinates = points
+        .map((point) => [Number(point.latitude), Number(point.longitude)] as L.LatLngTuple)
+        .filter(([latitude, longitude]) =>
+          Number.isFinite(latitude) &&
+          latitude >= -90 && latitude <= 90 &&
+          Number.isFinite(longitude) &&
+          longitude >= -180 && longitude <= 180 &&
+          !(latitude === 0 && longitude === 0)
+        );
+
+      if (coordinates.length >= 2) {
+        L.polyline(coordinates, { weight: 5, opacity: 0.65 }).addTo(historyLayer);
+      }
+    });
+  }, [collectorHistory]);
+
+  useEffect(() => {
+    const destinationLayer = destinationLayerRef.current;
+    if (!destinationLayer) return;
+    destinationLayer.clearLayers();
+
+    if (!ownCollectorLocation || !nextCollectionBin || !hasCoordinates(nextCollectionBin)) return;
+
+    const currentPoint: L.LatLngTuple = [Number(ownCollectorLocation.latitude), Number(ownCollectorLocation.longitude)];
+    const destinationPoint: L.LatLngTuple = [Number(nextCollectionBin.latitude), Number(nextCollectionBin.longitude)];
+
+    if (!currentPoint.every(Number.isFinite) || !destinationPoint.every(Number.isFinite)) return;
+
+    L.polyline([currentPoint, destinationPoint], { weight: 4, opacity: 0.85, dashArray: "10 10" })
+      .addTo(destinationLayer);
+  }, [ownCollectorLocation, nextCollectionBin]);
+
+  useEffect(() => {
+    const collectorLayer =
+      collectorLayerRef.current;
+
+    if (!collectorLayer) return;
+
+    collectorLayer.clearLayers();
+
+    collectorLocations.forEach((collector) => {
+      if (!hasUsableCollectorCoordinates(collector)) return;
+
+      const latitude = Number(collector.latitude);
+      const longitude = Number(collector.longitude);
+
+      if (
+        !Number.isFinite(latitude) ||
+        !Number.isFinite(longitude)
+      ) {
+        return;
+      }
+
+      const marker = L.marker(
+        [latitude, longitude],
+        {
+          icon: makeCollectorMarkerIcon(
+            collector,
+          ),
+          zIndexOffset: 1000,
+        },
+      ).addTo(collectorLayer);
+
+      marker.bindPopup(`
+        <div style="min-width: 220px; line-height: 1.5;">
+          <strong>🚛 ${collector.full_name}</strong><br />
+          ${collector.barangay_name || "No barangay"}<br />
+          Status: ${statusLabel(collector.location_status)}<br />
+          Last updated: ${formatDate(collector.last_updated_at)}<br />
+          Accuracy: ${
+            collector.accuracy_meters
+              ? `${Math.round(Number(collector.accuracy_meters))} meters`
+              : "Not available"
+          }
+        </div>
+      `);
+    });
+  }, [collectorLocations]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void loadData();
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const recenterOnCollector = () => {
+    if (
+      !mapRef.current ||
+      !hasUsableCollectorCoordinates(ownCollectorLocation)
+    ) {
+      return;
+    }
+
+    const latitude =
+      Number(
+        ownCollectorLocation.latitude,
+      );
+    const longitude =
+      Number(
+        ownCollectorLocation.longitude,
+      );
+
+    if (
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude)
+    ) {
+      return;
+    }
+
+    userMovedMapRef.current = false;
+
+    mapRef.current.setView(
+      [latitude, longitude],
+      18,
+      { animate: true },
+    );
+  };
 
   const createTask = async (bin: BinWithRequest) => {
     if (viewOnly) return;
@@ -468,6 +1078,7 @@ export default function MapView({
     needsCollection,
   ).length;
   const mappedCount = visibleBins.filter(hasCoordinates).length;
+  const historyPointCount = collectorHistory.length;
 
   return (
     <div className="space-y-5">
@@ -476,25 +1087,46 @@ export default function MapView({
           <h1 className="text-3xl font-black text-slate-900">
             {viewOnly
               ? "Garbage Bin and Collector Monitoring"
-              : "Collector Route Map"}
+              : getStoredRole() === "collector"
+                ? "Barangay Collection Route"
+                : "Collector Route Map"}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            All active bins registered by Purok Leaders are shown. Green-ringed bins are scheduled today.
+            {getStoredRole() === "collector"
+              ? `Showing active collection tasks across ${
+                  currentUser?.barangay_name ||
+                  "your assigned barangay"
+                }. One assigned truck can service multiple puroks in the barangay.`
+              : "All active bins registered by Purok Leaders are shown. Green-ringed bins are scheduled today."}
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={loadData}
-          className="flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-black text-slate-700"
-        >
-          <RefreshCw
-            className={`h-4 w-4 ${
-              loading ? "animate-spin" : ""
-            }`}
-          />
-          Refresh
-        </button>
+        <div className="flex flex-wrap gap-2">
+          {getStoredRole() === "collector" &&
+            hasUsableCollectorCoordinates(ownCollectorLocation) && (
+              <button
+                type="button"
+                onClick={recenterOnCollector}
+                className="flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-black text-slate-700"
+              >
+                <Crosshair className="h-4 w-4" />
+                Recenter on Truck
+              </button>
+            )}
+
+          <button
+            type="button"
+            onClick={loadData}
+            className="flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-black text-slate-700"
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${
+                loading ? "animate-spin" : ""
+              }`}
+            />
+            Refresh
+          </button>
+        </div>
       </header>
 
       {successMessage && (
@@ -509,8 +1141,21 @@ export default function MapView({
         </div>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Active Bins" value={visibleBins.length} />
+      {collectorLocationError && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-700">
+          {collectorLocationError}
+        </div>
+      )}
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <StatCard
+          label={
+            getStoredRole() === "collector"
+              ? "Barangay Collection Bins"
+              : "Active Bins"
+          }
+          value={visibleBins.length}
+        />
         <StatCard
           label="Scheduled Today"
           value={scheduledCount}
@@ -519,6 +1164,16 @@ export default function MapView({
           label="Needs Collection"
           value={needsCollectionCount}
         />
+        <StatCard
+          label="Collectors Online"
+          value={
+            collectorLocations.filter(
+              (collector) =>
+                collector.location_status === "online",
+            ).length
+          }
+        />
+        <StatCard label="Route Points (24h)" value={historyPointCount} />
       </div>
 
       <div className="flex flex-wrap gap-3 rounded-2xl border bg-white p-4 text-xs font-bold text-slate-600 shadow-sm">
@@ -527,7 +1182,25 @@ export default function MapView({
         <Legend color="#f97316" label="Full" />
         <Legend color="#eab308" label="Half-full" />
         <Legend color="#2563eb" label="Empty / normal" />
+        <Legend color="#16a34a" label="Collector online" />
+        <Legend color="#f59e0b" label="Collector idle" />
+        <Legend color="#64748b" label="Collector offline" />
       </div>
+
+      {nextCollectionBin && (
+        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4">
+          <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">
+            Next Collection Destination
+          </p>
+          <p className="mt-1 font-black text-blue-950">
+            {nextCollectionBin.bin_code} — {nextCollectionBin.location_name}
+          </p>
+          <p className="mt-1 text-xs text-blue-700">
+            {nextCollectionBin.purok_name || "No purok"}
+            {nextCollectionBin.request ? ` • ${statusLabel(nextCollectionBin.request.status)}` : ""}
+          </p>
+        </div>
+      )}
 
       <div className="grid gap-5 xl:grid-cols-[1.6fr_1fr]">
         <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
@@ -561,6 +1234,65 @@ export default function MapView({
           )}
         </aside>
       </div>
+
+      {collectorLocations.length > 0 && (
+        <section className="overflow-hidden rounded-2xl border bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <h2 className="font-black text-slate-900">
+              Authorized Collector Locations
+            </h2>
+            <span className="text-xs font-bold text-slate-500">
+              {collectorLocations.length} on duty
+            </span>
+          </div>
+
+          <div className="divide-y">
+            {collectorLocations.map((collector) => (
+              <button
+                key={collector.collector_id}
+                type="button"
+                onClick={() => {
+                  if (!hasUsableCollectorCoordinates(collector)) return;
+                  mapRef.current?.setView(
+                    [Number(collector.latitude), Number(collector.longitude)],
+                    17,
+                  );
+                }}
+                className="flex w-full flex-col gap-3 p-5 text-left transition hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="rounded-xl bg-emerald-50 p-2.5 text-emerald-700">
+                    <Truck className="h-5 w-5" />
+                  </div>
+
+                  <div>
+                    <p className="font-black text-slate-900">
+                      {collector.full_name}
+                    </p>
+
+                    <p className="mt-1 text-xs text-slate-500">
+                      {collector.barangay_name || "No barangay"}
+                      {" • "}
+                      Updated {formatDate(collector.last_updated_at)}
+                    </p>
+                  </div>
+                </div>
+
+                <Badge
+                  label={statusLabel(collector.location_status)}
+                  tone={
+                    collector.location_status === "online"
+                      ? "green"
+                      : collector.location_status === "idle"
+                        ? "blue"
+                        : "gray"
+                  }
+                />
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="overflow-hidden rounded-2xl border bg-white shadow-sm">
         <div className="flex items-center justify-between border-b px-5 py-4">
@@ -631,9 +1363,15 @@ export default function MapView({
           {!loading && visibleBins.length === 0 && (
             <div className="p-10 text-center text-slate-500">
               <AlertCircle className="mx-auto mb-2 h-8 w-8 text-slate-300" />
-              <p className="font-black">No garbage bins found</p>
+              <p className="font-black">
+                {getStoredRole() === "collector"
+                  ? "No garbage bins found in your assigned barangay"
+                  : "No garbage bins found"}
+              </p>
               <p className="mt-1 text-xs">
-                A Purok Leader must register a garbage bin first.
+                {getStoredRole() === "collector"
+                  ? "Registered bins from your assigned barangay will appear here even when they do not yet have a collection task."
+                  : "A Purok Leader must register a garbage bin first."}
               </p>
             </div>
           )}

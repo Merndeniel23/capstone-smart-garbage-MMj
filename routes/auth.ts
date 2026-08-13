@@ -45,6 +45,55 @@ function createToken(user: {
   );
 }
 
+function normalizeEmail(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+async function findPasswordResetUser(
+  identifier: string,
+) {
+  const [rows] = await db.query<any[]>(
+    `
+    SELECT
+      id,
+      full_name,
+      email,
+      recovery_email,
+      status
+    FROM users
+    WHERE LOWER(email) = ?
+       OR LOWER(COALESCE(recovery_email, '')) = ?
+    LIMIT 1
+    `,
+    [identifier, identifier],
+  );
+
+  return rows[0] || null;
+}
+
+function getResetRecipientEmail(
+  user: {
+    email: string;
+    recovery_email?: string | null;
+  },
+  identifier: string,
+) {
+  const recoveryEmail = normalizeEmail(
+    user.recovery_email,
+  );
+
+  if (
+    recoveryEmail &&
+    recoveryEmail === identifier
+  ) {
+    return recoveryEmail;
+  }
+
+  return normalizeEmail(user.email);
+}
+
 /**
  * PUBLIC: Load real barangays and puroks for registration.
  */
@@ -136,6 +185,8 @@ router.post(
             u.role,
             u.phone,
             u.address,
+            u.duty_latitude,
+            u.duty_longitude,
             u.status,
             b.name AS barangay_name,
             p.name AS purok_name
@@ -725,6 +776,20 @@ router.put(
           req.body.address || "",
         ).trim();
 
+      const submittedDutyLatitude =
+        req.body.dutyLatitude === null ||
+        req.body.dutyLatitude === undefined ||
+        req.body.dutyLatitude === ""
+          ? null
+          : Number(req.body.dutyLatitude);
+
+      const submittedDutyLongitude =
+        req.body.dutyLongitude === null ||
+        req.body.dutyLongitude === undefined ||
+        req.body.dutyLongitude === ""
+          ? null
+          : Number(req.body.dutyLongitude);
+
       if (!fullName) {
         return res.status(400).json({
           message:
@@ -737,7 +802,9 @@ router.put(
           `
           SELECT
             role,
-            address
+            address,
+            duty_latitude,
+            duty_longitude
           FROM users
           WHERE id = ?
           LIMIT 1
@@ -766,19 +833,63 @@ router.put(
           : submittedAddress ||
             currentUser.address;
 
+      let finalDutyLatitude =
+        currentUser.duty_latitude ?? null;
+      let finalDutyLongitude =
+        currentUser.duty_longitude ?? null;
+
+      if (currentUser.role === "purok_leader") {
+        const hasLatitude =
+          submittedDutyLatitude !== null;
+        const hasLongitude =
+          submittedDutyLongitude !== null;
+
+        if (hasLatitude !== hasLongitude) {
+          return res.status(400).json({
+            message:
+              "Both duty latitude and longitude are required.",
+          });
+        }
+
+        if (hasLatitude && hasLongitude) {
+          if (
+            !Number.isFinite(submittedDutyLatitude) ||
+            submittedDutyLatitude! < -90 ||
+            submittedDutyLatitude! > 90 ||
+            !Number.isFinite(submittedDutyLongitude) ||
+            submittedDutyLongitude! < -180 ||
+            submittedDutyLongitude! > 180
+          ) {
+            return res.status(400).json({
+              message:
+                "The selected duty location is invalid.",
+            });
+          }
+
+          finalDutyLatitude =
+            submittedDutyLatitude;
+          finalDutyLongitude =
+            submittedDutyLongitude;
+        }
+      }
+
       await db.execute(
         `
         UPDATE users
         SET
           full_name = ?,
           phone = ?,
-          address = ?
+          address = ?,
+          duty_latitude = ?,
+          duty_longitude = ?
         WHERE id = ?
         `,
         [
           fullName,
           phone || null,
           finalAddress || null,
+          finalDutyLatitude,
+          finalDutyLongitude,
           req.user!.id,
         ],
       );
@@ -797,6 +908,8 @@ router.put(
             u.role,
             u.phone,
             u.address,
+            u.duty_latitude,
+            u.duty_longitude,
             u.status,
             u.created_at
           FROM users u
@@ -833,41 +946,44 @@ router.post(
   "/forgot-password",
   async (req, res) => {
     try {
-      const email = String(
-        req.body.email || "",
-      )
-        .trim()
-        .toLowerCase();
+      const identifier = normalizeEmail(
+        req.body.email,
+      );
 
-      if (!email) {
+      if (!identifier) {
         return res.status(400).json({
           message:
             "Email is required.",
         });
       }
 
-      const [rows] =
-        await db.query<any[]>(
-          `
-          SELECT
-            id,
-            full_name,
-            email
-          FROM users
-          WHERE email = ?
-          LIMIT 1
-          `,
-          [email],
+      const user =
+        await findPasswordResetUser(
+          identifier,
         );
 
-      const user = rows[0];
-
       if (!user) {
-        return res.status(404).json({
+        return res.json({
           message:
-            "No account was found using that email.",
+            "If the account exists, an OTP has been sent to its registered email.",
         });
       }
+
+      if (user.status !== "active") {
+        return res.status(403).json({
+          message:
+            "This account is inactive. Please contact an administrator.",
+        });
+      }
+
+      const accountEmail =
+        normalizeEmail(user.email);
+
+      const recipientEmail =
+        getResetRecipientEmail(
+          user,
+          identifier,
+        );
 
       const otp = String(
         crypto.randomInt(
@@ -876,18 +992,16 @@ router.post(
         ),
       );
 
-      const expiresAt =
-        new Date(
-          Date.now() +
-            10 * 60 * 1000,
-        );
+      const expiresAt = new Date(
+        Date.now() + 10 * 60 * 1000,
+      );
 
       await db.execute(
         `
         DELETE FROM password_resets
         WHERE email = ?
         `,
-        [email],
+        [accountEmail],
       );
 
       await db.execute(
@@ -901,46 +1015,52 @@ router.post(
         VALUES (?, ?, ?)
         `,
         [
-          email,
+          accountEmail,
           otp,
           expiresAt,
         ],
       );
 
-      const recipientEmail =
-        email
-          .trim()
-          .toLowerCase();
+      if (
+        !String(
+          process.env.RESEND_API_KEY || "",
+        ).trim()
+      ) {
+        await db.execute(
+          `
+          DELETE FROM password_resets
+          WHERE email = ?
+          `,
+          [accountEmail],
+        );
 
-      console.log(
-        "Sending OTP to:",
-        JSON.stringify(
-          recipientEmail,
-        ),
-      );
+        return res.status(500).json({
+          message:
+            "Password-reset email service is not configured.",
+        });
+      }
 
       const { error } =
-        await resend.emails.send(
-          {
-            from:
-              "Smart Garbage <onboarding@resend.dev>",
-            to: recipientEmail,
-            subject:
-              "Smart Garbage Password Reset OTP",
-            html: `
-              <div style="font-family: Arial, sans-serif; max-width: 520px; margin: auto;">
-                <h2>Smart Garbage Password Reset</h2>
-                <p>Hello ${user.full_name},</p>
-                <p>Your 6-digit password reset OTP is:</p>
-                <div style="font-size: 32px; font-weight: bold; letter-spacing: 8px;">
-                  ${otp}
-                </div>
-                <p>This OTP will expire after 10 minutes.</p>
-                <p>If you did not request this reset, ignore this email.</p>
+        await resend.emails.send({
+          from:
+            process.env.RESEND_FROM_EMAIL ||
+            "Smart Garbage <onboarding@resend.dev>",
+          to: recipientEmail,
+          subject:
+            "Smart Garbage Password Reset OTP",
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 520px; margin: auto;">
+              <h2>Smart Garbage Password Reset</h2>
+              <p>Hello ${user.full_name},</p>
+              <p>Your 6-digit password reset OTP is:</p>
+              <div style="font-size: 32px; font-weight: bold; letter-spacing: 8px;">
+                ${otp}
               </div>
-            `,
-          },
-        );
+              <p>This OTP expires after 10 minutes.</p>
+              <p>If you did not request this reset, ignore this email.</p>
+            </div>
+          `,
+        });
 
       if (error) {
         console.error(
@@ -953,7 +1073,7 @@ router.post(
           DELETE FROM password_resets
           WHERE email = ?
           `,
-          [email],
+          [accountEmail],
         );
 
         return res.status(500).json({
@@ -964,7 +1084,7 @@ router.post(
 
       return res.json({
         message:
-          "OTP sent successfully. Check your email.",
+          "If the account exists, an OTP has been sent to its registered email.",
       });
     } catch (error) {
       console.error(
@@ -984,18 +1104,16 @@ router.post(
   "/verify-otp",
   async (req, res) => {
     try {
-      const email = String(
-        req.body.email || "",
-      )
-        .trim()
-        .toLowerCase();
+      const identifier = normalizeEmail(
+        req.body.email,
+      );
 
       const otp = String(
         req.body.otp || "",
       ).trim();
 
       if (
-        !email ||
+        !identifier ||
         !/^\d{6}$/.test(otp)
       ) {
         return res.status(400).json({
@@ -1003,6 +1121,21 @@ router.post(
             "A valid email and 6-digit OTP are required.",
         });
       }
+
+      const user =
+        await findPasswordResetUser(
+          identifier,
+        );
+
+      if (!user) {
+        return res.status(400).json({
+          message:
+            "Incorrect or expired OTP.",
+        });
+      }
+
+      const accountEmail =
+        normalizeEmail(user.email);
 
       const [rows] =
         await db.query<any[]>(
@@ -1018,7 +1151,7 @@ router.post(
           ORDER BY id DESC
           LIMIT 1
           `,
-          [email, otp],
+          [accountEmail, otp],
         );
 
       const resetRequest =
@@ -1027,7 +1160,7 @@ router.post(
       if (!resetRequest) {
         return res.status(400).json({
           message:
-            "Incorrect OTP.",
+            "Incorrect or expired OTP.",
         });
       }
 
@@ -1041,7 +1174,7 @@ router.post(
           DELETE FROM password_resets
           WHERE email = ?
           `,
-          [email],
+          [accountEmail],
         );
 
         return res.status(400).json({
@@ -1072,24 +1205,20 @@ router.post(
   "/reset-password",
   async (req, res) => {
     try {
-      const email = String(
-        req.body.email || "",
-      )
-        .trim()
-        .toLowerCase();
+      const identifier = normalizeEmail(
+        req.body.email,
+      );
 
       const otp = String(
         req.body.otp || "",
       ).trim();
 
-      const newPassword =
-        String(
-          req.body.newPassword ||
-            "",
-        );
+      const newPassword = String(
+        req.body.newPassword || "",
+      );
 
       if (
-        !email ||
+        !identifier ||
         !/^\d{6}$/.test(otp)
       ) {
         return res.status(400).json({
@@ -1098,14 +1227,27 @@ router.post(
         });
       }
 
-      if (
-        newPassword.length < 8
-      ) {
+      if (newPassword.length < 8) {
         return res.status(400).json({
           message:
             "The new password must contain at least 8 characters.",
         });
       }
+
+      const user =
+        await findPasswordResetUser(
+          identifier,
+        );
+
+      if (!user) {
+        return res.status(400).json({
+          message:
+            "Incorrect or expired OTP.",
+        });
+      }
+
+      const accountEmail =
+        normalizeEmail(user.email);
 
       const [resetRows] =
         await db.query<any[]>(
@@ -1119,7 +1261,7 @@ router.post(
           ORDER BY id DESC
           LIMIT 1
           `,
-          [email, otp],
+          [accountEmail, otp],
         );
 
       const resetRequest =
@@ -1128,7 +1270,7 @@ router.post(
       if (!resetRequest) {
         return res.status(400).json({
           message:
-            "Incorrect OTP.",
+            "Incorrect or expired OTP.",
         });
       }
 
@@ -1142,30 +1284,12 @@ router.post(
           DELETE FROM password_resets
           WHERE email = ?
           `,
-          [email],
+          [accountEmail],
         );
 
         return res.status(400).json({
           message:
             "The OTP has expired. Request a new one.",
-        });
-      }
-
-      const [userRows] =
-        await db.query<any[]>(
-          `
-          SELECT id
-          FROM users
-          WHERE email = ?
-          LIMIT 1
-          `,
-          [email],
-        );
-
-      if (!userRows[0]) {
-        return res.status(404).json({
-          message:
-            "User account was not found.",
         });
       }
 
@@ -1175,25 +1299,41 @@ router.post(
           12,
         );
 
-      await db.execute(
-        `
-        UPDATE users
-        SET password_hash = ?
-        WHERE email = ?
-        `,
-        [
-          passwordHash,
-          email,
-        ],
-      );
+      const connection =
+        await db.getConnection();
 
-      await db.execute(
-        `
-        DELETE FROM password_resets
-        WHERE email = ?
-        `,
-        [email],
-      );
+      try {
+        await connection.beginTransaction();
+
+        await connection.execute(
+          `
+          UPDATE users
+          SET
+            password_hash = ?,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+          `,
+          [
+            passwordHash,
+            user.id,
+          ],
+        );
+
+        await connection.execute(
+          `
+          DELETE FROM password_resets
+          WHERE email = ?
+          `,
+          [accountEmail],
+        );
+
+        await connection.commit();
+      } catch (transactionError) {
+        await connection.rollback();
+        throw transactionError;
+      } finally {
+        connection.release();
+      }
 
       return res.json({
         message:

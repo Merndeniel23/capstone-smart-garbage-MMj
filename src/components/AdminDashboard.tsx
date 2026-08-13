@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Shield, Users, Activity, Package, Map, CheckCircle, CreditCard, LoaderCircle, XCircle, Trash2, MessageSquare, UserRoundCheck } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Shield, Users, Activity, Map, CheckCircle, CreditCard, LoaderCircle, XCircle, Trash2, MessageSquare, UserRoundCheck, BarChart3, RefreshCw } from 'lucide-react';
 
 interface PendingCollector {
   id: number;
@@ -18,6 +18,24 @@ interface DashboardSummary {
   purokLeaders: number;
   garbageBins: number;
   pendingComplaints: number;
+}
+
+interface AnalyticsItem {
+  role?: string;
+  status?: string;
+  month_key?: string;
+  month_label?: string;
+  total: number | string;
+  completed?: number | string;
+}
+
+interface DashboardAnalytics {
+  usersByRole: AnalyticsItem[];
+  complaintsPerMonth: AnalyticsItem[];
+  registrationsPerMonth: AnalyticsItem[];
+  binsByStatus: AnalyticsItem[];
+  collectionsPerMonth: AnalyticsItem[];
+  complaintsByStatus: AnalyticsItem[];
 }
 
 interface AdminDashboardProps {
@@ -40,6 +58,17 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
   });
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [summaryError, setSummaryError] = useState('');
+
+  const [analytics, setAnalytics] = useState<DashboardAnalytics>({
+    usersByRole: [],
+    complaintsPerMonth: [],
+    registrationsPerMonth: [],
+    binsByStatus: [],
+    collectionsPerMonth: [],
+    complaintsByStatus: [],
+  });
+  const [analyticsLoading, setAnalyticsLoading] = useState(true);
+  const [analyticsError, setAnalyticsError] = useState('');
 
   const loadDashboardSummary = useCallback(async () => {
     const token =
@@ -88,6 +117,66 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
     }
   }, []);
 
+  const loadAnalytics = useCallback(async () => {
+    const token =
+      localStorage.getItem('token') || sessionStorage.getItem('token') || '';
+
+    if (!token) {
+      setAnalyticsError('Admin session not found. Please sign in again.');
+      setAnalyticsLoading(false);
+      return;
+    }
+
+    try {
+      setAnalyticsLoading(true);
+      setAnalyticsError('');
+
+      const response = await fetch('/api/admin/analytics', {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Unable to load analytics.');
+      }
+
+      const source = data?.analytics || {};
+
+      setAnalytics({
+        usersByRole: Array.isArray(source.usersByRole)
+          ? source.usersByRole
+          : [],
+        complaintsPerMonth: Array.isArray(source.complaintsPerMonth)
+          ? source.complaintsPerMonth
+          : [],
+        registrationsPerMonth: Array.isArray(source.registrationsPerMonth)
+          ? source.registrationsPerMonth
+          : [],
+        binsByStatus: Array.isArray(source.binsByStatus)
+          ? source.binsByStatus
+          : [],
+        collectionsPerMonth: Array.isArray(source.collectionsPerMonth)
+          ? source.collectionsPerMonth
+          : [],
+        complaintsByStatus: Array.isArray(source.complaintsByStatus)
+          ? source.complaintsByStatus
+          : [],
+      });
+    } catch (error) {
+      console.error('Analytics fetch error:', error);
+      setAnalyticsError(
+        error instanceof Error
+          ? error.message
+          : 'Cannot connect to the server.',
+      );
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  }, []);
+
   const loadPendingCollectors = useCallback(async () => {
     const token =
       localStorage.getItem('token') || sessionStorage.getItem('token') || '';
@@ -129,9 +218,10 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
   useEffect(() => {
     void Promise.all([
       loadDashboardSummary(),
+      loadAnalytics(),
       loadPendingCollectors(),
     ]);
-  }, [loadDashboardSummary, loadPendingCollectors]);
+  }, [loadDashboardSummary, loadAnalytics, loadPendingCollectors]);
 
   const reviewCollector = async (
     collectorId: number,
@@ -190,6 +280,41 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
   const savedPay = typeof window !== 'undefined' ? localStorage.getItem('sg_payment_history') : null;
   const payments = savedPay ? JSON.parse(savedPay) : [];
   const pendingPayments = payments.filter((p: any) => p.status === 'Pending Verification');
+
+  const complaintsChart = useMemo(
+    () =>
+      analytics.complaintsPerMonth.map((item) => ({
+        label: item.month_label || item.month_key || 'Month',
+        value: Number(item.total || 0),
+      })),
+    [analytics.complaintsPerMonth],
+  );
+
+  const registrationsChart = useMemo(
+    () =>
+      analytics.registrationsPerMonth.map((item) => ({
+        label: item.month_label || item.month_key || 'Month',
+        value: Number(item.total || 0),
+      })),
+    [analytics.registrationsPerMonth],
+  );
+
+  const collectionChart = useMemo(
+    () =>
+      analytics.collectionsPerMonth.map((item) => ({
+        label: item.month_label || item.month_key || 'Month',
+        value: Number(item.total || 0),
+        completed: Number(item.completed || 0),
+      })),
+    [analytics.collectionsPerMonth],
+  );
+
+  const maxAnalyticsValue = Math.max(
+    1,
+    ...complaintsChart.map((item) => item.value),
+    ...registrationsChart.map((item) => item.value),
+    ...collectionChart.map((item) => item.value),
+  );
 
   const systemMetrics = [
     {
@@ -276,52 +401,136 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Recent System Activity */}
-        <div className="lg:col-span-2 bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden flex flex-col">
-          <div className="p-8 border-b border-slate-50 flex justify-between items-center">
-            <h2 className="text-xl font-black text-slate-800">System Performance</h2>
-            <button className="text-xs font-bold text-emerald-600 hover:text-emerald-700 transition-colors">Generate Global Report</button>
-          </div>
-          
-          <div className="p-8 flex-1">
-             <div className="h-64 bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200 flex items-center justify-center relative overflow-hidden group">
-                <div className="absolute inset-x-8 bottom-8 flex items-end gap-2 h-32">
-                  {[40, 70, 45, 90, 65, 80, 55, 95, 75, 85].map((h, i) => (
-                    <div 
-                      key={i} 
-                      style={{ height: `${h}%` }} 
-                      className={`flex-1 rounded-t-lg transition-all duration-500 group-hover:scale-y-110 origin-bottom ${
-                        h > 80 ? 'bg-rose-400' : 'bg-emerald-400'
-                      }`}
-                    />
-                  ))}
+        {/* Live Analytics */}
+        <div className="lg:col-span-2 space-y-6">
+          <div className="overflow-hidden rounded-[2.5rem] border border-slate-100 bg-white shadow-sm">
+            <div className="flex flex-col gap-3 border-b border-slate-100 p-6 sm:flex-row sm:items-center sm:justify-between sm:p-8">
+              <div>
+                <div className="flex items-center gap-2 text-emerald-600">
+                  <BarChart3 className="h-4 w-4" />
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em]">
+                    Live Analytics
+                  </span>
                 </div>
-                <div className="z-10 bg-white/80 backdrop-blur-sm px-4 py-2 rounded-xl shadow-xl border border-white flex items-center gap-2">
-                   <Activity className="w-4 h-4 text-emerald-600" />
-                   <span className="text-xs font-bold text-slate-700 italic">Live Feed: Collection Efficiency +4.2%</span>
+                <h2 className="mt-1 text-xl font-black text-slate-800">
+                  System Performance
+                </h2>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentScreen('reports')}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wide text-slate-700"
+                >
+                  Open Reports
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void loadAnalytics()}
+                  className="flex items-center gap-1 rounded-xl bg-emerald-700 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-white"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {analyticsError && (
+              <div className="mx-6 mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs font-bold text-rose-700 sm:mx-8">
+                {analyticsError}
+              </div>
+            )}
+
+            <div className="p-6 sm:p-8">
+              {analyticsLoading ? (
+                <div className="flex min-h-64 items-center justify-center gap-2 rounded-[2rem] bg-slate-50 text-slate-500">
+                  <LoaderCircle className="h-5 w-5 animate-spin" />
+                  <span className="text-sm font-bold">Loading analytics...</span>
                 </div>
-             </div>
+              ) : (
+                <div className="space-y-8">
+                  <AnalyticsBarChart
+                    title="Complaints per Month"
+                    items={complaintsChart}
+                    maxValue={maxAnalyticsValue}
+                    emptyMessage="No complaint records yet."
+                    barClass="bg-rose-400"
+                  />
+
+                  <AnalyticsBarChart
+                    title="User Registrations per Month"
+                    items={registrationsChart}
+                    maxValue={maxAnalyticsValue}
+                    emptyMessage="No registration records yet."
+                    barClass="bg-blue-500"
+                  />
+
+                  <AnalyticsBarChart
+                    title="Collection Requests per Month"
+                    items={collectionChart}
+                    maxValue={maxAnalyticsValue}
+                    emptyMessage="No collection records yet."
+                    barClass="bg-emerald-500"
+                  />
+                </div>
+              )}
+            </div>
           </div>
 
-          <div className="px-8 pb-8 grid grid-cols-3 gap-4">
-             <button 
-               onClick={() => setCurrentScreen('user-management')}
-               className="p-4 bg-slate-50 rounded-2xl flex flex-col items-center gap-2 hover:bg-emerald-50 transition-colors group border border-transparent hover:border-emerald-100"
-             >
-                <Users className="w-5 h-5 text-slate-400 group-hover:text-emerald-500 transition-colors" />
-                <span className="text-[10px] font-black text-slate-500 uppercase">User Accounts</span>
-             </button>
-             <button 
-               onClick={() => setCurrentScreen('route-map')}
-               className="p-4 bg-slate-50 rounded-2xl flex flex-col items-center gap-2 hover:bg-blue-50 transition-colors group border border-transparent hover:border-blue-100"
-             >
-                <Map className="w-5 h-5 text-slate-400 group-hover:text-blue-500 transition-colors" />
-                <span className="text-[10px] font-black text-slate-500 uppercase">System Map</span>
-             </button>
-             <button className="p-4 bg-slate-50 rounded-2xl flex flex-col items-center gap-2 hover:bg-amber-50 transition-colors group border border-transparent hover:border-amber-100">
-                <Shield className="w-5 h-5 text-slate-400 group-hover:text-amber-500 transition-colors" />
-                <span className="text-[10px] font-black text-slate-500 uppercase">Security Logs</span>
-             </button>
+          <div className="grid gap-6 md:grid-cols-2">
+            <AnalyticsBreakdown
+              title="Users by Role"
+              items={analytics.usersByRole.map((item) => ({
+                label:
+                  item.role === 'purok_leader'
+                    ? 'Purok Leader'
+                    : item.role === 'admin'
+                      ? 'Barangay Captain'
+                      : item.role === 'collector'
+                        ? 'Collector'
+                        : 'Resident',
+                value: Number(item.total || 0),
+              }))}
+            />
+
+            <AnalyticsBreakdown
+              title="Garbage Bins by Status"
+              items={analytics.binsByStatus.map((item) => ({
+                label: String(item.status || 'Unknown')
+                  .replaceAll('_', ' ')
+                  .replace(/\b\w/g, (letter) => letter.toUpperCase()),
+                value: Number(item.total || 0),
+              }))}
+            />
+          </div>
+
+          <div className="grid grid-cols-3 gap-4">
+            <button 
+              onClick={() => setCurrentScreen('user-management')}
+              className="flex flex-col items-center gap-2 rounded-2xl border border-transparent bg-white p-4 shadow-sm transition-colors hover:border-emerald-100 hover:bg-emerald-50"
+            >
+              <Users className="h-5 w-5 text-slate-400" />
+              <span className="text-[10px] font-black uppercase text-slate-500">User Accounts</span>
+            </button>
+
+            <button 
+              onClick={() => setCurrentScreen('route-map')}
+              className="flex flex-col items-center gap-2 rounded-2xl border border-transparent bg-white p-4 shadow-sm transition-colors hover:border-blue-100 hover:bg-blue-50"
+            >
+              <Map className="h-5 w-5 text-slate-400" />
+              <span className="text-[10px] font-black uppercase text-slate-500">System Map</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setCurrentScreen('reports')}
+              className="flex flex-col items-center gap-2 rounded-2xl border border-transparent bg-white p-4 shadow-sm transition-colors hover:border-amber-100 hover:bg-amber-50"
+            >
+              <Shield className="h-5 w-5 text-slate-400" />
+              <span className="text-[10px] font-black uppercase text-slate-500">Reports</span>
+            </button>
           </div>
         </div>
 
@@ -432,6 +641,7 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
                 onClick={() => {
                   void loadPendingCollectors();
                   void loadDashboardSummary();
+                  void loadAnalytics();
                 }}
                 className="text-[10px] font-black uppercase tracking-wider text-emerald-600 hover:text-emerald-700"
               >
@@ -542,5 +752,115 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
         </div>
       </div>
     </div>
+  );
+}
+
+function AnalyticsBarChart({
+  title,
+  items,
+  maxValue,
+  emptyMessage,
+  barClass,
+}: {
+  title: string;
+  items: Array<{ label: string; value: number }>;
+  maxValue: number;
+  emptyMessage: string;
+  barClass: string;
+}) {
+  return (
+    <section>
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-sm font-black text-slate-800">{title}</h3>
+        <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+          Database Records
+        </span>
+      </div>
+
+      {items.length === 0 ? (
+        <div className="rounded-2xl bg-slate-50 p-5 text-center text-xs font-bold text-slate-400">
+          {emptyMessage}
+        </div>
+      ) : (
+        <div className="flex h-48 items-end gap-3 overflow-x-auto rounded-[1.5rem] bg-slate-50 px-4 pb-4 pt-8">
+          {items.map((item) => {
+            const height = Math.max(
+              item.value > 0 ? 12 : 4,
+              (item.value / maxValue) * 100,
+            );
+
+            return (
+              <div
+                key={`${title}-${item.label}`}
+                className="flex min-w-[54px] flex-1 flex-col items-center justify-end"
+              >
+                <span className="mb-2 text-[10px] font-black text-slate-700">
+                  {item.value}
+                </span>
+
+                <div
+                  className={`w-full rounded-t-xl transition-all duration-500 ${barClass}`}
+                  style={{ height: `${height}%` }}
+                  title={`${item.label}: ${item.value}`}
+                />
+
+                <span className="mt-2 max-w-[72px] truncate text-[9px] font-bold text-slate-400">
+                  {item.label}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AnalyticsBreakdown({
+  title,
+  items,
+}: {
+  title: string;
+  items: Array<{ label: string; value: number }>;
+}) {
+  const total = items.reduce((sum, item) => sum + item.value, 0);
+
+  return (
+    <section className="rounded-[2rem] border border-slate-100 bg-white p-6 shadow-sm">
+      <h3 className="text-lg font-black text-slate-800">{title}</h3>
+
+      {items.length === 0 ? (
+        <p className="mt-4 text-xs font-bold text-slate-400">
+          No analytics records yet.
+        </p>
+      ) : (
+        <div className="mt-5 space-y-4">
+          {items.map((item) => {
+            const percentage =
+              total > 0 ? Math.round((item.value / total) * 100) : 0;
+
+            return (
+              <div key={`${title}-${item.label}`}>
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-600">
+                    {item.label}
+                  </span>
+                  <span className="text-xs font-black text-slate-900">
+                    {item.value} ({percentage}%)
+                  </span>
+                </div>
+
+                <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-emerald-500"
+                    style={{ width: `${percentage}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }

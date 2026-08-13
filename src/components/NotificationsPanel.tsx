@@ -1,405 +1,842 @@
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { useAppState } from '../context/AppStateContext';
-import { 
-  Bell, 
-  Megaphone, 
-  Plus, 
-  Clock, 
-  ShieldAlert, 
-  Send,
-  Info,
-  Sparkles,
-  Leaf,
-  Calendar,
-  X,
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import {
+  AlertTriangle,
+  Bell,
   Check,
-  Volume2,
+  Loader2,
+  Megaphone,
+  Plus,
+  RefreshCw,
+  Send,
+  ShieldAlert,
   Trash2,
-  Lock,
-  Compass
-} from 'lucide-react';
+  X,
+} from "lucide-react";
 
 interface NotificationsPanelProps {
-  role: 'household' | 'collector' | 'leader' | 'admin';
+  role:
+    | "household"
+    | "collector"
+    | "leader"
+    | "admin"
+    | "super_admin";
 }
 
-export default function NotificationsPanel({ role }: NotificationsPanelProps) {
-  const { currentUser, userProfile, notifications, addNotification, markNotificationRead, markAllNotificationsRead, deleteNotification } = useAppState();
-  const activeUser = currentUser || userProfile;
-  const username = activeUser?.name || 'demo_resident';
+type NotificationPriority =
+  | "emergency"
+  | "schedule"
+  | "notice";
 
-  const [showCompose, setShowCompose] = useState(false);
-  const [activeFilter, setActiveFilter] = useState<'all' | 'unread' | 'emergency'>('all');
-  
-  // Compose states
-  const [title, setTitle] = useState('');
-  const [priority, setPriority] = useState<'emergency' | 'schedule' | 'notice'>('notice');
-  const [message, setMessage] = useState('');
-  const [audience, setAudience] = useState('Everyone (Barangay Central)');
-  const [targetPurok, setTargetPurok] = useState('All Puroks');
-  const [validationError, setValidationError] = useState('');
+type NotificationItem = {
+  id: number;
+  recipient_user_id?: number | null;
+  recipient_role?: string | null;
+  barangay_id?: number | null;
+  purok_id?: number | null;
+  notification_type: string;
+  priority: NotificationPriority;
+  title: string;
+  message: string;
+  related_entity_type?: string | null;
+  related_entity_id?: number | null;
+  created_by?: number | null;
+  created_by_name?: string | null;
+  barangay_name?: string | null;
+  purok_name?: string | null;
+  is_read: number | boolean;
+  read_at?: string | null;
+  created_at: string;
+};
 
-  const handleComposeSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+function getToken(): string {
+  return (
+    localStorage.getItem("token") ||
+    sessionStorage.getItem("token") ||
+    localStorage.getItem("authToken") ||
+    sessionStorage.getItem("authToken") ||
+    ""
+  );
+}
+
+function normalizeRole(role: NotificationsPanelProps["role"]) {
+  if (role === "household") return "resident";
+  if (role === "leader") return "purok_leader";
+  return role;
+}
+
+async function apiRequest(
+  url: string,
+  options: RequestInit = {},
+) {
+  const token = getToken();
+
+  if (!token) {
+    throw new Error(
+      "Login session is missing. Please log in again.",
+    );
+  }
+
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...(options.headers || {}),
+    },
+  });
+
+  const data = await response
+    .json()
+    .catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      data.message || "Request failed.",
+    );
+  }
+
+  return data;
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "No date";
+
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleString();
+}
+
+function priorityStyle(
+  priority: NotificationPriority,
+) {
+  if (priority === "emergency") {
+    return {
+      container:
+        "border-rose-200 bg-rose-50",
+      badge:
+        "bg-rose-600 text-white",
+      label: "Emergency",
+    };
+  }
+
+  if (priority === "schedule") {
+    return {
+      container:
+        "border-amber-200 bg-amber-50",
+      badge:
+        "bg-amber-600 text-white",
+      label: "Schedule",
+    };
+  }
+
+  return {
+    container:
+      "border-emerald-200 bg-emerald-50",
+    badge:
+      "bg-emerald-700 text-white",
+    label: "Official Notice",
+  };
+}
+
+export default function NotificationsPanel({
+  role,
+}: NotificationsPanelProps) {
+  const normalizedRole = normalizeRole(role);
+
+  const canBroadcast =
+    normalizedRole === "super_admin" ||
+    normalizedRole === "admin" ||
+    normalizedRole === "purok_leader";
+
+  const [notifications, setNotifications] =
+    useState<NotificationItem[]>([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [saving, setSaving] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
+
+  const [successMessage, setSuccessMessage] =
+    useState("");
+
+  const [showCompose, setShowCompose] =
+    useState(false);
+
+  const [activeFilter, setActiveFilter] =
+    useState<
+      "all" | "unread" | "emergency"
+    >("all");
+
+  const [title, setTitle] =
+    useState("");
+
+  const [message, setMessage] =
+    useState("");
+
+  const [priority, setPriority] =
+    useState<NotificationPriority>(
+      "notice",
+    );
+
+  const [recipientRole, setRecipientRole] =
+    useState("");
+
+  const loadNotifications = async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const data = await apiRequest(
+        "/api/notifications",
+      );
+
+      setNotifications(
+        Array.isArray(data.notifications)
+          ? data.notifications
+          : [],
+      );
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to load notifications.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadNotifications();
+
+    const timer = window.setInterval(() => {
+      void loadNotifications();
+    }, 10000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const filteredNotifications =
+    useMemo(() => {
+      return notifications.filter(
+        (item) => {
+          if (
+            activeFilter === "unread" &&
+            Boolean(Number(item.is_read))
+          ) {
+            return false;
+          }
+
+          if (
+            activeFilter === "emergency" &&
+            item.priority !== "emergency"
+          ) {
+            return false;
+          }
+
+          return true;
+        },
+      );
+    }, [
+      notifications,
+      activeFilter,
+    ]);
+
+  const unreadCount =
+    notifications.filter(
+      (item) =>
+        !Boolean(Number(item.is_read)),
+    ).length;
+
+  const unreadEmergency =
+    notifications.find(
+      (item) =>
+        item.priority === "emergency" &&
+        !Boolean(Number(item.is_read)),
+    ) || null;
+
+  const submitBroadcast = async (
+    event: React.FormEvent,
+  ) => {
+    event.preventDefault();
+
     if (!title.trim() || !message.trim()) {
-      setValidationError('Please specify a title and complete explanation text.');
+      setError(
+        "Title and message are required.",
+      );
       return;
     }
 
-    addNotification({
-      title,
-      priority,
-      message,
-      audience: targetPurok === 'All Puroks' ? audience : `${targetPurok} Only`,
-      author: role === 'leader' ? 'Purok Leader' : 'Barangay Admin',
-      date: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
-      time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-      purokTarget: targetPurok === 'All Puroks' ? undefined : targetPurok,
-    });
+    setSaving(true);
+    setError("");
+    setSuccessMessage("");
 
-    setTitle('');
-    setMessage('');
-    setValidationError('');
-    setShowCompose(false);
-  };
+    try {
+      const data = await apiRequest(
+        "/api/notifications",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            title: title.trim(),
+            message: message.trim(),
+            priority,
+            notificationType:
+              priority === "emergency"
+                ? "emergency_broadcast"
+                : priority === "schedule"
+                  ? "schedule_update"
+                  : "official_notice",
+            recipientRole:
+              recipientRole || null,
+          }),
+        },
+      );
 
-  const handleMarkAsRead = (id: string) => {
-    markNotificationRead(id, username);
-  };
+      setSuccessMessage(
+        data.message ||
+          "Notification broadcast successfully.",
+      );
 
-  const handleMarkAllRead = () => {
-    markAllNotificationsRead(username);
-  };
+      setTitle("");
+      setMessage("");
+      setPriority("notice");
+      setRecipientRole("");
+      setShowCompose(false);
 
-  const handleDeleteBulletin = (id: string) => {
-    deleteNotification(id);
-  };
-
-  // Filter criteria logic
-  const filteredBulletins = notifications.filter(b => {
-    if (activeFilter === 'emergency' && b.priority !== 'emergency') return false;
-    if (activeFilter === 'unread' && b.readBy.includes(username)) return false;
-
-    if (role === 'collector') {
-      if (b.audience.includes('Purok') && !b.audience.includes('Collectors')) {
-        return false;
-      }
+      await loadNotifications();
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to broadcast notification.",
+      );
+    } finally {
+      setSaving(false);
     }
+  };
 
-    if (role === 'household') {
-      if (b.purokTarget && b.purokTarget !== 'Purok 4') {
-        return false;
-      }
+  const markRead = async (
+    notificationId: number,
+  ) => {
+    setError("");
+
+    try {
+      await apiRequest(
+        `/api/notifications/${notificationId}/read`,
+        {
+          method: "PATCH",
+        },
+      );
+
+      setNotifications((current) =>
+        current.map((item) =>
+          item.id === notificationId
+            ? {
+                ...item,
+                is_read: 1,
+                read_at:
+                  new Date().toISOString(),
+              }
+            : item,
+        ),
+      );
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to mark notification as read.",
+      );
     }
+  };
 
-    return true;
-  });
+  const markAllRead = async () => {
+    setError("");
 
-  const getPriorityAccent = (priority: string) => {
-    switch (priority) {
-      case 'emergency':
-        return {
-          bg: 'bg-rose-50 border-rose-100 hover:border-rose-250',
-          badge: 'bg-rose-500 text-white',
-          text: 'text-rose-700',
-          label: '🚨 General Emergency'
-        };
-      case 'schedule':
-        return {
-          bg: 'bg-amber-50 border-amber-105 hover:border-amber-250',
-          badge: 'bg-amber-505 text-white bg-amber-600',
-          text: 'text-amber-800',
-          label: '📅 Schedule Update'
-        };
-      case 'notice':
-      default:
-        return {
-          bg: 'bg-[#ECFDF5] border-[#D1FAE5] hover:border-[#10B981]',
-          badge: 'bg-emerald-600 text-white',
-          text: 'text-emerald-800',
-          label: '📢 Official Notice'
-        };
+    try {
+      const data = await apiRequest(
+        "/api/notifications/read-all",
+        {
+          method: "PATCH",
+        },
+      );
+
+      setSuccessMessage(
+        data.message ||
+          "All notifications marked as read.",
+      );
+
+      setNotifications((current) =>
+        current.map((item) => ({
+          ...item,
+          is_read: 1,
+          read_at:
+            item.read_at ||
+            new Date().toISOString(),
+        })),
+      );
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to mark notifications as read.",
+      );
+    }
+  };
+
+  const deleteNotification = async (
+    notificationId: number,
+  ) => {
+    const confirmed =
+      window.confirm(
+        "Delete this notification?",
+      );
+
+    if (!confirmed) return;
+
+    setError("");
+
+    try {
+      await apiRequest(
+        `/api/notifications/${notificationId}`,
+        {
+          method: "DELETE",
+        },
+      );
+
+      setNotifications((current) =>
+        current.filter(
+          (item) =>
+            item.id !== notificationId,
+        ),
+      );
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to delete notification.",
+      );
     }
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500 pb-20 md:pb-0">
-      
-      {/* HEADER SECTION */}
-      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+    <div className="space-y-6 pb-20 md:pb-0">
+      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <div className="flex items-center gap-2 text-emerald-600 font-extrabold text-[10px] uppercase tracking-[0.2em]">
-            <Megaphone className="w-3.5 h-3.5" />
-            Barangay Broadcasters
+          <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">
+            <Megaphone className="h-4 w-4" />
+            Real-Time Notification Center
           </div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight">System Alerts & Notices</h1>
+
+          <h1 className="mt-1 text-3xl font-black tracking-tight text-slate-900">
+            System Alerts & Notices
+          </h1>
+
+          <p className="mt-1 text-sm text-slate-500">
+            {unreadCount} unread notification
+            {unreadCount === 1 ? "" : "s"}
+          </p>
         </div>
 
-        {/* Action triggers depending on role */}
-        <div className="flex items-center gap-2.5">
-          {role !== 'household' && role !== 'collector' ? (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              void loadNotifications()
+            }
+            className="flex items-center gap-2 rounded-xl border bg-white px-4 py-3 text-xs font-black uppercase text-slate-700"
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${
+                loading
+                  ? "animate-spin"
+                  : ""
+              }`}
+            />
+            Refresh
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              void markAllRead()
+            }
+            className="rounded-xl border bg-white px-4 py-3 text-xs font-black uppercase text-slate-700"
+          >
+            Mark All Read
+          </button>
+
+          {canBroadcast && (
             <button
-              onClick={() => setShowCompose(true)}
-              className="flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-xs font-black uppercase tracking-widest px-5 py-3 rounded-2xl shadow-md transition-all border-none cursor-pointer"
+              type="button"
+              onClick={() =>
+                setShowCompose(true)
+              }
+              className="flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 text-xs font-black uppercase text-white"
             >
-              <Plus className="w-4 h-4 shrink-0" />
-              <span>Broadcast Bulletin</span>
-            </button>
-          ) : (
-            <button
-              onClick={handleMarkAllRead}
-              className="px-4.5 py-3 bg-white hover:bg-slate-50 border border-slate-200 text-[#1E293B] text-xs font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer"
-            >
-              Acknowledge All Open Alerts
+              <Plus className="h-4 w-4" />
+              Broadcast
             </button>
           )}
         </div>
-      </div>
+      </header>
 
-      {/* FILTER BUTTONS */}
-      <div className="flex gap-2.5 bg-slate-100 p-1.5 rounded-2xl max-w-sm">
-        {(['all', 'unread', 'emergency'] as const).map((f) => (
+      {unreadEmergency && (
+        <div className="rounded-[2rem] bg-gradient-to-r from-rose-700 to-red-600 p-6 text-white shadow-xl">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <span className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/15">
+                <span className="absolute inset-0 animate-ping rounded-2xl bg-white/10" />
+                <AlertTriangle className="relative h-7 w-7" />
+              </span>
+
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-rose-100">
+                  Active Emergency Alert
+                </p>
+
+                <h2 className="mt-1 text-xl font-black">
+                  {unreadEmergency.title}
+                </h2>
+
+                <p className="mt-2 max-w-3xl text-sm font-semibold text-white/90">
+                  {unreadEmergency.message}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                void markRead(
+                  unreadEmergency.id,
+                )
+              }
+              className="shrink-0 rounded-xl bg-white px-5 py-3 text-xs font-black uppercase text-rose-700"
+            >
+              Acknowledge Alert
+            </button>
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-bold text-rose-700">
+          <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" />
+          {error}
+        </div>
+      )}
+
+      {successMessage && (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-700">
+          {successMessage}
+        </div>
+      )}
+
+      <div className="flex w-fit gap-2 rounded-2xl bg-slate-100 p-1">
+        {[
+          ["all", "All Alerts"],
+          ["unread", "Unread"],
+          ["emergency", "Emergency"],
+        ].map(([id, label]) => (
           <button
-            key={f}
-            onClick={() => setActiveFilter(f)}
-            className={`flex-1 text-center py-2 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer ${
-              activeFilter === f 
-                ? 'bg-white shadow text-slate-900' 
-                : 'text-slate-450 hover:text-slate-650'
+            key={id}
+            type="button"
+            onClick={() =>
+              setActiveFilter(
+                id as typeof activeFilter,
+              )
+            }
+            className={`rounded-xl px-4 py-2 text-xs font-black ${
+              activeFilter === id
+                ? "bg-white text-slate-900 shadow-sm"
+                : "text-slate-500"
             }`}
           >
-            {f === 'all' ? 'All Alerts' : f === 'unread' ? 'Unacknowledged' : 'Critical'}
+            {label}
           </button>
         ))}
       </div>
 
-      {/* EMERGENCY HIGHLIGHT RIBBON */}
-      {notifications.some(b => b.priority === 'emergency' && !b.readBy.includes(username)) && (
-        <div className="bg-gradient-to-r from-rose-500 to-red-600 rounded-[2rem] p-6 text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-lg shadow-rose-950/15">
-          <div className="space-y-1.5 flex-1">
-            <span className="bg-white/20 text-white font-extrabold text-[8px] uppercase tracking-widest px-2.5 py-1 rounded-md">
-              URGENT BROADCAST ACTIVE
-            </span>
-            <p className="text-sm font-black leading-tight text-white/95">
-              Refuse Collectors have modified route guidelines due to incoming high winds. Securing bin lids is strictly requested.
-            </p>
-          </div>
-          <button
-            onClick={() => {
-              const typh = notifications.find(b => b.priority === 'emergency');
-              if (typh) handleMarkAsRead(typh.id);
-            }}
-            className="px-5 py-3.5 bg-white text-rose-700 hover:bg-rose-50 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow border-none text-nowrap"
-          >
-            Acknowledge Danger Alert
-          </button>
-        </div>
-      )}
+      <section className="space-y-4">
+        {loading &&
+          notifications.length === 0 && (
+            <div className="rounded-[2rem] border bg-white p-12 text-center shadow-sm">
+              <Loader2 className="mx-auto h-7 w-7 animate-spin text-emerald-700" />
+              <p className="mt-3 text-sm font-bold text-slate-500">
+                Loading notifications...
+              </p>
+            </div>
+          )}
 
-      {/* BULLETINS LIST BOARD */}
-      <div className="space-y-4">
-        {filteredBulletins.length === 0 ? (
-          <div className="text-center py-16 bg-white rounded-[2.5rem] border border-slate-100 p-8 shadow-sm">
-            <Bell className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-            <p className="text-sm font-black text-slate-700 uppercase tracking-wide">Board Up-To-Date</p>
-            <p className="text-[11px] text-slate-400 mt-1 max-w-xs mx-auto leading-relaxed">
-              No bulletin updates matching your current workspace. Unread announcements or critical reports will propagate here in real-time.
-            </p>
-          </div>
-        ) : (
-          filteredBulletins.map((item) => {
-            const meta = getPriorityAccent(item.priority);
-            const isUnread = !item.readBy.includes(username);
+        {!loading &&
+          filteredNotifications.length ===
+            0 && (
+            <div className="rounded-[2rem] border bg-white p-12 text-center shadow-sm">
+              <Bell className="mx-auto h-10 w-10 text-slate-300" />
+              <p className="mt-3 font-black text-slate-700">
+                No notifications found
+              </p>
+            </div>
+          )}
+
+        {filteredNotifications.map(
+          (item) => {
+            const style =
+              priorityStyle(
+                item.priority,
+              );
+
+            const isRead =
+              Boolean(
+                Number(item.is_read),
+              );
 
             return (
-              <motion.div
+              <article
                 key={item.id}
-                layout
-                className={`p-6 rounded-[2.2rem] border transition-all ${meta.bg} flex flex-col justify-between shadow-sm relative overflow-hidden`}
+                className={`relative rounded-[2rem] border p-6 shadow-sm ${style.container}`}
               >
-                {/* Unread dot flash */}
-                {isUnread && (
-                  <span className="absolute top-4 left-4 flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                {!isRead && (
+                  <span className="absolute left-4 top-4 h-2.5 w-2.5 rounded-full bg-emerald-500">
+                    <span className="absolute inset-0 animate-ping rounded-full bg-emerald-400" />
                   </span>
                 )}
 
-                <div className="flex flex-col gap-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2 pl-3">
-                    <div className="flex items-center gap-2">
-                      <span className={`px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider ${meta.badge}`}>
-                        {meta.label}
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 pl-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`rounded-lg px-2.5 py-1 text-[9px] font-black uppercase ${style.badge}`}
+                      >
+                        {style.label}
                       </span>
-                      <span className="text-[9px] font-bold text-slate-400 uppercase font-mono">
-                        {item.id}
+
+                      <span className="text-[10px] font-bold text-slate-400">
+                        NOTIF-{item.id}
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <span className="text-[9px] font-black text-slate-450 uppercase tracking-widest bg-white/60 px-2 py-0.5 rounded-sm border border-slate-200">
-                        Target: {item.audience}
-                      </span>
-                      {role !== 'household' && role !== 'collector' && (
-                        <button
-                          onClick={() => handleDeleteBulletin(item.id)}
-                          className="p-1.5 text-slate-450 hover:text-rose-500 transition-colors cursor-pointer"
-                          title="Trash alert"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                    <h2 className="mt-3 text-lg font-black text-slate-900">
+                      {item.title}
+                    </h2>
+
+                    <p className="mt-2 max-w-4xl text-sm leading-relaxed text-slate-600">
+                      {item.message}
+                    </p>
+
+                    <p className="mt-4 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                      Issued by{" "}
+                      {item.created_by_name ||
+                        "System"}
+                      {" • "}
+                      {formatDate(
+                        item.created_at,
                       )}
-                    </div>
+                    </p>
+
+                    {(item.barangay_name ||
+                      item.purok_name) && (
+                      <p className="mt-1 text-[10px] font-bold uppercase text-emerald-700">
+                        {[
+                          item.purok_name,
+                          item.barangay_name,
+                        ]
+                          .filter(Boolean)
+                          .join(", ")}
+                      </p>
+                    )}
                   </div>
 
-                  <h3 className="text-lg font-black text-slate-900 tracking-tight leading-snug pl-3">
-                    {item.title}
-                  </h3>
+                  <div className="flex shrink-0 gap-2">
+                    {!isRead && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void markRead(
+                            item.id,
+                          )
+                        }
+                        className="flex items-center gap-1 rounded-xl bg-white px-3 py-2 text-[10px] font-black uppercase text-emerald-700 shadow-sm"
+                      >
+                        <Check className="h-4 w-4" />
+                        Read
+                      </button>
+                    )}
 
-                  <p className="text-xs font-semibold text-slate-650 leading-relaxed pl-3 max-w-4xl text-slate-500">
-                    {item.message}
-                  </p>
-                </div>
-
-                <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-100 pl-3">
-                  <div className="flex gap-4 text-[10px] font-black text-slate-450 uppercase tracking-widest">
-                    <span>Issued: <span className="font-bold text-slate-800">{item.author}</span></span>
-                    <span>Date: <span className="font-bold text-slate-600">{item.date} at {item.time}</span></span>
+                    {canBroadcast && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void deleteNotification(
+                            item.id,
+                          )
+                        }
+                        className="rounded-xl bg-white p-2 text-rose-600 shadow-sm"
+                        title="Delete notification"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
-
-                  {isUnread && (
-                    <button
-                      onClick={() => handleMarkAsRead(item.id)}
-                      className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-widest rounded-xl transition-colors border-none cursor-pointer"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                      Acknowledge
-                    </button>
-                  )}
                 </div>
-              </motion.div>
+              </article>
             );
-          })
+          },
         )}
-      </div>
+      </section>
 
-      {/* COMPOSE BULLETIN POPUP */}
-      <AnimatePresence>
-        {showCompose && (
-          <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white rounded-[2.5rem] max-w-lg w-full p-6 md:p-8 shadow-2xl relative border border-slate-100"
+      {showCompose && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+          <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-[2rem] bg-white p-6 shadow-2xl md:p-8">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">
+                  Authorized Broadcast
+                </p>
+
+                <h2 className="text-2xl font-black text-slate-900">
+                  Create Notification
+                </h2>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setShowCompose(false)
+                }
+                className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={submitBroadcast}
+              className="mt-6 space-y-4"
             >
-              <h2 className="text-2xl font-black text-slate-900 tracking-tight mb-1">Broadcast Bulletin</h2>
-              <p className="text-xs text-slate-500 mb-6 font-semibold">Deploy notification updates globally to Barangay environmental members.</p>
+              <label className="block text-xs font-bold text-slate-600">
+                Title
+                <input
+                  value={title}
+                  onChange={(event) =>
+                    setTitle(
+                      event.target.value,
+                    )
+                  }
+                  className="mt-2 w-full rounded-xl border bg-slate-50 p-3 text-sm"
+                  placeholder="Notification title"
+                />
+              </label>
 
-              {validationError && (
-                <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-rose-500 font-bold rounded-xl text-xs flex items-center gap-2 mb-4">
-                  <ShieldAlert className="w-4 h-4 shrink-0 text-rose-500" />
-                  <span>{validationError}</span>
-                </div>
-              )}
+              <label className="block text-xs font-bold text-slate-600">
+                Priority
+                <select
+                  value={priority}
+                  onChange={(event) =>
+                    setPriority(
+                      event.target
+                        .value as NotificationPriority,
+                    )
+                  }
+                  className="mt-2 w-full rounded-xl border bg-white p-3 text-sm"
+                >
+                  <option value="notice">
+                    Official Notice
+                  </option>
+                  <option value="schedule">
+                    Schedule Update
+                  </option>
+                  <option value="emergency">
+                    Emergency
+                  </option>
+                </select>
+              </label>
 
-              <form onSubmit={handleComposeSubmit} className="space-y-4">
-                {/* Title */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 block ml-1">Annnouncement Title</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Schedule Update or Street Cleansings"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500 text-xs font-semibold text-slate-800"
-                  />
-                </div>
+              <label className="block text-xs font-bold text-slate-600">
+                Recipient Role
+                <select
+                  value={recipientRole}
+                  onChange={(event) =>
+                    setRecipientRole(
+                      event.target.value,
+                    )
+                  }
+                  className="mt-2 w-full rounded-xl border bg-white p-3 text-sm"
+                >
+                  <option value="">
+                    Everyone in allowed area
+                  </option>
+                  <option value="resident">
+                    Civilians
+                  </option>
+                  <option value="collector">
+                    Garbage Collectors
+                  </option>
+                  <option value="purok_leader">
+                    Purok Leaders
+                  </option>
+                  <option value="admin">
+                    Barangay Captains
+                  </option>
+                </select>
+              </label>
 
-                {/* Priority Selection */}
-                <div className="grid grid-cols-3 gap-3">
-                  {(['emergency', 'schedule', 'notice'] as const).map((p) => (
-                    <button
-                      type="button"
-                      key={p}
-                      onClick={() => setPriority(p)}
-                      className={`py-3 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer ${
-                        priority === p 
-                          ? 'bg-slate-900 text-white shadow' 
-                          : 'bg-slate-100 text-slate-550 border border-transparent'
-                      }`}
-                    >
-                      {p === 'emergency' ? '🚨 Hazard' : p === 'schedule' ? '📅 Schedule' : '📢 General'}
-                    </button>
-                  ))}
-                </div>
+              <label className="block text-xs font-bold text-slate-600">
+                Message
+                <textarea
+                  rows={5}
+                  value={message}
+                  onChange={(event) =>
+                    setMessage(
+                      event.target.value,
+                    )
+                  }
+                  className="mt-2 w-full rounded-xl border bg-slate-50 p-3 text-sm"
+                  placeholder="Write the notification message..."
+                />
+              </label>
 
-                {/* Target Audience selection */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 block ml-1">Audience Scope</label>
-                    <select
-                      value={audience}
-                      onChange={(e) => setAudience(e.target.value)}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500 text-xs font-extrabold text-slate-800 appearance-none cursor-pointer"
-                    >
-                      <option>Everyone (Barangay Central)</option>
-                      <option>Only Waste Collector Operators</option>
-                      <option>Residents and Leaders Only</option>
-                    </select>
-                  </div>
+              <div className="flex gap-3 pt-3">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setShowCompose(false)
+                  }
+                  disabled={saving}
+                  className="flex-1 rounded-xl border px-4 py-3 text-sm font-black text-slate-600"
+                >
+                  Cancel
+                </button>
 
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 block ml-1">Barangay Sector limit</label>
-                    <select
-                      value={targetPurok}
-                      onChange={(e) => setTargetPurok(e.target.value)}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500 text-xs font-extrabold text-slate-800 appearance-none cursor-pointer"
-                    >
-                      <option value="All Puroks">All Puroks</option>
-                      {Array.from({ length: 9 }, (_, i) => `Purok ${i + 1}`).map(p => (
-                        <option key={p} value={p}>{p}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {/* Main Message text info */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] uppercase font-black tracking-widest text-slate-400 block ml-1">Bulletin Content Message</label>
-                  <textarea
-                    rows={4}
-                    placeholder="Outline safety measures, specific guidelines or pickup delays clearly..."
-                    value={message}
-                    onChange={(e) => setMessage(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500 text-xs font-semibold text-slate-800"
-                  />
-                </div>
-
-                {/* Submits */}
-                <div className="pt-4 flex gap-3 text-xs font-black uppercase tracking-widest justify-end">
-                  <button
-                    type="button"
-                    onClick={() => setShowCompose(false)}
-                    className="px-6 py-3.5 text-slate-500 hover:bg-slate-100 rounded-xl cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-6 py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl cursor-pointer shadow-md border-none flex items-center gap-15"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>Broadcast Notice</span>
-                  </button>
-                </div>
-              </form>
-            </motion.div>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 text-sm font-black text-white disabled:opacity-50"
+                >
+                  {saving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                  Broadcast
+                </button>
+              </div>
+            </form>
           </div>
-        )}
-      </AnimatePresence>
-
+        </div>
+      )}
     </div>
   );
 }

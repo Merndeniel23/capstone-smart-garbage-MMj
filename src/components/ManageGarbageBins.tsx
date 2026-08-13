@@ -87,7 +87,9 @@ function hasValidCoordinates(
 function getToken(): string {
   return (
     localStorage.getItem("token") ||
+    sessionStorage.getItem("token") ||
     localStorage.getItem("authToken") ||
+    sessionStorage.getItem("authToken") ||
     ""
   );
 }
@@ -125,7 +127,13 @@ async function apiRequest(
 export default function ManageGarbageBins() {
   const { userRole } = useAppState();
   const canManageBins = userRole === "leader";
-  const isAdminView = userRole === "admin";
+  const isAdminView =
+    userRole === "admin" ||
+    userRole === "super_admin";
+  const canViewCollectorMonitoring =
+    userRole === "admin" ||
+    userRole === "super_admin" ||
+    userRole === "leader";
 
   const mapContainerRef =
     useRef<HTMLDivElement | null>(null);
@@ -161,7 +169,11 @@ export default function ManageGarbageBins() {
     useState("");
 
   const [adminView, setAdminView] =
-    useState<"bins" | "tracking">("bins");
+    useState<"bins" | "tracking">(
+      canViewCollectorMonitoring
+        ? "tracking"
+        : "bins",
+    );
 
   const assignedPurok = isAdminView
     ? "All Puroks"
@@ -200,6 +212,7 @@ export default function ManageGarbageBins() {
 
   useEffect(() => {
     if (
+      adminView !== "bins" ||
       !mapContainerRef.current ||
       mapRef.current
     ) {
@@ -290,7 +303,7 @@ export default function ManageGarbageBins() {
       map.remove();
       mapRef.current = null;
     };
-  }, [canManageBins]);
+  }, [canManageBins, adminView]);
 
   useEffect(() => {
     const markerLayer =
@@ -594,7 +607,7 @@ export default function ManageGarbageBins() {
 
   return (
     <div className="space-y-5">
-      {isAdminView && (
+      {canViewCollectorMonitoring && (
         <div className="flex flex-wrap gap-2 rounded-2xl border bg-white p-2 shadow-sm">
           <button
             type="button"
@@ -622,7 +635,8 @@ export default function ManageGarbageBins() {
         </div>
       )}
 
-      {isAdminView && adminView === "tracking" ? (
+      {canViewCollectorMonitoring &&
+      adminView === "tracking" ? (
         <MapView viewOnly />
       ) : (
         <div className="space-y-5">

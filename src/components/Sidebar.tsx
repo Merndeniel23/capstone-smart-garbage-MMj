@@ -274,6 +274,11 @@ export default function Sidebar({
       label: "All Complaints",
     },
     {
+      id: "payments",
+      icon: CreditCard,
+      label: "Payment Verification",
+    },
+    {
       id: "notifications",
       icon: Bell,
       label: "Municipal Alerts",

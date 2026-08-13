@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 import Registration from "./components/Registration";
@@ -58,9 +59,257 @@ export type Screen =
   | "profile"
   | "endorsements"
   | "bin-inspections"
- | "garbage-bins"
-| "change-initial-password"
+  | "garbage-bins"
+  | "change-initial-password"
   | "reports";
+
+
+const COLLECTOR_LOCATION_FLAG =
+  "sg_collector_location_sharing";
+
+const MAX_ACCEPTABLE_COLLECTOR_ACCURACY_METERS = 1000;
+const COLLECTOR_LOCATION_REJECTED_EVENT =
+  "collector-location-rejected";
+
+function getAuthToken(): string {
+  return (
+    localStorage.getItem("token") ||
+    sessionStorage.getItem("token") ||
+    localStorage.getItem("authToken") ||
+    sessionStorage.getItem("authToken") ||
+    ""
+  );
+}
+
+async function sendCollectorGps(
+  position: GeolocationPosition,
+) {
+  const token = getAuthToken();
+
+  const response = await fetch(
+    "/api/collector-locations/me",
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token
+          ? { Authorization: `Bearer ${token}` }
+          : {}),
+      },
+      body: JSON.stringify({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracyMeters: position.coords.accuracy,
+        headingDegrees: position.coords.heading,
+        speedMps: position.coords.speed,
+        isOnDuty: true,
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const data = await response
+      .json()
+      .catch(() => ({}));
+
+    throw new Error(
+      data.message ||
+        "Unable to send collector location.",
+    );
+  }
+}
+
+async function markCollectorOffDuty() {
+  const token = getAuthToken();
+
+  await fetch(
+    "/api/collector-locations/me/off-duty",
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token
+          ? { Authorization: `Bearer ${token}` }
+          : {}),
+      },
+    },
+  ).catch(() => undefined);
+}
+
+function PersistentCollectorLocationTracker() {
+  const watchIdRef =
+    useRef<number | null>(null);
+  const lastSentAtRef = useRef(0);
+
+  useEffect(() => {
+    if (!("geolocation" in navigator)) {
+      return;
+    }
+
+    const stopWatcher = () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(
+          watchIdRef.current,
+        );
+        watchIdRef.current = null;
+      }
+    };
+
+    const handlePosition = (
+      position: GeolocationPosition,
+    ) => {
+      const accuracy = Number(
+        position.coords.accuracy,
+      );
+
+      if (
+        !Number.isFinite(accuracy) ||
+        accuracy >
+          MAX_ACCEPTABLE_COLLECTOR_ACCURACY_METERS
+      ) {
+        window.dispatchEvent(
+          new CustomEvent(
+            COLLECTOR_LOCATION_REJECTED_EVENT,
+            {
+              detail: {
+                accuracy,
+                maximumAccuracy:
+                  MAX_ACCEPTABLE_COLLECTOR_ACCURACY_METERS,
+                timestamp: position.timestamp,
+              },
+            },
+          ),
+        );
+
+        return;
+      }
+
+      const now = Date.now();
+
+      // Send immediately on a fresh start,
+      // then at most once every 10 seconds.
+      if (
+        lastSentAtRef.current !== 0 &&
+        now - lastSentAtRef.current < 10000
+      ) {
+        return;
+      }
+
+      lastSentAtRef.current = now;
+
+      void sendCollectorGps(position)
+        .then(() => {
+          window.dispatchEvent(
+            new CustomEvent(
+              "collector-location-update",
+              {
+                detail: {
+                  latitude:
+                    position.coords.latitude,
+                  longitude:
+                    position.coords.longitude,
+                  accuracy,
+                  timestamp:
+                    position.timestamp,
+                },
+              },
+            ),
+          );
+        })
+        .catch(() => {
+          // The dashboard/API layer will surface
+          // transport or permission errors.
+        });
+    };
+
+    const startWatcher = () => {
+      if (
+        localStorage.getItem(
+          COLLECTOR_LOCATION_FLAG,
+        ) !== "true"
+      ) {
+        stopWatcher();
+        return;
+      }
+
+      if (watchIdRef.current !== null) {
+        return;
+      }
+
+      lastSentAtRef.current = 0;
+
+      // Force a fresh fix first instead of reusing
+      // an old cached desktop/browser location.
+      const handleLocationError = (
+        error: GeolocationPositionError,
+      ) => {
+        window.dispatchEvent(
+          new CustomEvent(
+            COLLECTOR_LOCATION_REJECTED_EVENT,
+            {
+              detail: {
+                errorCode: error.code,
+                errorMessage: error.message,
+                timestamp: Date.now(),
+              },
+            },
+          ),
+        );
+      };
+
+      navigator.geolocation.getCurrentPosition(
+        handlePosition,
+        handleLocationError,
+        {
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 20000,
+        },
+      );
+
+      watchIdRef.current =
+        navigator.geolocation.watchPosition(
+          handlePosition,
+          handleLocationError,
+          {
+            enableHighAccuracy: true,
+            maximumAge: 0,
+            timeout: 20000,
+          },
+        );
+    };
+
+    const onToggle = () => {
+      if (
+        localStorage.getItem(
+          COLLECTOR_LOCATION_FLAG,
+        ) === "true"
+      ) {
+        startWatcher();
+      } else {
+        stopWatcher();
+        void markCollectorOffDuty();
+      }
+    };
+
+    window.addEventListener(
+      "collector-location-sharing-change",
+      onToggle,
+    );
+
+    startWatcher();
+
+    return () => {
+      window.removeEventListener(
+        "collector-location-sharing-change",
+        onToggle,
+      );
+      stopWatcher();
+    };
+  }, []);
+
+  return null;
+}
 
 export default function App() {
   return (
@@ -80,22 +329,42 @@ function AppContent() {
   } = useAppState();
 
   const handleLogout = () => {
+    if (userRole === "collector") {
+      localStorage.removeItem(
+        COLLECTOR_LOCATION_FLAG,
+      );
+      window.dispatchEvent(
+        new Event(
+          "collector-location-sharing-change",
+        ),
+      );
+    }
+
     logoutUser();
   };
 
   if (!isLoggedIn) {
-  return (
-    <div className="relative flex min-h-screen w-full items-center justify-center overflow-y-auto bg-[#F8FAFC] font-sans text-slate-900">
-      <Registration />
-    </div>
-  );
-}
+    return (
+      <div className="relative flex min-h-screen w-full items-center justify-center overflow-y-auto bg-[#F8FAFC] font-sans text-slate-900">
+        <Registration />
+      </div>
+    );
+  }
 
-if (currentScreen === "change-initial-password") {
-  return <ChangeInitialPassword />;
-}
+  if (currentScreen === "change-initial-password") {
+    return <ChangeInitialPassword />;
+  }
+
+  const canVerifyPayments =
+    userRole === "leader" ||
+    userRole === "admin" ||
+    userRole === "super_admin";
+
   return (
     <div className="flex min-h-screen flex-col bg-[#F8FAFC] font-sans text-slate-900 md:flex-row">
+      {userRole === "collector" && (
+        <PersistentCollectorLocationTracker />
+      )}
       <Sidebar
         activeTab={currentScreen as any}
         onTabChange={(tab: any) => setCurrentScreen(tab)}
@@ -125,19 +394,27 @@ if (currentScreen === "change-initial-password") {
               )}
 
               {currentScreen === "collector-tasks" && (
-                <CollectorDashboard setCurrentScreen={setCurrentScreen as any} />
+                <CollectorDashboard
+                  setCurrentScreen={setCurrentScreen as any}
+                />
               )}
 
               {currentScreen === "leader-dashboard" && (
-                <LeaderDashboard setCurrentScreen={setCurrentScreen as any} />
+                <LeaderDashboard
+                  setCurrentScreen={setCurrentScreen as any}
+                />
               )}
 
               {currentScreen === "admin-dashboard" && (
-                <AdminDashboard setCurrentScreen={setCurrentScreen as any} />
+                <AdminDashboard
+                  setCurrentScreen={setCurrentScreen as any}
+                />
               )}
 
               {currentScreen === "super-admin-dashboard" && (
-                <SuperAdminDashboard setCurrentScreen={setCurrentScreen as any} />
+                <SuperAdminDashboard
+                  setCurrentScreen={setCurrentScreen as any}
+                />
               )}
 
               {currentScreen === "user-management" && <UserManagement />}
@@ -146,18 +423,23 @@ if (currentScreen === "change-initial-password") {
               {currentScreen === "garbage-bins" && <ManageGarbageBins />}
               {currentScreen === "route-map" && <MapView />}
               {currentScreen === "schedule" && <Schedule />}
+
               {currentScreen === "complaints" && (
                 <ComplaintsPanel role={userRole as any} />
               )}
-              {currentScreen === "payments" && (
-                <PaymentPortal role={userRole as any} />
-              )}
+
+             {currentScreen === "payments" && (
+  <PaymentPortal role={userRole as any} />
+)}
+
               {currentScreen === "endorsements" && (
                 <EndorsementManager role={userRole as any} />
               )}
+
               {currentScreen === "notifications" && (
                 <NotificationsPanel role={userRole as any} />
               )}
+
               {currentScreen === "profile" && <UserProfilePanel />}
               {currentScreen === "reports" && <Reports />}
             </motion.div>

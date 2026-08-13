@@ -84,6 +84,7 @@ export interface BulletinItem {
 }
 
 export interface UserAccount {
+  id?: number;
   name: string;
   email: string;
   phone: string;
@@ -92,6 +93,14 @@ export interface UserAccount {
   role: AppRole;
   address: string;
   householdId: string;
+
+  // Structured assignment fields used by member directories
+  // and role-based filtering. They remain optional so older
+  // localStorage accounts continue to work.
+  barangay?: string;
+  purok?: string;
+  status?: "active" | "pending" | "inactive";
+  createdAt?: string;
 }
 
 interface AppState {
@@ -100,6 +109,7 @@ interface AppState {
   isLoggedIn: boolean;
   userRole: AppRole;
   registeredUsers: UserAccount[];
+  deleteRegisteredUser: (email: string) => void;
   currentScreen: string;
   setCurrentScreen: (screen: any) => void;
   loginUser: (emailOrId: string, password: string, rememberMe?: boolean) => { success: boolean; error?: string };
@@ -186,6 +196,38 @@ export const isNameMatch = (paymentName: string, userName: string) => {
   return false;
 };
 
+function extractPurok(value?: string | null) {
+  const match = String(value || "")
+    .match(/purok\s*\d+/i);
+
+  return match
+    ? match[0]
+        .replace(/\s+/g, " ")
+        .replace(/^purok/i, "Purok")
+    : "";
+}
+
+function normalizeStoredAccount(
+  account: UserAccount,
+): UserAccount {
+  return {
+    ...account,
+    barangay:
+      account.barangay ||
+      "Bang-bang",
+    purok:
+      account.purok ||
+      extractPurok(
+        account.communalZone,
+      ),
+    status:
+      account.status || "active",
+    createdAt:
+      account.createdAt ||
+      new Date().toISOString(),
+  };
+}
+
 const AppStateContext = createContext<AppState | undefined>(undefined);
 
 export function AppStateProvider({ children }: { children: React.ReactNode }) {
@@ -210,7 +252,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     const saved = localStorage.getItem('sg_registered_users');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        return (
+          JSON.parse(saved) as UserAccount[]
+        ).map(normalizeStoredAccount);
       } catch (e) {
         // Fallback below
       }
@@ -267,14 +311,29 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         householdId: 'SUP-2026-001'
       }
     ];
-    localStorage.setItem('sg_registered_users', JSON.stringify(defaults));
-    return defaults;
+    const normalizedDefaults =
+      defaults.map(
+        normalizeStoredAccount,
+      );
+
+    localStorage.setItem(
+      'sg_registered_users',
+      JSON.stringify(
+        normalizedDefaults,
+      ),
+    );
+
+    return normalizedDefaults;
   });
 
   // Current logged in user (persisted or from session)
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => {
     const saved = localStorage.getItem('sg_current_user');
-    return saved ? JSON.parse(saved) : null;
+    return saved
+      ? normalizeStoredAccount(
+          JSON.parse(saved),
+        )
+      : null;
   });
 
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
@@ -515,12 +574,20 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     }
 
     const nextIdNum = Math.floor(100 + Math.random() * 900);
-    const newAccount: UserAccount = {
-      ...account,
-      role: 'household',
-      address: `Communal Address, ${account.communalZone}`,
-      householdId: `HH-2026-${nextIdNum}`
-    };
+    const newAccount: UserAccount =
+      normalizeStoredAccount({
+        ...account,
+        role: 'household',
+        address: `Communal Address, ${account.communalZone}`,
+        householdId: `HH-2026-${nextIdNum}`,
+        barangay: 'Bang-bang',
+        purok: extractPurok(
+          account.communalZone,
+        ),
+        status: 'active',
+        createdAt:
+          new Date().toISOString(),
+      });
 
     setRegisteredUsers(prev => [...prev, newAccount]);
     setCurrentUser(newAccount);
@@ -536,6 +603,26 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     setCurrentScreen('dashboard');
 
     return { success: true };
+  };
+
+  const deleteRegisteredUser = (email: string) => {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    setRegisteredUsers((previousUsers) =>
+      previousUsers.filter(
+        (user) =>
+          user.email.trim().toLowerCase() !== normalizedEmail,
+      ),
+    );
+
+    if (
+      currentUser?.email.trim().toLowerCase() === normalizedEmail
+    ) {
+      setCurrentUser(null);
+      setIsLoggedIn(false);
+      setUserRole('household');
+      setCurrentScreen('registration');
+    }
   };
 
   const logoutUser = () => {
@@ -565,6 +652,12 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
           householdId: updatedProfile.householdId ?? currentUser.householdId,
           phone: updatedProfile.contactInfo ?? currentUser.phone,
           communalZone: updatedProfile.communalZone ?? currentUser.communalZone,
+          purok:
+            extractPurok(
+              updatedProfile.communalZone ??
+                currentUser.communalZone,
+            ) ||
+            currentUser.purok,
         };
         setCurrentUser(updatedCurrentUser);
 
@@ -782,6 +875,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
           return {
             ...u,
             communalZone: `${purok}, ${barangay}`,
+            purok,
+            barangay,
             address: physicalAddress
           };
         }
@@ -794,6 +889,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       setCurrentUser((prev) => prev ? {
         ...prev,
         communalZone: `${purok}, ${barangay}`,
+        purok,
+        barangay,
         address: physicalAddress
       } : null);
     }
@@ -819,6 +916,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         isLoggedIn,
         userRole,
         registeredUsers,
+        deleteRegisteredUser,
         currentScreen,
         setCurrentScreen,
         loginUser,
