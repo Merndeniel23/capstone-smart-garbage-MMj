@@ -41,6 +41,23 @@ type BinForm = {
   locationName: string;
   latitude: string;
   longitude: string;
+  purokId: string;
+};
+
+type CurrentUserProfile = {
+  id: number;
+  role: string;
+  barangay_id?: number | null;
+  barangay_name?: string | null;
+  purok_id?: number | null;
+  purok_name?: string | null;
+};
+
+type PurokOption = {
+  id: number;
+  barangay_id: number;
+  name: string;
+  barangay_name?: string | null;
 };
 
 const emptyForm: BinForm = {
@@ -49,6 +66,7 @@ const emptyForm: BinForm = {
   locationName: "",
   latitude: "",
   longitude: "",
+  purokId: "",
 };
 
 const DEFAULT_MAP_CENTER: L.LatLngExpression = [
@@ -126,14 +144,23 @@ async function apiRequest(
 
 export default function ManageGarbageBins() {
   const { userRole } = useAppState();
-  const canManageBins = userRole === "leader";
-  const isAdminView =
-    userRole === "admin" ||
-    userRole === "super_admin";
+
+  const isBarangayCaptain = userRole === "admin";
+  const isPurokLeader = userRole === "leader";
+  const isSuperAdmin = userRole === "super_admin";
+
+  // Barangay Captains may register new bins in a purok within
+  // their own barangay. Purok Leaders may add and maintain bins
+  // only inside their assigned purok.
+  const canAddBins = isBarangayCaptain || isPurokLeader;
+  const canEditBins = isPurokLeader;
+  const canDeactivateBins = isPurokLeader;
+
+  const isAdminView = isBarangayCaptain || isSuperAdmin;
   const canViewCollectorMonitoring =
-    userRole === "admin" ||
-    userRole === "super_admin" ||
-    userRole === "leader";
+    isBarangayCaptain ||
+    isSuperAdmin ||
+    isPurokLeader;
 
   const mapContainerRef =
     useRef<HTMLDivElement | null>(null);
@@ -149,6 +176,12 @@ export default function ManageGarbageBins() {
 
   const [bins, setBins] =
     useState<GarbageBin[]>([]);
+
+  const [currentUser, setCurrentUser] =
+    useState<CurrentUserProfile | null>(null);
+
+  const [puroks, setPuroks] =
+    useState<PurokOption[]>([]);
 
   const [form, setForm] =
     useState<BinForm>(emptyForm);
@@ -175,26 +208,69 @@ export default function ManageGarbageBins() {
         : "bins",
     );
 
-  const assignedPurok = isAdminView
-    ? "All Puroks"
-    : bins.find((bin) => bin.purok_name)
-        ?.purok_name || "Assigned automatically";
-
-  const assignedBarangay = isAdminView
+  const assignedBarangay = isSuperAdmin
     ? "All Barangays"
-    : bins.find((bin) => bin.barangay_name)
-        ?.barangay_name || "Assigned automatically";
+    : currentUser?.barangay_name ||
+      bins.find((bin) => bin.barangay_name)
+        ?.barangay_name ||
+      "Assigned automatically";
+
+  const assignedPurok = isSuperAdmin
+    ? "All Puroks"
+    : isBarangayCaptain
+      ? "Select a Purok when adding a bin"
+      : currentUser?.purok_name ||
+        bins.find((bin) => bin.purok_name)
+          ?.purok_name ||
+        "Assigned automatically";
+
+  const captainPuroks =
+    isBarangayCaptain && currentUser?.barangay_id
+      ? puroks.filter(
+          (purok) =>
+            Number(purok.barangay_id) ===
+            Number(currentUser.barangay_id),
+        )
+      : [];
 
   const loadData = async () => {
     setLoading(true);
     setErrorMessage("");
 
     try {
-      const result = await apiRequest(
-        "/api/garbage-bins",
+      const requests: Promise<any>[] = [
+        apiRequest("/api/garbage-bins"),
+        apiRequest("/api/auth/me"),
+      ];
+
+      if (isBarangayCaptain) {
+        requests.push(
+          apiRequest("/api/auth/registration-locations"),
+        );
+      }
+
+      const [binResult, profileResult, locationResult] =
+        await Promise.all(requests);
+
+      setBins(
+        Array.isArray(binResult?.bins)
+          ? binResult.bins
+          : [],
       );
 
-      setBins(result.bins || []);
+      setCurrentUser(
+        profileResult?.user || null,
+      );
+
+      if (isBarangayCaptain) {
+        setPuroks(
+          Array.isArray(locationResult?.puroks)
+            ? locationResult.puroks
+            : [],
+        );
+      } else {
+        setPuroks([]);
+      }
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -244,7 +320,7 @@ export default function ManageGarbageBins() {
     map.on(
       "click",
       (event: L.LeafletMouseEvent) => {
-        if (!canManageBins) {
+        if (!canAddBins) {
           return;
         }
 
@@ -303,7 +379,7 @@ export default function ManageGarbageBins() {
       map.remove();
       mapRef.current = null;
     };
-  }, [canManageBins, adminView]);
+  }, [canAddBins, adminView]);
 
   useEffect(() => {
     const markerLayer =
@@ -349,7 +425,7 @@ export default function ManageGarbageBins() {
         </div>
       `);
 
-      if (canManageBins) {
+      if (canEditBins) {
         marker.on("click", () => {
           openEditForm(bin);
         });
@@ -388,7 +464,7 @@ export default function ManageGarbageBins() {
     window.setTimeout(() => {
       mapRef.current?.invalidateSize();
     }, 100);
-  }, [bins, canManageBins]);
+  }, [bins, canEditBins]);
 
   const removeSelectedMarker = () => {
     if (selectedMarkerRef.current) {
@@ -443,7 +519,7 @@ export default function ManageGarbageBins() {
   const openEditForm = (
     bin: GarbageBin,
   ) => {
-    if (!canManageBins) {
+    if (!canEditBins) {
       return;
     }
 
@@ -459,6 +535,7 @@ export default function ManageGarbageBins() {
         String(bin.latitude),
       longitude:
         String(bin.longitude),
+      purokId: String(bin.purok_id || ""),
     });
 
     setShowForm(true);
@@ -492,9 +569,22 @@ export default function ManageGarbageBins() {
   ) => {
     event.preventDefault();
 
-    if (!canManageBins) {
+    if (form.id ? !canEditBins : !canAddBins) {
       setErrorMessage(
-        "Administrators have view-only access to garbage bins.",
+        form.id
+          ? "Only the assigned Purok Leader can edit this garbage bin."
+          : "Your account cannot register garbage bins.",
+      );
+      return;
+    }
+
+    if (
+      isBarangayCaptain &&
+      !form.id &&
+      !form.purokId
+    ) {
+      setErrorMessage(
+        "Select a purok in your barangay before saving the garbage bin.",
       );
       return;
     }
@@ -526,6 +616,9 @@ export default function ManageGarbageBins() {
           form.locationName.trim(),
         latitude,
         longitude,
+        ...(isBarangayCaptain && !form.id
+          ? { purok_id: Number(form.purokId) }
+          : {}),
       };
 
       const url = form.id
@@ -563,9 +656,9 @@ export default function ManageGarbageBins() {
   const handleDeactivate = async (
     binId: number,
   ) => {
-    if (!canManageBins) {
+    if (!canDeactivateBins) {
       setErrorMessage(
-        "Administrators have view-only access to garbage bins.",
+        "Only the assigned Purok Leader can deactivate this garbage bin.",
       );
       return;
     }
@@ -647,9 +740,9 @@ export default function ManageGarbageBins() {
           </h1>
 
           <p className="text-sm text-slate-500">
-            Click the map to register the
-            exact garbage-bin location in
-            your assigned purok.
+            {isBarangayCaptain
+              ? "Register garbage-bin locations within your assigned barangay and choose the correct purok."
+              : "Click the map to register the exact garbage-bin location in your assigned purok."}
           </p>
         </div>
 
@@ -663,7 +756,7 @@ export default function ManageGarbageBins() {
             Refresh
           </button>
 
-          {canManageBins && (
+          {canAddBins && (
             <button
               type="button"
               onClick={() => {
@@ -720,7 +813,7 @@ export default function ManageGarbageBins() {
         </div>
 
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          {!canManageBins ? (
+          {!canAddBins ? (
             <div className="flex h-full min-h-[420px] flex-col items-center justify-center text-center">
               <MapPin className="mb-3 h-10 w-10 text-emerald-700" />
 
@@ -729,8 +822,8 @@ export default function ManageGarbageBins() {
               </h2>
 
               <p className="mt-2 max-w-xs text-sm text-slate-500">
-                Administrators can view all registered garbage bins.
-                Only assigned Purok Leaders can add, edit, move, or deactivate bins.
+                Municipal Administrators have view-only access.
+                Barangay Captains can register bins within their own barangay, while assigned Purok Leaders can maintain bins in their purok.
               </p>
             </div>
           ) : !showForm ? (
@@ -742,9 +835,9 @@ export default function ManageGarbageBins() {
               </h2>
 
               <p className="mt-2 max-w-xs text-sm text-slate-500">
-                The coordinates will be
-                captured automatically and
-                assigned to your purok.
+                {isBarangayCaptain
+                  ? "Choose the correct purok, then click the map to capture the garbage-bin coordinates."
+                  : "The coordinates will be captured automatically and assigned to your purok."}
               </p>
             </div>
           ) : (
@@ -773,13 +866,52 @@ export default function ManageGarbageBins() {
                   Area assignment
                 </p>
                 <p className="mt-1 text-sm font-black text-slate-900">
-                  {assignedBarangay} — {assignedPurok}
+                  {assignedBarangay}
+                  {!isBarangayCaptain
+                    ? ` — ${assignedPurok}`
+                    : ""}
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
-                  This is controlled by your
-                  Purok Leader account.
+                  {isBarangayCaptain
+                    ? "You can assign a new bin only to a purok inside your barangay."
+                    : "This is controlled by your Purok Leader account."}
                 </p>
               </div>
+
+              {isBarangayCaptain && !form.id && (
+                <label className="block text-xs font-bold text-slate-700">
+                  Assigned Purok
+                  <select
+                    required
+                    value={form.purokId}
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        purokId: event.target.value,
+                      })
+                    }
+                    className="mt-1 w-full rounded-xl border bg-white px-3 py-2.5 text-sm"
+                  >
+                    <option value="">
+                      Select a purok
+                    </option>
+                    {captainPuroks.map((purok) => (
+                      <option
+                        key={purok.id}
+                        value={purok.id}
+                      >
+                        {purok.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  {captainPuroks.length === 0 && (
+                    <span className="mt-1 block text-xs font-semibold text-amber-600">
+                      No puroks are available for your assigned barangay.
+                    </span>
+                  )}
+                </label>
+              )}
 
               <label className="block text-xs font-bold text-slate-700">
                 Bin Code
@@ -862,9 +994,11 @@ export default function ManageGarbageBins() {
       <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
         <div className="border-b px-5 py-4">
           <h2 className="font-black text-slate-900">
-            {isAdminView
+            {isSuperAdmin
               ? "All Registered Garbage Bins"
-              : "Garbage Bins in My Purok"}
+              : isBarangayCaptain
+                ? "Garbage Bins in My Barangay"
+                : "Garbage Bins in My Purok"}
           </h2>
         </div>
 
@@ -887,7 +1021,7 @@ export default function ManageGarbageBins() {
                 <th className="px-3 py-3">
                   Status
                 </th>
-                {canManageBins && (
+                {canEditBins && (
                   <th className="px-3 py-3">
                     Actions
                   </th>
@@ -933,7 +1067,7 @@ export default function ManageGarbageBins() {
                       : "Inactive"}
                   </td>
 
-                  {canManageBins && (
+                  {canEditBins && (
                     <td className="px-3 py-3">
                       <div className="flex gap-2">
                         <button
@@ -973,13 +1107,12 @@ export default function ManageGarbageBins() {
                 bins.length === 0 && (
                   <tr>
                     <td
-                      colSpan={canManageBins ? 6 : 5}
+                      colSpan={canEditBins ? 6 : 5}
                       className="p-8 text-center text-slate-500"
                     >
-                      No garbage bins found
-                      in your assigned purok.
-                      Click the map to add
-                      the first one.
+                      {isBarangayCaptain
+                        ? "No garbage bins found in your assigned barangay. Use Add Bin to register the first one."
+                        : "No garbage bins found in your assigned purok. Click the map to add the first one."}
                     </td>
                   </tr>
                 )}
@@ -987,7 +1120,7 @@ export default function ManageGarbageBins() {
               {loading && (
                 <tr>
                   <td
-                    colSpan={canManageBins ? 6 : 5}
+                    colSpan={canEditBins ? 6 : 5}
                     className="p-8 text-center text-slate-500"
                   >
                     Loading garbage bins...

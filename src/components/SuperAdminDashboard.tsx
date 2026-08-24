@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   UserCog,
   Users,
+  Truck,
 } from "lucide-react";
 import {
   useEffect,
@@ -558,6 +559,17 @@ export default function SuperAdminDashboard({
                 onClick={() =>
                   showComingSoon(
                     "Create Barangay Captain",
+                  )
+                }
+              />
+
+              <ActionButton
+                label="Truck & Crew Management"
+                description="Register collection trucks, driver accounts, and crew"
+                icon={Truck}
+                onClick={() =>
+                  setCurrentScreen(
+                    "truck-crew-management",
                   )
                 }
               />

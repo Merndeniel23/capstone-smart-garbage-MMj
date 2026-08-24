@@ -1,4 +1,3 @@
-
 import { useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
@@ -137,6 +136,7 @@ export default function UserManagement() {
 
   const currentRole = localStorage.getItem("sg_user_role");
   const isSuperAdmin = currentRole === "super_admin";
+  const isBarangayCaptain = currentRole === "admin";
 
   const [showCaptainModal, setShowCaptainModal] = useState(false);
   const [captainFullName, setCaptainFullName] = useState("");
@@ -148,6 +148,17 @@ export default function UserManagement() {
     generateTemporaryPassword,
   );
   const [showTemporaryPassword, setShowTemporaryPassword] = useState(false);
+
+  const [showLeaderModal, setShowLeaderModal] = useState(false);
+  const [leaderFullName, setLeaderFullName] = useState("");
+  const [leaderEmail, setLeaderEmail] = useState("");
+  const [leaderPhone, setLeaderPhone] = useState("");
+  const [leaderPurokId, setLeaderPurokId] = useState("");
+  const [leaderTemporaryPassword, setLeaderTemporaryPassword] = useState(
+    generateTemporaryPassword,
+  );
+  const [showLeaderTemporaryPassword, setShowLeaderTemporaryPassword] =
+    useState(false);
 
   const loadData = async () => {
     setLoading(true);
@@ -393,6 +404,80 @@ export default function UserManagement() {
     }
   };
 
+  const resetLeaderForm = () => {
+    setLeaderFullName("");
+    setLeaderEmail("");
+    setLeaderPhone("");
+    setLeaderPurokId("");
+    setLeaderTemporaryPassword(generateTemporaryPassword());
+    setShowLeaderTemporaryPassword(false);
+  };
+
+  const closeLeaderModal = () => {
+    if (saving) return;
+    setShowLeaderModal(false);
+    resetLeaderForm();
+  };
+
+  const copyLeaderTemporaryPassword = async () => {
+    try {
+      await navigator.clipboard.writeText(leaderTemporaryPassword);
+      setSuccessMessage("Purok Leader temporary password copied.");
+    } catch {
+      setError("Unable to copy the temporary password.");
+    }
+  };
+
+  const createPurokLeader = async (event: React.FormEvent) => {
+    event.preventDefault();
+
+    const fullName = leaderFullName.trim();
+    const email = leaderEmail.trim().toLowerCase();
+
+    if (!fullName || !email || !leaderPurokId || !leaderTemporaryPassword) {
+      setError("Full name, email, assigned purok, and temporary password are required.");
+      return;
+    }
+
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      setError("Enter a valid Purok Leader email.");
+      return;
+    }
+
+    if (leaderTemporaryPassword.length < 8) {
+      setError("Temporary password must contain at least 8 characters.");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setSuccessMessage("");
+
+    try {
+      const data = await apiRequest("/admin/purok-leaders", {
+        method: "POST",
+        body: JSON.stringify({
+          fullName,
+          email,
+          phone: leaderPhone.trim() || null,
+          purokId: Number(leaderPurokId),
+          temporaryPassword: leaderTemporaryPassword,
+        }),
+      });
+
+      setSuccessMessage(data.message || "Purok Leader account created successfully.");
+      await loadData();
+      setShowLeaderModal(false);
+      resetLeaderForm();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to create the Purok Leader account.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const statusClass = (status: string) => {
     if (status === "active") return "bg-emerald-500";
     if (status === "inactive") return "bg-rose-500";
@@ -430,6 +515,22 @@ export default function UserManagement() {
             >
               <Plus className="h-4 w-4" />
               Create Barangay Captain
+            </button>
+          )}
+
+          {isBarangayCaptain && (
+            <button
+              type="button"
+              onClick={() => {
+                setError("");
+                setSuccessMessage("");
+                resetLeaderForm();
+                setShowLeaderModal(true);
+              }}
+              className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-5 py-3 text-xs font-black uppercase tracking-wider text-white shadow-sm hover:bg-emerald-800"
+            >
+              <Plus className="h-4 w-4" />
+              Create Purok Leader
             </button>
           )}
 
@@ -786,6 +887,92 @@ export default function UserManagement() {
                 >
                   {saving && <Loader2 className="h-4 w-4 animate-spin" />}
                   Create Account
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showLeaderModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+          <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-[2rem] border border-slate-100 bg-white p-6 shadow-2xl md:p-8">
+            <div className="mb-6 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">
+                  Barangay Captain Action
+                </p>
+                <h2 className="text-2xl font-black text-slate-900">Create Purok Leader</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Register a leader for one purok inside your assigned barangay.
+                </p>
+              </div>
+              <button type="button" onClick={closeLeaderModal} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={createPurokLeader} className="space-y-5">
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block text-xs font-bold text-slate-600">
+                  Full Name *
+                  <input type="text" value={leaderFullName} onChange={(e) => setLeaderFullName(e.target.value)} placeholder="Purok Leader full name" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm" />
+                </label>
+                <label className="block text-xs font-bold text-slate-600">
+                  Phone Number
+                  <input type="text" value={leaderPhone} onChange={(e) => setLeaderPhone(e.target.value)} placeholder="+63 9XX XXX XXXX" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm" />
+                </label>
+              </div>
+
+              <label className="block text-xs font-bold text-slate-600">
+                Login Email *
+                <input type="email" value={leaderEmail} onChange={(e) => setLeaderEmail(e.target.value)} placeholder="leader@example.com" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm" />
+              </label>
+
+              <label className="block text-xs font-bold text-slate-600">
+                Assigned Purok *
+                <div className="relative mt-2">
+                  <select value={leaderPurokId} onChange={(e) => setLeaderPurokId(e.target.value)} className="w-full appearance-none rounded-xl border border-slate-200 bg-white p-3 pr-10 text-sm">
+                    <option value="">Select purok</option>
+                    {puroks.map((purok) => (
+                      <option key={purok.id} value={purok.id}>{purok.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-slate-400" />
+                </div>
+              </label>
+
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">Temporary Password</p>
+                    <p className="mt-1 text-xs text-amber-800">Give this password securely to the Purok Leader.</p>
+                  </div>
+                  <button type="button" onClick={() => setLeaderTemporaryPassword(generateTemporaryPassword())} className="flex items-center gap-1.5 rounded-xl border border-amber-200 bg-white px-3 py-2 text-[10px] font-black uppercase text-amber-700">
+                    <RefreshCw className="h-3.5 w-3.5" /> Generate
+                  </button>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <div className="relative flex-1">
+                    <input type={showLeaderTemporaryPassword ? "text" : "password"} value={leaderTemporaryPassword} onChange={(e) => setLeaderTemporaryPassword(e.target.value)} className="w-full rounded-xl border border-amber-200 bg-white px-4 py-3 pr-11 font-mono text-sm font-bold" />
+                    <button type="button" onClick={() => setShowLeaderTemporaryPassword((v) => !v)} className="absolute right-3 top-3 text-amber-700">
+                      {showLeaderTemporaryPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                    </button>
+                  </div>
+                  <button type="button" onClick={copyLeaderTemporaryPassword} className="rounded-xl border border-amber-200 bg-white px-4 text-amber-700" title="Copy temporary password">
+                    <Copy className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
+                The account will be created as <strong>Purok Leader</strong>, activated immediately, assigned to the selected purok, and required to change the temporary password after first login.
+              </div>
+
+              <div className="flex gap-3">
+                <button type="button" onClick={closeLeaderModal} disabled={saving} className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-black text-slate-600">Cancel</button>
+                <button type="submit" disabled={saving} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 text-sm font-black text-white disabled:opacity-50">
+                  {saving && <Loader2 className="h-4 w-4 animate-spin" />} Create Account
                 </button>
               </div>
             </form>

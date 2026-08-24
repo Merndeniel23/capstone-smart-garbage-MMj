@@ -236,6 +236,11 @@ function needsCollection(bin: GarbageBin): boolean {
   );
 }
 
+function needsSpecialCollection(bin: GarbageBin): boolean {
+  const status = normalizeStatus(bin.current_status);
+  return status === "full" || status === "overflowing";
+}
+
 function priorityForBin(
   bin: GarbageBin,
 ): CollectionRequest["priority"] {
@@ -249,8 +254,16 @@ function priorityForBin(
 
 function markerColor(bin: GarbageBin): string {
   const status = normalizeStatus(bin.current_status);
+  const isCollector = getStoredRole() === "collector";
 
   if (!Boolean(Number(bin.is_active))) return "#64748b";
+
+  if (isCollector) {
+    if (status === "overflowing") return "#dc2626";
+    if (isScheduledToday(bin)) return "#16a34a";
+    return "#94a3b8";
+  }
+
   if (status === "overflowing") return "#dc2626";
   if (status === "full") return "#f97316";
   if (isScheduledToday(bin)) return "#16a34a";
@@ -599,8 +612,11 @@ export default function MapView({
       ? Number(currentUser?.id || 0)
       : 0;
 
+  const currentRole = getStoredRole();
+
   const currentBarangayId =
-    getStoredRole() === "collector"
+    currentRole === "collector" ||
+    currentRole === "admin"
       ? Number(currentUser?.barangay_id || 0)
       : 0;
 
@@ -638,7 +654,8 @@ export default function MapView({
       bins
         .filter((bin) => Number(bin.is_active) === 1)
         .filter((bin) =>
-          getStoredRole() === "collector"
+          currentRole === "collector" ||
+          currentRole === "admin"
             ? (
                 currentBarangayId > 0 &&
                 Number(bin.barangay_id) ===
@@ -703,6 +720,7 @@ export default function MapView({
       bins,
       activeRequestsByBin,
       currentBarangayId,
+      currentRole,
     ],
   );
 
@@ -732,6 +750,16 @@ export default function MapView({
         (bin) =>
           hasCoordinates(bin) &&
           bin.request?.status === "pending",
+      ) ||
+      visibleBins.find(
+        (bin) =>
+          hasCoordinates(bin) &&
+          normalizeStatus(bin.current_status) === "overflowing",
+      ) ||
+      visibleBins.find(
+        (bin) =>
+          hasCoordinates(bin) &&
+          isScheduledToday(bin),
       ) ||
       (getStoredRole() !== "collector"
         ? visibleBins.find(
@@ -998,6 +1026,17 @@ export default function MapView({
   const createTask = async (bin: BinWithRequest) => {
     if (viewOnly) return;
 
+    if (
+      getStoredRole() === "collector" &&
+      isScheduledToday(bin) &&
+      !needsSpecialCollection(bin)
+    ) {
+      setSuccessMessage(
+        "This bin is already part of today's normal scheduled collection route.",
+      );
+      return;
+    }
+
     setUpdatingId(bin.id);
     setErrorMessage("");
     setSuccessMessage("");
@@ -1093,10 +1132,10 @@ export default function MapView({
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             {getStoredRole() === "collector"
-              ? `Showing active collection tasks across ${
+              ? `Showing mapped garbage bins across ${
                   currentUser?.barangay_name ||
                   "your assigned barangay"
-                }. One assigned truck can service multiple puroks in the barangay.`
+                }. Green pins are scheduled today, red pins are urgent overflow, and gray pins are other collection points.`
               : "All active bins registered by Purok Leaders are shown. Green-ringed bins are scheduled today."}
           </p>
         </div>
@@ -1177,11 +1216,21 @@ export default function MapView({
       </div>
 
       <div className="flex flex-wrap gap-3 rounded-2xl border bg-white p-4 text-xs font-bold text-slate-600 shadow-sm">
-        <Legend color="#16a34a" label="Scheduled today" />
-        <Legend color="#dc2626" label="Overflowing" />
-        <Legend color="#f97316" label="Full" />
-        <Legend color="#eab308" label="Half-full" />
-        <Legend color="#2563eb" label="Empty / normal" />
+        {getStoredRole() === "collector" ? (
+          <>
+            <Legend color="#16a34a" label="Scheduled today" />
+            <Legend color="#dc2626" label="Urgent / overflowing" />
+            <Legend color="#94a3b8" label="Other mapped bin" />
+          </>
+        ) : (
+          <>
+            <Legend color="#16a34a" label="Scheduled today" />
+            <Legend color="#dc2626" label="Overflowing" />
+            <Legend color="#f97316" label="Full" />
+            <Legend color="#eab308" label="Half-full" />
+            <Legend color="#2563eb" label="Empty / normal" />
+          </>
+        )}
         <Legend color="#16a34a" label="Collector online" />
         <Legend color="#f59e0b" label="Collector idle" />
         <Legend color="#64748b" label="Collector offline" />
@@ -1544,7 +1593,16 @@ function BinDetails({
 
       {!viewOnly && (
         <div className="space-y-2">
-          {!request && needsCollection(bin) && (
+          {!request &&
+            getStoredRole() === "collector" &&
+            isScheduledToday(bin) &&
+            !needsSpecialCollection(bin) && (
+              <div className="rounded-xl bg-emerald-50 px-4 py-3 text-center text-sm font-black text-emerald-700">
+                Part of today&apos;s normal scheduled collection route
+              </div>
+            )}
+
+          {!request && needsSpecialCollection(bin) && (
             <button
               type="button"
               disabled={busy}
@@ -1552,15 +1610,17 @@ function BinDetails({
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-black text-white disabled:opacity-50"
             >
               <Truck className="h-4 w-4" />
-              Create Collection Task
+              Create Special Collection Task
             </button>
           )}
 
-          {!request && !needsCollection(bin) && (
-            <div className="rounded-xl bg-slate-100 px-4 py-3 text-center text-sm font-black text-slate-600">
-              This bin does not require collection today
-            </div>
-          )}
+          {!request &&
+            !isScheduledToday(bin) &&
+            !needsSpecialCollection(bin) && (
+              <div className="rounded-xl bg-slate-100 px-4 py-3 text-center text-sm font-black text-slate-600">
+                This bin is not scheduled for collection today
+              </div>
+            )}
 
           {request?.status === "pending" && (
             <button

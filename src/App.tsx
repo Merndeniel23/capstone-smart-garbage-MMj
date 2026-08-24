@@ -29,6 +29,7 @@ import BinInspections from "./components/BinInspections";
 import ManageGarbageBins from "./components/ManageGarbageBins";
 import ChangeInitialPassword from "./components/ChangeInitialPassword";
 import Reports from "./components/Reports";
+import TruckCrewManagement from "./components/TruckCrewManagement";
 
 import {
   AppStateProvider,
@@ -61,7 +62,8 @@ export type Screen =
   | "bin-inspections"
   | "garbage-bins"
   | "change-initial-password"
-  | "reports";
+  | "reports"
+  | "truck-crew-management";
 
 
 const COLLECTOR_LOCATION_FLAG =
@@ -421,6 +423,7 @@ function AppContent() {
               {currentScreen === "members-list" && <MembersList />}
               {currentScreen === "bin-inspections" && <BinInspections />}
               {currentScreen === "garbage-bins" && <ManageGarbageBins />}
+              {currentScreen === "truck-crew-management" && <TruckCrewManagement />}
               {currentScreen === "route-map" && <MapView />}
               {currentScreen === "schedule" && <Schedule />}
 

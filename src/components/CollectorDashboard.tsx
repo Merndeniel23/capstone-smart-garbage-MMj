@@ -81,6 +81,45 @@ type DashboardBin = GarbageBin & {
   request: CollectionRequest | null;
 };
 
+type CollectionRun = {
+  id: number;
+  schedule_id: number | null;
+  barangay_id: number;
+  truck_id: number;
+  collector_user_id: number;
+  collection_date: string;
+  status: "pending" | "in_progress" | "completed" | "cancelled";
+  started_at?: string | null;
+  completed_at?: string | null;
+  notes?: string | null;
+};
+
+type TodayCollectionOperation = {
+  hasScheduleToday: boolean;
+  run: CollectionRun | null;
+  collectionPointCount: number;
+  schedule: {
+    schedule_id: number;
+    barangay_id: number;
+    day_of_week: string;
+    start_time?: string | null;
+    end_time?: string | null;
+    notes?: string | null;
+    is_active?: number | boolean;
+  } | null;
+  truck: {
+    id: number;
+    truckCode: string;
+    plateNumber: string;
+    vehicleDescription?: string | null;
+    status: string;
+  } | null;
+  barangay: {
+    id: number;
+    name: string;
+  };
+};
+
 function getToken(): string {
   return (
     localStorage.getItem("token") ||
@@ -202,6 +241,12 @@ export default function CollectorDashboard({
 
   const [complaints, setComplaints] =
     useState<AssignedComplaint[]>([]);
+
+  const [todayOperation, setTodayOperation] =
+    useState<TodayCollectionOperation | null>(null);
+
+  const [runUpdating, setRunUpdating] =
+    useState(false);
 
   const [loading, setLoading] =
     useState(true);
@@ -337,6 +382,7 @@ export default function CollectorDashboard({
         binResult,
         requestResult,
         complaintResult,
+        operationResult,
       ] = await Promise.all([
         apiRequest(
           "/api/garbage-bins",
@@ -346,6 +392,9 @@ export default function CollectorDashboard({
         ),
         apiRequest(
           "/api/complaints",
+        ),
+        apiRequest(
+          "/api/collection-runs/today",
         ),
       ]);
 
@@ -370,6 +419,8 @@ export default function CollectorDashboard({
           ? complaintResult.complaints
           : [],
       );
+
+      setTodayOperation(operationResult);
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -583,6 +634,77 @@ export default function CollectorDashboard({
     activeComplaints,
   ]);
 
+  const startCollectionRun = async () => {
+    setRunUpdating(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const result = await apiRequest(
+        "/api/collection-runs/start",
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      );
+
+      setSuccessMessage(
+        result.message ||
+          "Today's collection has started.",
+      );
+
+      await loadData();
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to start collection.",
+      );
+    } finally {
+      setRunUpdating(false);
+    }
+  };
+
+  const completeCollectionRun = async () => {
+    const runId = todayOperation?.run?.id;
+
+    if (!runId) {
+      setErrorMessage(
+        "No active collection run was found.",
+      );
+      return;
+    }
+
+    setRunUpdating(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const result = await apiRequest(
+        `/api/collection-runs/${runId}/complete`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({}),
+        },
+      );
+
+      setSuccessMessage(
+        result.message ||
+          "Today's collection was completed.",
+      );
+
+      await loadData();
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to complete collection.",
+      );
+    } finally {
+      setRunUpdating(false);
+    }
+  };
+
   const createTask = async (
     bin: DashboardBin,
   ) => {
@@ -775,6 +897,189 @@ export default function CollectorDashboard({
           {errorMessage}
         </div>
       )}
+
+      <section className="overflow-hidden rounded-3xl border border-emerald-100 bg-white shadow-sm">
+        <div className="bg-emerald-800 p-6 text-white">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-emerald-200">
+                Normal Scheduled Collection
+              </p>
+              <h2 className="mt-1 flex items-center gap-2 text-xl font-black">
+                <Truck className="h-5 w-5" />
+                Today&apos;s Barangay Collection
+              </h2>
+              <p className="mt-2 text-sm text-emerald-100">
+                One collection operation for your assigned barangay, truck, and crew.
+              </p>
+            </div>
+
+            <span
+              className={`w-fit rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-wider ${
+                todayOperation?.run?.status === "completed"
+                  ? "bg-white text-emerald-800"
+                  : todayOperation?.run?.status === "in_progress"
+                    ? "bg-amber-300 text-amber-950"
+                    : todayOperation?.hasScheduleToday
+                      ? "bg-emerald-100 text-emerald-800"
+                      : "bg-slate-200 text-slate-700"
+              }`}
+            >
+              {todayOperation?.run?.status === "completed"
+                ? "Completed"
+                : todayOperation?.run?.status === "in_progress"
+                  ? "In Progress"
+                  : todayOperation?.hasScheduleToday
+                    ? "Ready"
+                    : "No Schedule Today"}
+            </span>
+          </div>
+        </div>
+
+        <div className="space-y-5 p-6">
+          {!todayOperation ? (
+            <div className="flex items-center gap-3 text-sm font-bold text-slate-500">
+              <RefreshCw className="h-4 w-4 animate-spin" />
+              Loading today&apos;s collection operation...
+            </div>
+          ) : (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-2xl bg-slate-50 p-4">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+                    Barangay
+                  </p>
+                  <p className="mt-2 font-black text-slate-900">
+                    {todayOperation.barangay?.name || "Not assigned"}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-slate-50 p-4">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+                    Assigned Truck
+                  </p>
+                  <p className="mt-2 font-black text-slate-900">
+                    {todayOperation.truck?.truckCode || "No active truck"}
+                  </p>
+                  {todayOperation.truck?.plateNumber && (
+                    <p className="mt-1 text-xs font-bold text-slate-500">
+                      {todayOperation.truck.plateNumber}
+                    </p>
+                  )}
+                </div>
+
+                <div className="rounded-2xl bg-slate-50 p-4">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+                    Collection Schedule
+                  </p>
+                  <p className="mt-2 font-black text-slate-900">
+                    {todayOperation.schedule?.day_of_week || "No schedule"}
+                  </p>
+                  {(todayOperation.schedule?.start_time ||
+                    todayOperation.schedule?.end_time) && (
+                    <p className="mt-1 text-xs font-bold text-slate-500">
+                      {todayOperation.schedule?.start_time || "—"}
+                      {" – "}
+                      {todayOperation.schedule?.end_time || "—"}
+                    </p>
+                  )}
+                </div>
+
+                <div className="rounded-2xl bg-slate-50 p-4">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+                    Collection Points
+                  </p>
+                  <p className="mt-2 text-2xl font-black text-slate-900">
+                    {todayOperation.collectionPointCount}
+                  </p>
+                  <p className="mt-1 text-xs font-bold text-slate-500">
+                    active registered bins
+                  </p>
+                </div>
+              </div>
+
+              {todayOperation.schedule?.notes && (
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-900">
+                  <span className="font-black">Schedule note:</span>{" "}
+                  {todayOperation.schedule.notes}
+                </div>
+              )}
+
+              {todayOperation.run?.started_at && (
+                <div className="flex flex-wrap gap-4 rounded-2xl border border-slate-100 bg-white text-xs font-bold text-slate-600">
+                  <span>
+                    Started: {formatDate(todayOperation.run.started_at)}
+                  </span>
+                  {todayOperation.run.completed_at && (
+                    <span>
+                      Completed: {formatDate(todayOperation.run.completed_at)}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+                {!todayOperation.hasScheduleToday && (
+                  <div className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-bold text-slate-600">
+                    There is no active barangay collection schedule for today.
+                  </div>
+                )}
+
+                {todayOperation.hasScheduleToday &&
+                  !todayOperation.truck && (
+                    <div className="rounded-xl bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">
+                      No active collection truck is assigned to this collector account.
+                    </div>
+                  )}
+
+                {todayOperation.hasScheduleToday &&
+                  todayOperation.truck &&
+                  !todayOperation.run && (
+                    <button
+                      type="button"
+                      disabled={runUpdating}
+                      onClick={() => void startCollectionRun()}
+                      className="flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-black uppercase tracking-wide text-white disabled:opacity-50"
+                    >
+                      <Truck className="h-4 w-4" />
+                      {runUpdating ? "Starting..." : "Start Collection"}
+                    </button>
+                  )}
+
+                {todayOperation.run?.status === "in_progress" && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentScreen("route-map")}
+                      className="flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-white px-5 py-3 text-sm font-black uppercase tracking-wide text-emerald-800"
+                    >
+                      <Navigation className="h-4 w-4" />
+                      Open Route Map
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={runUpdating}
+                      onClick={() => void completeCollectionRun()}
+                      className="flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-black uppercase tracking-wide text-white disabled:opacity-50"
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                      {runUpdating ? "Completing..." : "Complete Collection"}
+                    </button>
+                  </>
+                )}
+
+                {todayOperation.run?.status === "completed" && (
+                  <div className="flex items-center gap-2 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-700">
+                    <CheckCircle2 className="h-5 w-5" />
+                    Today&apos;s scheduled barangay collection is complete.
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </section>
 
       <section className="rounded-3xl border border-emerald-100 bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

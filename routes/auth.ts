@@ -182,6 +182,7 @@ router.post(
             u.full_name,
             u.email,
             u.password_hash,
+            u.must_change_password,
             u.role,
             u.phone,
             u.address,
@@ -240,6 +241,8 @@ router.post(
           "Login successful.",
         token,
         user,
+        mustChangePassword:
+          Number(user.must_change_password) === 1,
       });
     } catch (error) {
       console.error(
@@ -250,6 +253,127 @@ router.post(
       return res.status(500).json({
         message:
           "Unable to login. Check the database connection.",
+      });
+    }
+  },
+);
+
+
+/**
+ * AUTHENTICATED: Replace an administrator-issued temporary password.
+ */
+router.post(
+  "/change-initial-password",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    try {
+      const currentPassword = String(
+        req.body.currentPassword || "",
+      );
+
+      const newPassword = String(
+        req.body.newPassword || "",
+      );
+
+      const confirmPassword = String(
+        req.body.confirmPassword || "",
+      );
+
+      if (!currentPassword || !newPassword || !confirmPassword) {
+        return res.status(400).json({
+          message: "Please complete all password fields.",
+        });
+      }
+
+      if (newPassword.length < 8) {
+        return res.status(400).json({
+          message: "New password must contain at least 8 characters.",
+        });
+      }
+
+      if (newPassword !== confirmPassword) {
+        return res.status(400).json({
+          message: "New passwords do not match.",
+        });
+      }
+
+      if (currentPassword === newPassword) {
+        return res.status(400).json({
+          message: "Choose a password different from the temporary password.",
+        });
+      }
+
+      const [rows] = await db.query<any[]>(
+        `
+          SELECT
+            id,
+            password_hash,
+            must_change_password,
+            status
+          FROM users
+          WHERE id = ?
+          LIMIT 1
+        `,
+        [req.user!.id],
+      );
+
+      const user = rows[0];
+
+      if (!user) {
+        return res.status(404).json({
+          message: "User account was not found.",
+        });
+      }
+
+      if (user.status !== "active") {
+        return res.status(403).json({
+          message: "This account is inactive.",
+        });
+      }
+
+      if (Number(user.must_change_password) !== 1) {
+        return res.status(409).json({
+          message: "The temporary password has already been changed.",
+        });
+      }
+
+      const passwordMatches = await bcrypt.compare(
+        currentPassword,
+        user.password_hash,
+      );
+
+      if (!passwordMatches) {
+        return res.status(401).json({
+          message: "The temporary password is incorrect.",
+        });
+      }
+
+      const newPasswordHash = await bcrypt.hash(
+        newPassword,
+        12,
+      );
+
+      await db.execute(
+        `
+          UPDATE users
+          SET
+            password_hash = ?,
+            must_change_password = 0,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `,
+        [newPasswordHash, user.id],
+      );
+
+      return res.json({
+        message: "Password changed successfully.",
+        mustChangePassword: false,
+      });
+    } catch (error) {
+      console.error("Change initial password error:", error);
+
+      return res.status(500).json({
+        message: "Unable to change the temporary password.",
       });
     }
   },

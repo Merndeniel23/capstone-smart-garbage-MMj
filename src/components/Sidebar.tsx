@@ -269,6 +269,11 @@ export default function Sidebar({
       label: "Municipal Bins",
     },
     {
+      id: "truck-crew-management",
+      icon: Truck,
+      label: "Truck & Crew",
+    },
+    {
       id: "complaints",
       icon: MessageSquare,
       label: "All Complaints",

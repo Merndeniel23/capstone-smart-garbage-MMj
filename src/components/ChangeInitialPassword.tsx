@@ -4,6 +4,7 @@ import {
   EyeOff,
   Lock,
   ShieldCheck,
+  LogOut,
 } from "lucide-react";
 
 export default function ChangeInitialPassword() {
@@ -28,6 +29,30 @@ export default function ChangeInitialPassword() {
     if (role === "leader") return "leader-dashboard";
 
     return "dashboard";
+  };
+
+  const handleBackToLogin = () => {
+    // Clear the API session.
+    localStorage.removeItem("token");
+    sessionStorage.removeItem("token");
+
+    // Clear the AppStateContext auth flags that restore a logged-in user
+    // after reload. If these remain, the app immediately redirects back
+    // to that user's dashboard.
+    localStorage.removeItem("sg_current_user");
+    localStorage.setItem("sg_is_logged_in", "false");
+    localStorage.removeItem("sg_user_role");
+    localStorage.setItem("sg_current_screen", "registration");
+    localStorage.removeItem("sg_temp_login_email");
+
+    // Legacy/session keys, if present.
+    localStorage.removeItem("sg_user");
+    localStorage.removeItem("user");
+    sessionStorage.removeItem("sg_current_user");
+    sessionStorage.removeItem("sg_user");
+    sessionStorage.removeItem("user");
+
+    window.location.reload();
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -271,6 +296,16 @@ export default function ChangeInitialPassword() {
             className="mt-2 w-full rounded-xl bg-emerald-700 px-4 py-3 text-sm font-black text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? "Changing Password..." : "Change Password"}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleBackToLogin}
+            disabled={loading}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <LogOut className="h-4 w-4" />
+            Back to Login
           </button>
         </form>
       </div>

@@ -175,8 +175,14 @@ const [resendCountdown, setResendCountdown] = useState(0);
             ? "collector"
             : "household";
 
-  const currentScreen =
-    appRole === "super_admin"
+  const mustChangePassword =
+    data?.mustChangePassword === true ||
+    Number(data?.mustChangePassword) === 1 ||
+    Number(data?.user?.must_change_password) === 1;
+
+  const currentScreen = mustChangePassword
+    ? "change-initial-password"
+    : appRole === "super_admin"
       ? "super-admin-dashboard"
       : appRole === "admin"
         ? "admin-dashboard"
@@ -224,15 +230,13 @@ const [resendCountdown, setResendCountdown] = useState(0);
   localStorage.setItem("sg_user_role", appRole);
   localStorage.setItem("sg_current_screen", currentScreen);
 
-  if (data.mustChangePassword === true) {
-    localStorage.setItem(
-      "sg_current_screen",
-      "change-initial-password"
-    );
+  if (mustChangePassword) {
     localStorage.setItem(
       "sg_temp_login_email",
       data.user.email
     );
+  } else {
+    localStorage.removeItem("sg_temp_login_email");
   }
 
   window.location.reload();
@@ -938,7 +942,7 @@ const handleResetPasswordSubmit = async (
 
         {/* FOOTER */}
         <p className="text-[9px] font-extrabold tracking-widest text-stone-400 uppercase text-center">
-          Barangay Environmental Sinks System • Powered by EcoTrack
+          Barangay Environmental Sinks System • Powered by mern daniel rallos
         </p>
       </div>
 
