@@ -12,6 +12,18 @@ import {
   User,
 } from "lucide-react";
 
+interface RegistrationBarangay {
+  id: number;
+  name: string;
+}
+
+interface RegistrationPurok {
+  id: number;
+  barangay_id: number;
+  name: string;
+  barangay_name?: string;
+}
+
 interface ProfileUser {
   id: number;
   full_name: string;
@@ -61,6 +73,20 @@ async function apiRequest(
   return data;
 }
 
+function sanitizePhoneInput(value: string) {
+  const trimmed = value.trimStart();
+  const hasPlus = trimmed.startsWith("+");
+  const digits = value.replace(/\D/g, "").slice(0, 15);
+
+  return hasPlus && digits
+    ? `+${digits}`
+    : digits;
+}
+
+function isValidPhone(value: string) {
+  return /^\+?\d{7,15}$/.test(value);
+}
+
 function roleLabel(role?: ProfileUser["role"]) {
   switch (role) {
     case "admin":
@@ -95,6 +121,17 @@ export default function UserProfilePanel() {
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
 
+  const [registrationBarangays, setRegistrationBarangays] =
+    useState<RegistrationBarangay[]>([]);
+  const [registrationPuroks, setRegistrationPuroks] =
+    useState<RegistrationPurok[]>([]);
+  const [setupBarangayId, setSetupBarangayId] =
+    useState("");
+  const [setupPurokId, setSetupPurokId] =
+    useState("");
+  const [locationsLoading, setLocationsLoading] =
+    useState(false);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notif, setNotif] = useState("");
@@ -108,6 +145,33 @@ export default function UserProfilePanel() {
   const [correctionSubmitting, setCorrectionSubmitting] = useState(false);
 
   const isCivilian = profile?.role === "resident";
+
+  const needsInitialResidentSetup =
+    isCivilian &&
+    Boolean(
+      !profile?.barangay_id ||
+      !profile?.purok_id ||
+      !profile?.address?.trim() ||
+      !profile?.phone?.trim(),
+    );
+
+  const isPendingResidentApproval =
+    isCivilian &&
+    profile?.status === "pending" &&
+    !needsInitialResidentSetup;
+
+  const filteredSetupPuroks = useMemo(() => {
+    const barangayId = Number(setupBarangayId);
+
+    if (!barangayId) {
+      return [];
+    }
+
+    return registrationPuroks.filter(
+      (purok) =>
+        Number(purok.barangay_id) === barangayId,
+    );
+  }, [registrationPuroks, setupBarangayId]);
 
   const assignmentText = useMemo(() => {
     if (!profile) return "No assignment";
@@ -136,9 +200,19 @@ export default function UserProfilePanel() {
 
       setProfile(user);
       setName(user.full_name || "");
-      setPhone(user.phone || "");
+      setPhone(sanitizePhoneInput(user.phone || ""));
       setAddress(user.address || "");
       setCorrectionAddress(user.address || "");
+      setSetupBarangayId(
+        user.barangay_id
+          ? String(user.barangay_id)
+          : "",
+      );
+      setSetupPurokId(
+        user.purok_id
+          ? String(user.purok_id)
+          : "",
+      );
     } catch (err) {
       setError(
         err instanceof Error
@@ -154,6 +228,56 @@ export default function UserProfilePanel() {
     loadProfile();
   }, []);
 
+  useEffect(() => {
+    if (!needsInitialResidentSetup) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadLocations = async () => {
+      setLocationsLoading(true);
+
+      try {
+        const data = await apiRequest(
+          "/auth/registration-locations",
+        );
+
+        if (cancelled) return;
+
+        setRegistrationBarangays(
+          Array.isArray(data.barangays)
+            ? data.barangays
+            : [],
+        );
+
+        setRegistrationPuroks(
+          Array.isArray(data.puroks)
+            ? data.puroks
+            : [],
+        );
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Unable to load barangay and purok options.",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLocationsLoading(false);
+        }
+      }
+    };
+
+    void loadLocations();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [needsInitialResidentSetup]);
+
   const handleSave = async (event: React.FormEvent) => {
     event.preventDefault();
 
@@ -165,6 +289,57 @@ export default function UserProfilePanel() {
       return;
     }
 
+    const cleanPhone = sanitizePhoneInput(phone);
+
+    if (cleanPhone && !isValidPhone(cleanPhone)) {
+      setError(
+        "Enter a valid phone number using digits only (7 to 15 digits, optional + at the start).",
+      );
+      return;
+    }
+
+    if (needsInitialResidentSetup) {
+      if (!cleanPhone) {
+        setError(
+          "Mobile number is required to complete your resident profile.",
+        );
+        return;
+      }
+
+      if (!setupBarangayId || !setupPurokId) {
+        setError(
+          "Select your barangay and purok before continuing.",
+        );
+        return;
+      }
+
+      const selectedPurok =
+        registrationPuroks.find(
+          (purok) =>
+            Number(purok.id) ===
+            Number(setupPurokId),
+        );
+
+      if (
+        !selectedPurok ||
+        Number(selectedPurok.barangay_id) !==
+          Number(setupBarangayId)
+      ) {
+        setError(
+          "Select a valid purok under your chosen barangay.",
+        );
+        return;
+      }
+
+      if (!address.trim()) {
+        setError(
+          "Physical address is required to complete your resident profile.",
+        );
+        return;
+      }
+    }
+
+    setPhone(cleanPhone);
     setSaving(true);
 
     try {
@@ -172,8 +347,13 @@ export default function UserProfilePanel() {
         method: "PUT",
         body: JSON.stringify({
           fullName: name.trim(),
-          phone: phone.trim(),
+          phone: cleanPhone,
           address: address.trim(),
+          ...(needsInitialResidentSetup
+            ? {
+                purokId: Number(setupPurokId),
+              }
+            : {}),
         }),
       });
 
@@ -181,8 +361,47 @@ export default function UserProfilePanel() {
 
       setProfile(updatedUser);
       setName(updatedUser.full_name || "");
-      setPhone(updatedUser.phone || "");
+      setPhone(sanitizePhoneInput(updatedUser.phone || ""));
       setAddress(updatedUser.address || "");
+      setSetupBarangayId(
+        updatedUser.barangay_id
+          ? String(updatedUser.barangay_id)
+          : "",
+      );
+      setSetupPurokId(
+        updatedUser.purok_id
+          ? String(updatedUser.purok_id)
+          : "",
+      );
+
+      if (
+        updatedUser.barangay_id &&
+        updatedUser.purok_id &&
+        updatedUser.address &&
+        updatedUser.phone
+      ) {
+        localStorage.removeItem(
+          "sg_requires_location_setup",
+        );
+      }
+
+      if (
+        updatedUser.role === "resident" &&
+        updatedUser.status === "pending"
+      ) {
+        localStorage.setItem(
+          "sg_pending_approval",
+          "true",
+        );
+        localStorage.setItem(
+          "sg_current_screen",
+          "profile",
+        );
+      } else {
+        localStorage.removeItem(
+          "sg_pending_approval",
+        );
+      }
 
       localStorage.setItem(
         "sg_current_user",
@@ -207,8 +426,26 @@ export default function UserProfilePanel() {
         }),
       );
 
-      setNotif(data.message || "Profile updated successfully.");
-      window.setTimeout(() => setNotif(""), 4000);
+      const pendingApproval =
+        updatedUser.role === "resident" &&
+        updatedUser.status === "pending";
+
+      setNotif(
+        pendingApproval
+          ? "Profile submitted. Please wait for Barangay Captain approval before using the resident dashboard."
+          : data.message || "Profile updated successfully.",
+      );
+
+      if (pendingApproval) {
+        window.setTimeout(() => {
+          window.location.reload();
+        }, 900);
+      } else {
+        window.setTimeout(
+          () => setNotif(""),
+          4000,
+        );
+      }
     } catch (err) {
       setError(
         err instanceof Error
@@ -316,6 +553,38 @@ export default function UserProfilePanel() {
         </p>
       </div>
 
+      {needsInitialResidentSetup && (
+        <div className="rounded-[1.8rem] border border-amber-200 bg-amber-50 px-6 py-4 text-amber-900 shadow-sm">
+          <div className="flex items-start gap-3">
+            <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+            <div>
+              <p className="text-xs font-black uppercase tracking-wider">
+                Complete Your Resident Profile
+              </p>
+              <p className="mt-1 text-xs font-semibold leading-relaxed text-amber-800">
+                Your Google account was created without a barangay, purok, mobile number, or physical address. Complete these required details once before using the resident dashboard.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isPendingResidentApproval && (
+        <div className="rounded-[1.8rem] border border-amber-200 bg-amber-50 px-6 py-4 text-amber-900 shadow-sm">
+          <div className="flex items-start gap-3">
+            <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+            <div>
+              <p className="text-xs font-black uppercase tracking-wider">
+                Pending Barangay Captain Approval
+              </p>
+              <p className="mt-1 text-xs font-semibold leading-relaxed text-amber-800">
+                Your resident details have been submitted. You only need approval once. After the Barangay Captain activates your account, future Google sign-ins will go directly to the resident dashboard.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {notif && (
         <div className="flex items-center gap-3 rounded-[1.8rem] border border-emerald-200 bg-emerald-50 px-6 py-4 text-emerald-800 shadow-md">
           <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-600" />
@@ -392,9 +661,17 @@ export default function UserProfilePanel() {
               <div className="relative flex items-center">
                 <Phone className="absolute left-4 h-4 w-4 text-slate-400" />
                 <input
-                  type="text"
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
                   value={phone}
-                  onChange={(event) => setPhone(event.target.value)}
+                  onChange={(event) =>
+                    setPhone(
+                      sanitizePhoneInput(event.target.value),
+                    )
+                  }
+                  placeholder="+639XXXXXXXXX"
+                  maxLength={16}
                   className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3.5 pl-11 pr-4 font-extrabold text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
                 />
               </div>
@@ -404,34 +681,100 @@ export default function UserProfilePanel() {
               <label className="ml-1 block font-black uppercase tracking-widest text-slate-500">
                 Official Barangay Assignment
               </label>
-              <div className="relative flex items-center">
-                <MapPin className="absolute left-4 h-4 w-4 text-slate-400" />
-                <input
-                  type="text"
-                  value={profile?.barangay_name || "Not assigned"}
-                  disabled
-                  className="w-full cursor-not-allowed rounded-2xl border border-slate-200 bg-slate-100 py-3.5 pl-11 pr-4 font-bold text-slate-500"
-                />
-              </div>
+
+              {needsInitialResidentSetup ? (
+                <select
+                  value={setupBarangayId}
+                  disabled={locationsLoading}
+                  onChange={(event) => {
+                    setSetupBarangayId(
+                      event.target.value,
+                    );
+                    setSetupPurokId("");
+                  }}
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3.5 font-extrabold text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
+                  required
+                >
+                  <option value="">
+                    {locationsLoading
+                      ? "Loading barangays..."
+                      : "Select barangay"}
+                  </option>
+                  {registrationBarangays.map(
+                    (barangay) => (
+                      <option
+                        key={barangay.id}
+                        value={barangay.id}
+                      >
+                        {barangay.name}
+                      </option>
+                    ),
+                  )}
+                </select>
+              ) : (
+                <div className="relative flex items-center">
+                  <MapPin className="absolute left-4 h-4 w-4 text-slate-400" />
+                  <input
+                    type="text"
+                    value={profile?.barangay_name || "Not assigned"}
+                    disabled
+                    className="w-full cursor-not-allowed rounded-2xl border border-slate-200 bg-slate-100 py-3.5 pl-11 pr-4 font-bold text-slate-500"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="space-y-1.5">
               <label className="ml-1 block font-black uppercase tracking-widest text-slate-500">
                 Official Purok Assignment
               </label>
-              <div className="relative flex items-center">
-                <MapPin className="absolute left-4 h-4 w-4 text-slate-400" />
-                <input
-                  type="text"
-                  value={
-                    profile?.role === "collector"
-                      ? "Barangay-wide"
-                      : profile?.purok_name || "Not assigned"
+
+              {needsInitialResidentSetup ? (
+                <select
+                  value={setupPurokId}
+                  disabled={
+                    locationsLoading ||
+                    !setupBarangayId
                   }
-                  disabled
-                  className="w-full cursor-not-allowed rounded-2xl border border-slate-200 bg-slate-100 py-3.5 pl-11 pr-4 font-bold text-slate-500"
-                />
-              </div>
+                  onChange={(event) =>
+                    setSetupPurokId(
+                      event.target.value,
+                    )
+                  }
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3.5 font-extrabold text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/10 disabled:bg-slate-100 disabled:text-slate-400"
+                  required
+                >
+                  <option value="">
+                    {!setupBarangayId
+                      ? "Select barangay first"
+                      : "Select purok"}
+                  </option>
+                  {filteredSetupPuroks.map(
+                    (purok) => (
+                      <option
+                        key={purok.id}
+                        value={purok.id}
+                      >
+                        {purok.name}
+                      </option>
+                    ),
+                  )}
+                </select>
+              ) : (
+                <div className="relative flex items-center">
+                  <MapPin className="absolute left-4 h-4 w-4 text-slate-400" />
+                  <input
+                    type="text"
+                    value={
+                      profile?.role === "collector"
+                        ? "Barangay-wide"
+                        : profile?.purok_name || "Not assigned"
+                    }
+                    disabled
+                    className="w-full cursor-not-allowed rounded-2xl border border-slate-200 bg-slate-100 py-3.5 pl-11 pr-4 font-bold text-slate-500"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="space-y-1.5">
@@ -456,7 +799,9 @@ export default function UserProfilePanel() {
                 </label>
                 {isCivilian && (
                   <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-amber-600">
-                    Locked
+                    {needsInitialResidentSetup
+                      ? "Required Setup"
+                      : "Locked"}
                   </span>
                 )}
               </div>
@@ -467,9 +812,18 @@ export default function UserProfilePanel() {
                   type="text"
                   value={address}
                   onChange={(event) => setAddress(event.target.value)}
-                  disabled={isCivilian}
+                  disabled={
+                    isCivilian &&
+                    !needsInitialResidentSetup
+                  }
+                  placeholder={
+                    needsInitialResidentSetup
+                      ? "Enter your complete physical address"
+                      : undefined
+                  }
                   className={`w-full rounded-2xl border py-3.5 pl-11 pr-4 font-extrabold ${
-                    isCivilian
+                    isCivilian &&
+                    !needsInitialResidentSetup
                       ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-500"
                       : "border-slate-200 bg-slate-50 text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
                   }`}
@@ -488,7 +842,8 @@ export default function UserProfilePanel() {
           </button>
         </form>
 
-        {isCivilian && (
+        {isCivilian &&
+          !needsInitialResidentSetup && (
           <div className="border-t border-slate-100 pt-6">
             <button
               type="button"

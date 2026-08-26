@@ -834,11 +834,54 @@ router.get(
   },
 );
 
-router.get("/users", requireAuth, async (req: AuthRequest, res) => {
+router.get("/purok-members", requireAuth, async (req: AuthRequest, res) => {
   try {
-    if (!requireBarangayCaptain(req, res)) return;
+    const viewerId = parsePositiveInteger(req.user?.id);
 
-    const [rows]: any = await db.query(`
+    if (!viewerId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required.",
+      });
+    }
+
+    const [viewerRows]: any = await db.query(
+      `
+      SELECT id, role, barangay_id, purok_id
+      FROM users
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [viewerId],
+    );
+
+    const viewer = viewerRows[0];
+
+    if (!viewer) {
+      return res.status(401).json({
+        success: false,
+        message: "User account was not found.",
+      });
+    }
+
+    if (viewer.role !== "purok_leader") {
+      return res.status(403).json({
+        success: false,
+        message: "Purok Leader access is required.",
+      });
+    }
+
+    const purokId = parsePositiveInteger(viewer.purok_id);
+
+    if (!purokId) {
+      return res.status(400).json({
+        success: false,
+        message: "The Purok Leader account has no assigned purok.",
+      });
+    }
+
+    const [rows]: any = await db.query(
+      `
       SELECT
         u.id,
         u.full_name,
@@ -855,10 +898,88 @@ router.get("/users", requireAuth, async (req: AuthRequest, res) => {
       FROM users u
       LEFT JOIN barangays b ON b.id = u.barangay_id
       LEFT JOIN puroks p ON p.id = u.purok_id
+      WHERE u.role = 'resident'
+        AND u.purok_id = ?
+      ORDER BY u.full_name ASC
+      `,
+      [purokId],
+    );
+
+    return res.json({
+      success: true,
+      users: rows,
+    });
+  } catch (error) {
+    console.error("Load purok members error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to load purok members.",
+    });
+  }
+});
+
+router.get("/users", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    if (!requireBarangayCaptain(req, res)) return;
+
+    const viewerId = parsePositiveInteger(req.user?.id);
+
+    const [viewerRows]: any = await db.query(
+      `SELECT id, role, barangay_id FROM users WHERE id = ? LIMIT 1`,
+      [viewerId],
+    );
+
+    const viewer = viewerRows[0];
+
+    if (!viewer) {
+      return res.status(401).json({
+        success: false,
+        message: "Administrator account was not found.",
+      });
+    }
+
+    const isSuperAdmin = viewer.role === "super_admin";
+    const barangayId = parsePositiveInteger(viewer.barangay_id);
+
+    if (!isSuperAdmin && !barangayId) {
+      return res.status(400).json({
+        success: false,
+        message: "The Barangay Captain account has no assigned barangay.",
+      });
+    }
+
+    const scopeWhere = isSuperAdmin
+      ? ""
+      : `WHERE u.barangay_id = ?
+         AND u.role IN ('resident', 'collector', 'purok_leader')`;
+
+    const params = isSuperAdmin ? [] : [barangayId];
+
+    const [rows]: any = await db.query(
+      `
+      SELECT
+        u.id,
+        u.full_name,
+        u.email,
+        u.phone,
+        u.address,
+        u.role,
+        u.status,
+        u.barangay_id,
+        b.name AS barangay_name,
+        u.purok_id,
+        p.name AS purok_name,
+        u.created_at
+      FROM users u
+      LEFT JOIN barangays b ON b.id = u.barangay_id
+      LEFT JOIN puroks p ON p.id = u.purok_id
+      ${scopeWhere}
       ORDER BY
         FIELD(u.role, 'admin', 'purok_leader', 'collector', 'resident'),
         u.full_name ASC
-    `);
+      `,
+      params,
+    );
 
     return res.json({ success: true, users: rows });
   } catch (error) {
@@ -874,10 +995,24 @@ router.get("/locations", requireAuth, async (req: AuthRequest, res) => {
   try {
     if (!requireBarangayCaptain(req, res)) return;
 
-    const isSuperAdmin = req.user?.role === "super_admin";
-    const viewerBarangayId = parsePositiveInteger(req.user?.barangay_id);
+    const viewerId = parsePositiveInteger(req.user?.id);
+    const [viewerRows]: any = await db.query(
+      `SELECT id, role, barangay_id FROM users WHERE id = ? LIMIT 1`,
+      [viewerId],
+    );
 
-    if (!isSuperAdmin && !viewerBarangayId) {
+    const viewer = viewerRows[0];
+    const isSuperAdmin = viewer?.role === "super_admin";
+    const barangayId = parsePositiveInteger(viewer?.barangay_id);
+
+    if (!viewer) {
+      return res.status(401).json({
+        success: false,
+        message: "Administrator account was not found.",
+      });
+    }
+
+    if (!isSuperAdmin && !barangayId) {
       return res.status(400).json({
         success: false,
         message: "The Barangay Captain account has no assigned barangay.",
@@ -892,8 +1027,8 @@ router.get("/locations", requireAuth, async (req: AuthRequest, res) => {
           ORDER BY name ASC
         `)
       : await db.query(
-          `SELECT id, name FROM barangays WHERE id = ? AND is_active = 1 LIMIT 1`,
-          [viewerBarangayId],
+          `SELECT id, name FROM barangays WHERE id = ? AND is_active = 1`,
+          [barangayId],
         );
 
     const [puroks]: any = isSuperAdmin
@@ -904,12 +1039,14 @@ router.get("/locations", requireAuth, async (req: AuthRequest, res) => {
           ORDER BY b.name ASC, p.name ASC
         `)
       : await db.query(
-          `SELECT p.id, p.barangay_id, p.name, b.name AS barangay_name
-           FROM puroks p
-           INNER JOIN barangays b ON b.id = p.barangay_id
-           WHERE p.barangay_id = ?
-           ORDER BY p.name ASC`,
-          [viewerBarangayId],
+          `
+          SELECT p.id, p.barangay_id, p.name, b.name AS barangay_name
+          FROM puroks p
+          INNER JOIN barangays b ON b.id = p.barangay_id
+          WHERE p.barangay_id = ?
+          ORDER BY p.name ASC
+          `,
+          [barangayId],
         );
 
     return res.json({ success: true, barangays, puroks });
@@ -926,7 +1063,35 @@ router.get("/collectors", requireAuth, async (req: AuthRequest, res) => {
   try {
     if (!requireBarangayCaptain(req, res)) return;
 
-    const [rows]: any = await db.query(`
+    const viewerId = parsePositiveInteger(req.user?.id);
+    const [viewerRows]: any = await db.query(
+      `SELECT id, role, barangay_id FROM users WHERE id = ? LIMIT 1`,
+      [viewerId],
+    );
+
+    const viewer = viewerRows[0];
+    const isSuperAdmin = viewer?.role === "super_admin";
+    const barangayId = parsePositiveInteger(viewer?.barangay_id);
+
+    if (!viewer) {
+      return res.status(401).json({
+        success: false,
+        message: "Administrator account was not found.",
+      });
+    }
+
+    if (!isSuperAdmin && !barangayId) {
+      return res.status(400).json({
+        success: false,
+        message: "The Barangay Captain account has no assigned barangay.",
+      });
+    }
+
+    const scopeSql = isSuperAdmin ? "" : "AND u.barangay_id = ?";
+    const params = isSuperAdmin ? [] : [barangayId];
+
+    const [rows]: any = await db.query(
+      `
       SELECT
         u.id,
         u.full_name,
@@ -939,8 +1104,11 @@ router.get("/collectors", requireAuth, async (req: AuthRequest, res) => {
       LEFT JOIN barangays b ON b.id = u.barangay_id
       WHERE u.role = 'collector'
         AND u.status = 'active'
+        ${scopeSql}
       ORDER BY u.full_name ASC
-    `);
+      `,
+      params,
+    );
 
     return res.json({ success: true, collectors: rows });
   } catch (error) {
@@ -1120,18 +1288,47 @@ router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => 
       });
     }
 
+    const [viewerRows]: any = await db.query(
+      `SELECT id, role, barangay_id FROM users WHERE id = ? LIMIT 1`,
+      [req.user?.id],
+    );
+
+    const viewer = viewerRows[0];
+    const isSuperAdmin = viewer?.role === "super_admin";
+    const barangayId = parsePositiveInteger(viewer?.barangay_id);
+
+    if (!viewer) {
+      return res.status(401).json({
+        success: false,
+        message: "Administrator account was not found.",
+      });
+    }
+
+    if (!isSuperAdmin && !barangayId) {
+      return res.status(403).json({
+        success: false,
+        message: "The Barangay Captain account has no assigned barangay.",
+      });
+    }
+
+    const scopeSql = isSuperAdmin ? "" : "AND barangay_id = ?";
+    const params = isSuperAdmin
+      ? [status, userId]
+      : [status, userId, barangayId];
+
     const [result]: any = await db.execute(
       `UPDATE users
        SET status = ?
        WHERE id = ?
-         AND role NOT IN ('admin', 'super_admin')`,
-      [status, userId],
+         AND role NOT IN ('admin', 'super_admin')
+         ${scopeSql}`,
+      params,
     );
 
     if (result.affectedRows === 0) {
       return res.status(404).json({
         success: false,
-        message: "User was not found or cannot be updated.",
+        message: "User was not found in your barangay or cannot be updated.",
       });
     }
 
@@ -1148,135 +1345,6 @@ router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => 
       success: false,
       message: "Unable to update account status.",
     });
-  }
-});
-
-
-router.post("/purok-leaders", requireAuth, async (req: AuthRequest, res) => {
-  const connection = await db.getConnection();
-
-  try {
-    if (req.user?.role !== "admin") {
-      return res.status(403).json({
-        success: false,
-        message: "Only the Barangay Captain can create Purok Leader accounts.",
-      });
-    }
-
-    const viewerId = parsePositiveInteger(req.user?.id);
-    const fullName = String(req.body.fullName || "").trim();
-    const email = String(req.body.email || "").trim().toLowerCase();
-    const phone = String(req.body.phone || "").trim() || null;
-    const purokId = parsePositiveInteger(req.body.purokId ?? req.body.purok_id);
-    const temporaryPassword = String(
-      req.body.temporaryPassword || req.body.password || "",
-    );
-
-    if (!viewerId || !fullName || !email || !purokId || !temporaryPassword) {
-      return res.status(400).json({
-        success: false,
-        message: "Full name, email, assigned purok, and temporary password are required.",
-      });
-    }
-
-    if (!/^\S+@\S+\.\S+$/.test(email)) {
-      return res.status(400).json({ success: false, message: "Enter a valid email address." });
-    }
-
-    if (temporaryPassword.length < 8) {
-      return res.status(400).json({
-        success: false,
-        message: "Temporary password must contain at least 8 characters.",
-      });
-    }
-
-    await connection.beginTransaction();
-
-    const [viewerRows]: any = await connection.query(
-      `SELECT id, barangay_id FROM users WHERE id = ? AND role = 'admin' AND status = 'active' LIMIT 1`,
-      [viewerId],
-    );
-    const viewer = viewerRows[0];
-    const barangayId = parsePositiveInteger(viewer?.barangay_id);
-
-    if (!viewer || !barangayId) {
-      await connection.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Your Barangay Captain account has no active barangay assignment.",
-      });
-    }
-
-    const [purokRows]: any = await connection.query(
-      `SELECT p.id, p.name
-       FROM puroks p
-       INNER JOIN barangays b ON b.id = p.barangay_id
-       WHERE p.id = ? AND p.barangay_id = ? AND b.is_active = 1
-       LIMIT 1`,
-      [purokId, barangayId],
-    );
-    const purok = purokRows[0];
-
-    if (!purok) {
-      await connection.rollback();
-      return res.status(403).json({
-        success: false,
-        message: "You can only assign a Purok Leader to a purok in your own barangay.",
-      });
-    }
-
-    const [existingEmailRows]: any = await connection.query(
-      "SELECT id FROM users WHERE email = ? LIMIT 1",
-      [email],
-    );
-    if (existingEmailRows.length) {
-      await connection.rollback();
-      return res.status(400).json({ success: false, message: "Email already exists." });
-    }
-
-    const [existingLeaderRows]: any = await connection.query(
-      `SELECT id, full_name FROM users
-       WHERE role = 'purok_leader' AND purok_id = ? AND status = 'active'
-       LIMIT 1`,
-      [purokId],
-    );
-    if (existingLeaderRows.length) {
-      await connection.rollback();
-      return res.status(400).json({
-        success: false,
-        message: `${purok.name} already has an active Purok Leader (${existingLeaderRows[0].full_name}).`,
-      });
-    }
-
-    const passwordHash = await bcrypt.hash(temporaryPassword, 10);
-    const [result]: any = await connection.execute(
-      `INSERT INTO users
-       (full_name, email, phone, password_hash, role, barangay_id, purok_id, status, must_change_password)
-       VALUES (?, ?, ?, ?, 'purok_leader', ?, ?, 'active', 1)`,
-      [fullName, email, phone, passwordHash, barangayId, purokId],
-    );
-
-    await connection.commit();
-
-    return res.status(201).json({
-      success: true,
-      message: `${fullName} was registered as the Purok Leader of ${purok.name}.`,
-      userId: Number(result.insertId),
-    });
-  } catch (error: any) {
-    await connection.rollback();
-    console.error("Create Purok Leader error:", error);
-
-    if (error?.code === "ER_DUP_ENTRY") {
-      return res.status(400).json({ success: false, message: "Email already exists." });
-    }
-
-    return res.status(500).json({
-      success: false,
-      message: "Unable to create the Purok Leader account.",
-    });
-  } finally {
-    connection.release();
   }
 });
 
@@ -1441,10 +1509,12 @@ function requireSuperAdmin(req: AuthRequest, res: any): boolean {
   if (req.user?.role !== "super_admin") {
     res.status(403).json({
       success: false,
-      message: "Only the Municipal Administrator can manage collection trucks and crews.",
+      message:
+        "Only the Municipal Administrator can manage collection trucks and crews.",
     });
     return false;
   }
+
   return true;
 }
 
@@ -1468,36 +1538,58 @@ router.get("/truck-crews", requireAuth, async (req: AuthRequest, res) => {
         gt.created_at,
         gt.updated_at
       FROM garbage_trucks gt
-      LEFT JOIN barangays b ON b.id = gt.barangay_id
-      LEFT JOIN users u ON u.id = gt.collector_user_id
-      ORDER BY FIELD(gt.status, 'active', 'maintenance', 'inactive'), b.name ASC, gt.truck_code ASC
+      LEFT JOIN barangays b
+        ON b.id = gt.barangay_id
+      LEFT JOIN users u
+        ON u.id = gt.collector_user_id
+      ORDER BY
+        FIELD(gt.status, 'active', 'maintenance', 'inactive'),
+        b.name ASC,
+        gt.truck_code ASC
     `);
 
     const [crewRows]: any = await db.query(`
-      SELECT id, truck_id, full_name, crew_role, phone, status, created_at
+      SELECT
+        id,
+        truck_id,
+        full_name,
+        crew_role,
+        phone,
+        status,
+        created_at
       FROM truck_crew_members
-      ORDER BY truck_id ASC, FIELD(crew_role, 'driver', 'crew_leader', 'loader', 'helper'), full_name ASC
+      ORDER BY
+        truck_id ASC,
+        FIELD(crew_role, 'driver', 'crew_leader', 'loader', 'helper'),
+        full_name ASC
     `);
 
     const crewByTruck = new Map<number, any[]>();
+
     for (const member of crewRows) {
       const truckId = Number(member.truck_id);
-      const list = crewByTruck.get(truckId) || [];
-      list.push(member);
-      crewByTruck.set(truckId, list);
+      const current = crewByTruck.get(truckId) || [];
+      current.push(member);
+      crewByTruck.set(truckId, current);
     }
 
     const trucks = truckRows.map((truck: any) => ({
       ...truck,
-      crew_members: crewByTruck.get(Number(truck.id)) || [],
+      crew_members:
+        crewByTruck.get(Number(truck.id)) || [],
     }));
 
-    return res.json({ success: true, trucks });
+    return res.json({
+      success: true,
+      trucks,
+    });
   } catch (error) {
     console.error("Load truck crews error:", error);
+
     return res.status(500).json({
       success: false,
-      message: "Unable to load municipal truck and crew records.",
+      message:
+        "Unable to load municipal truck and crew records.",
     });
   }
 });
@@ -1508,160 +1600,270 @@ router.post("/truck-crews", requireAuth, async (req: AuthRequest, res) => {
   try {
     if (!requireSuperAdmin(req, res)) return;
 
-    const truckCode = String(req.body.truckCode || "").trim();
-    const plateNumber = String(req.body.plateNumber || "").trim();
-    const vehicleDescription = String(req.body.vehicleDescription || "").trim() || null;
-    const barangayId = parsePositiveInteger(req.body.barangayId);
-    const collectorMode =
-      req.body.collectorMode === "existing" ? "existing" : "new";
-    const existingCollectorId = parsePositiveInteger(
-      req.body.existingCollectorId,
+    const truckCode = String(
+      req.body.truckCode || "",
+    ).trim();
+
+    const plateNumber = String(
+      req.body.plateNumber || "",
+    ).trim();
+
+    const vehicleDescription =
+      String(
+        req.body.vehicleDescription || "",
+      ).trim() || null;
+
+    const barangayId = parsePositiveInteger(
+      req.body.barangayId,
     );
+
     const collector = req.body.collector || {};
-    let collectorName = String(collector.fullName || "").trim();
-    let collectorEmail = String(collector.email || "").trim().toLowerCase();
-    let collectorPhone = String(collector.phone || "").trim() || null;
-    const temporaryPassword = String(collector.temporaryPassword || "");
-    const collectorCrewRole = collector.crewRole === "crew_leader" ? "crew_leader" : "driver";
-    const crewMembers = Array.isArray(req.body.crewMembers) ? req.body.crewMembers : [];
+
+    // Supports both the original "create collector" flow and the newer
+    // "select existing collector" UI.
+    const existingCollectorId = parsePositiveInteger(
+      req.body.existingCollectorId ??
+        req.body.collectorUserId ??
+        req.body.collectorId ??
+        collector.userId ??
+        collector.id,
+    );
+
+    const collectorName = String(
+      collector.fullName || "",
+    ).trim();
+
+    const collectorEmail = String(
+      collector.email || "",
+    )
+      .trim()
+      .toLowerCase();
+
+    const collectorPhone =
+      String(collector.phone || "").trim() || null;
+
+    const temporaryPassword = String(
+      collector.temporaryPassword ||
+        req.body.temporaryPassword ||
+        "",
+    );
+
+    const collectorCrewRole =
+      collector.crewRole === "crew_leader" ||
+      req.body.collectorCrewRole === "crew_leader"
+        ? "crew_leader"
+        : "driver";
+
+    const crewMembers = Array.isArray(
+      req.body.crewMembers,
+    )
+      ? req.body.crewMembers
+      : [];
 
     if (!truckCode || !plateNumber || !barangayId) {
       return res.status(400).json({
         success: false,
-        message: "Complete the truck and assigned barangay fields.",
+        message:
+          "Complete the truck code, plate number, and assigned barangay.",
       });
     }
 
-    if (collectorMode === "existing") {
-      if (!existingCollectorId) {
-        return res.status(400).json({
-          success: false,
-          message: "Select an existing Garbage Collector account.",
-        });
-      }
-    } else {
-      if (!collectorName || !collectorEmail || !temporaryPassword) {
-        return res.status(400).json({
-          success: false,
-          message: "Complete the new driver/crew leader account fields.",
-        });
-      }
+    if (
+      !existingCollectorId &&
+      (!collectorName ||
+        !collectorEmail ||
+        !temporaryPassword)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Select an existing collector or complete the new collector account fields.",
+      });
+    }
 
-      if (temporaryPassword.length < 8) {
-        return res.status(400).json({
-          success: false,
-          message: "Temporary password must contain at least 8 characters.",
-        });
-      }
+    if (
+      !existingCollectorId &&
+      temporaryPassword.length < 8
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Temporary password must contain at least 8 characters.",
+      });
     }
 
     await connection.beginTransaction();
 
-    const [barangayRows]: any = await connection.query(
-      "SELECT id, name FROM barangays WHERE id = ? AND is_active = 1 LIMIT 1",
-      [barangayId],
-    );
+    const [barangayRows]: any =
+      await connection.query(
+        `
+        SELECT id, name
+        FROM barangays
+        WHERE id = ?
+          AND is_active = 1
+        LIMIT 1
+        `,
+        [barangayId],
+      );
+
     if (!barangayRows.length) {
       await connection.rollback();
-      return res.status(404).json({ success: false, message: "Selected barangay was not found or is inactive." });
-    }
 
-    const [assignedTruckRows]: any = await connection.query(
-      `SELECT id, truck_code FROM garbage_trucks
-       WHERE barangay_id = ? AND status IN ('active','maintenance') LIMIT 1`,
-      [barangayId],
-    );
-    if (assignedTruckRows.length) {
-      await connection.rollback();
-      return res.status(400).json({
+      return res.status(404).json({
         success: false,
-        message: `This barangay already has truck ${assignedTruckRows[0].truck_code} assigned. Deactivate that assignment first.`,
+        message:
+          "Selected barangay was not found or is inactive.",
       });
     }
 
-    const [duplicateTruckRows]: any = await connection.query(
-      "SELECT id FROM garbage_trucks WHERE truck_code = ? OR plate_number = ? LIMIT 1",
-      [truckCode, plateNumber],
-    );
+    const [assignedTruckRows]: any =
+      await connection.query(
+        `
+        SELECT id, truck_code
+        FROM garbage_trucks
+        WHERE barangay_id = ?
+          AND status IN ('active', 'maintenance')
+        LIMIT 1
+        `,
+        [barangayId],
+      );
+
+    if (assignedTruckRows.length) {
+      await connection.rollback();
+
+      return res.status(400).json({
+        success: false,
+        message:
+          `This barangay already has truck ${assignedTruckRows[0].truck_code} assigned. Deactivate that assignment first.`,
+      });
+    }
+
+    const [duplicateTruckRows]: any =
+      await connection.query(
+        `
+        SELECT id
+        FROM garbage_trucks
+        WHERE truck_code = ?
+           OR plate_number = ?
+        LIMIT 1
+        `,
+        [truckCode, plateNumber],
+      );
+
     if (duplicateTruckRows.length) {
       await connection.rollback();
-      return res.status(400).json({ success: false, message: "Truck code or plate number already exists." });
+
+      return res.status(400).json({
+        success: false,
+        message:
+          "Truck code or plate number already exists.",
+      });
     }
 
     let collectorUserId: number;
+    let finalCollectorName: string;
+    let finalCollectorPhone: string | null;
 
-    if (collectorMode === "existing") {
-      const [collectorRows]: any = await connection.query(
-        `SELECT
-           id,
-           full_name,
-           email,
-           phone,
-           barangay_id,
-           status
-         FROM users
-         WHERE id = ?
-           AND role = 'collector'
-         LIMIT 1`,
-        [existingCollectorId],
-      );
+    if (existingCollectorId) {
+      const [collectorRows]: any =
+        await connection.query(
+          `
+          SELECT
+            id,
+            full_name,
+            phone,
+            role,
+            status,
+            barangay_id
+          FROM users
+          WHERE id = ?
+          LIMIT 1
+          FOR UPDATE
+          `,
+          [existingCollectorId],
+        );
 
-      const existingCollector = collectorRows[0];
+      const selectedCollector = collectorRows[0];
 
-      if (!existingCollector) {
+      if (
+        !selectedCollector ||
+        selectedCollector.role !== "collector"
+      ) {
         await connection.rollback();
+
         return res.status(404).json({
           success: false,
-          message: "The selected Garbage Collector account was not found.",
+          message:
+            "The selected Garbage Collector account was not found.",
         });
       }
 
-      if (existingCollector.status !== "active") {
+      if (selectedCollector.status !== "active") {
         await connection.rollback();
-        return res.status(400).json({
-          success: false,
-          message: "The selected Garbage Collector account is inactive.",
-        });
-      }
 
-      if (Number(existingCollector.barangay_id) !== barangayId) {
-        await connection.rollback();
         return res.status(400).json({
           success: false,
           message:
-            "The selected Garbage Collector is assigned to a different barangay.",
+            "The selected Garbage Collector account is not active.",
         });
       }
 
-      const [collectorTruckRows]: any = await connection.query(
-        `SELECT id, truck_code
-         FROM garbage_trucks
-         WHERE collector_user_id = ?
-           AND status IN ('active', 'maintenance')
-         LIMIT 1`,
-        [existingCollector.id],
-      );
+      if (
+        Number(selectedCollector.barangay_id) !==
+        Number(barangayId)
+      ) {
+        await connection.rollback();
+
+        return res.status(400).json({
+          success: false,
+          message:
+            "The selected collector must belong to the assigned barangay.",
+        });
+      }
+
+      const [collectorTruckRows]: any =
+        await connection.query(
+          `
+          SELECT id, truck_code
+          FROM garbage_trucks
+          WHERE collector_user_id = ?
+            AND status IN ('active', 'maintenance')
+          LIMIT 1
+          `,
+          [existingCollectorId],
+        );
 
       if (collectorTruckRows.length) {
         await connection.rollback();
+
         return res.status(400).json({
           success: false,
-          message: `${existingCollector.full_name} is already assigned to truck ${collectorTruckRows[0].truck_code}.`,
+          message:
+            `The selected collector is already assigned to truck ${collectorTruckRows[0].truck_code}.`,
         });
       }
 
-      collectorUserId = Number(existingCollector.id);
-      collectorName = String(existingCollector.full_name || "");
-      collectorEmail = String(existingCollector.email || "");
-      collectorPhone = existingCollector.phone || null;
-    } else {
-      const [existingUserRows]: any = await connection.query(
-        "SELECT id FROM users WHERE email = ? LIMIT 1",
-        [collectorEmail],
+      collectorUserId = Number(selectedCollector.id);
+      finalCollectorName = String(
+        selectedCollector.full_name || "Collector",
       );
+      finalCollectorPhone =
+        selectedCollector.phone || null;
+    } else {
+      const [existingUserRows]: any =
+        await connection.query(
+          `
+          SELECT id
+          FROM users
+          WHERE email = ?
+          LIMIT 1
+          `,
+          [collectorEmail],
+        );
 
       if (existingUserRows.length) {
         await connection.rollback();
+
         return res.status(400).json({
           success: false,
           message:
@@ -1669,39 +1871,117 @@ router.post("/truck-crews", requireAuth, async (req: AuthRequest, res) => {
         });
       }
 
-      const passwordHash = await bcrypt.hash(temporaryPassword, 10);
-      const [collectorResult]: any = await connection.execute(
-        `INSERT INTO users
-         (full_name, email, phone, password_hash, role, barangay_id, purok_id, status, must_change_password)
-         VALUES (?, ?, ?, ?, 'collector', ?, NULL, 'active', 1)`,
-        [collectorName, collectorEmail, collectorPhone, passwordHash, barangayId],
+      const passwordHash = await bcrypt.hash(
+        temporaryPassword,
+        10,
       );
 
-      collectorUserId = Number(collectorResult.insertId);
+      const [collectorResult]: any =
+        await connection.execute(
+          `
+          INSERT INTO users
+          (
+            full_name,
+            email,
+            phone,
+            password_hash,
+            role,
+            barangay_id,
+            purok_id,
+            status,
+            must_change_password
+          )
+          VALUES (?, ?, ?, ?, 'collector', ?, NULL, 'active', 1)
+          `,
+          [
+            collectorName,
+            collectorEmail,
+            collectorPhone,
+            passwordHash,
+            barangayId,
+          ],
+        );
+
+      collectorUserId = Number(
+        collectorResult.insertId,
+      );
+      finalCollectorName = collectorName;
+      finalCollectorPhone = collectorPhone;
     }
 
-    const [truckResult]: any = await connection.execute(
-      `INSERT INTO garbage_trucks
-       (truck_code, plate_number, vehicle_description, barangay_id, collector_user_id, status)
-       VALUES (?, ?, ?, ?, ?, 'active')`,
-      [truckCode, plateNumber, vehicleDescription, barangayId, collectorUserId],
-    );
+    const [truckResult]: any =
+      await connection.execute(
+        `
+        INSERT INTO garbage_trucks
+        (
+          truck_code,
+          plate_number,
+          vehicle_description,
+          barangay_id,
+          collector_user_id,
+          status
+        )
+        VALUES (?, ?, ?, ?, ?, 'active')
+        `,
+        [
+          truckCode,
+          plateNumber,
+          vehicleDescription,
+          barangayId,
+          collectorUserId,
+        ],
+      );
+
     const truckId = Number(truckResult.insertId);
 
     await connection.execute(
-      `INSERT INTO truck_crew_members (truck_id, full_name, crew_role, phone, status)
-       VALUES (?, ?, ?, ?, 'active')`,
-      [truckId, collectorName, collectorCrewRole, collectorPhone],
+      `
+      INSERT INTO truck_crew_members
+      (
+        truck_id,
+        full_name,
+        crew_role,
+        phone,
+        status
+      )
+      VALUES (?, ?, ?, ?, 'active')
+      `,
+      [
+        truckId,
+        finalCollectorName,
+        collectorCrewRole,
+        finalCollectorPhone,
+      ],
     );
 
     for (const rawMember of crewMembers) {
-      const fullName = String(rawMember?.fullName || "").trim();
+      const fullName = String(
+        rawMember?.fullName || "",
+      ).trim();
+
       if (!fullName) continue;
-      const role = rawMember?.role === "loader" ? "loader" : "helper";
-      const phone = String(rawMember?.phone || "").trim() || null;
+
+      const role =
+        rawMember?.role === "loader"
+          ? "loader"
+          : "helper";
+
+      const phone =
+        String(rawMember?.phone || "").trim() ||
+        null;
+
       await connection.execute(
-        `INSERT INTO truck_crew_members (truck_id, full_name, crew_role, phone, status)
-         VALUES (?, ?, ?, ?, 'active')`,
+        `
+        INSERT INTO truck_crew_members
+        (
+          truck_id,
+          full_name,
+          crew_role,
+          phone,
+          status
+        )
+        VALUES (?, ?, ?, ?, 'active')
+        `,
         [truckId, fullName, role, phone],
       );
     }
@@ -1710,10 +1990,9 @@ router.post("/truck-crews", requireAuth, async (req: AuthRequest, res) => {
 
     return res.status(201).json({
       success: true,
-      message:
-        collectorMode === "existing"
-          ? `${truckCode} was assigned successfully to ${collectorName}.`
-          : `${truckCode} and its collection crew were registered successfully. The driver/crew leader must change the temporary password on first login.`,
+      message: existingCollectorId
+        ? `${truckCode} was registered and assigned to the selected Garbage Collector.`
+        : `${truckCode} and its collection crew were registered successfully. The new driver/crew leader must change the temporary password on first login.`,
       truckId,
       collectorUserId,
     });
@@ -1722,80 +2001,177 @@ router.post("/truck-crews", requireAuth, async (req: AuthRequest, res) => {
     console.error("Create truck crew error:", error);
 
     if (error?.code === "ER_DUP_ENTRY") {
-      return res.status(400).json({ success: false, message: "Truck code, plate number, or account email already exists." });
+      return res.status(400).json({
+        success: false,
+        message:
+          "Truck code, plate number, or account email already exists.",
+      });
     }
 
-    return res.status(500).json({ success: false, message: "Unable to register the collection truck and crew." });
+    return res.status(500).json({
+      success: false,
+      message:
+        "Unable to register the collection truck and crew.",
+    });
   } finally {
     connection.release();
   }
 });
 
-router.patch("/truck-crews/:id/status", requireAuth, async (req: AuthRequest, res) => {
-  const connection = await db.getConnection();
+router.patch(
+  "/truck-crews/:id/status",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    const connection = await db.getConnection();
 
-  try {
-    if (!requireSuperAdmin(req, res)) return;
+    try {
+      if (!requireSuperAdmin(req, res)) return;
 
-    const truckId = parsePositiveInteger(req.params.id);
-    const status = String(req.body.status || "").trim().toLowerCase();
-
-    if (!truckId || !["active", "maintenance", "inactive"].includes(status)) {
-      return res.status(400).json({ success: false, message: "A valid truck and status are required." });
-    }
-
-    await connection.beginTransaction();
-
-    const [truckRows]: any = await connection.query(
-      "SELECT id, truck_code, barangay_id, collector_user_id FROM garbage_trucks WHERE id = ? LIMIT 1",
-      [truckId],
-    );
-    const truck = truckRows[0];
-    if (!truck) {
-      await connection.rollback();
-      return res.status(404).json({ success: false, message: "Truck was not found." });
-    }
-
-    if (status !== "inactive" && truck.barangay_id) {
-      const [conflictRows]: any = await connection.query(
-        `SELECT id, truck_code FROM garbage_trucks
-         WHERE barangay_id = ? AND id <> ? AND status IN ('active','maintenance') LIMIT 1`,
-        [truck.barangay_id, truckId],
+      const truckId = parsePositiveInteger(
+        req.params.id,
       );
-      if (conflictRows.length) {
-        await connection.rollback();
+
+      const status = String(
+        req.body.status || "",
+      )
+        .trim()
+        .toLowerCase();
+
+      if (
+        !truckId ||
+        ![
+          "active",
+          "maintenance",
+          "inactive",
+        ].includes(status)
+      ) {
         return res.status(400).json({
           success: false,
-          message: `Barangay is already assigned to truck ${conflictRows[0].truck_code}.`,
+          message:
+            "A valid truck and status are required.",
         });
       }
-    }
 
-    await connection.execute("UPDATE garbage_trucks SET status = ? WHERE id = ?", [status, truckId]);
+      await connection.beginTransaction();
 
-    if (truck.collector_user_id) {
+      const [truckRows]: any =
+        await connection.query(
+          `
+          SELECT
+            id,
+            truck_code,
+            barangay_id,
+            collector_user_id
+          FROM garbage_trucks
+          WHERE id = ?
+          LIMIT 1
+          FOR UPDATE
+          `,
+          [truckId],
+        );
+
+      const truck = truckRows[0];
+
+      if (!truck) {
+        await connection.rollback();
+
+        return res.status(404).json({
+          success: false,
+          message: "Truck was not found.",
+        });
+      }
+
+      if (
+        status !== "inactive" &&
+        truck.barangay_id
+      ) {
+        const [conflictRows]: any =
+          await connection.query(
+            `
+            SELECT id, truck_code
+            FROM garbage_trucks
+            WHERE barangay_id = ?
+              AND id <> ?
+              AND status IN ('active', 'maintenance')
+            LIMIT 1
+            `,
+            [truck.barangay_id, truckId],
+          );
+
+        if (conflictRows.length) {
+          await connection.rollback();
+
+          return res.status(400).json({
+            success: false,
+            message:
+              `Barangay is already assigned to truck ${conflictRows[0].truck_code}.`,
+          });
+        }
+      }
+
       await connection.execute(
-        "UPDATE users SET status = ? WHERE id = ? AND role = 'collector'",
-        [status === "inactive" ? "inactive" : "active", truck.collector_user_id],
+        `
+        UPDATE garbage_trucks
+        SET status = ?
+        WHERE id = ?
+        `,
+        [status, truckId],
       );
+
+      if (truck.collector_user_id) {
+        await connection.execute(
+          `
+          UPDATE users
+          SET status = ?
+          WHERE id = ?
+            AND role = 'collector'
+          `,
+          [
+            status === "inactive"
+              ? "inactive"
+              : "active",
+            truck.collector_user_id,
+          ],
+        );
+      }
+
+      await connection.execute(
+        `
+        UPDATE truck_crew_members
+        SET status = ?
+        WHERE truck_id = ?
+        `,
+        [
+          status === "inactive"
+            ? "inactive"
+            : "active",
+          truckId,
+        ],
+      );
+
+      await connection.commit();
+
+      return res.json({
+        success: true,
+        message:
+          `${truck.truck_code} status updated to ${status}.`,
+      });
+    } catch (error) {
+      await connection.rollback();
+      console.error(
+        "Update truck status error:",
+        error,
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          "Unable to update truck status.",
+      });
+    } finally {
+      connection.release();
     }
-
-    if (status === "inactive") {
-      await connection.execute("UPDATE truck_crew_members SET status = 'inactive' WHERE truck_id = ?", [truckId]);
-    } else {
-      await connection.execute("UPDATE truck_crew_members SET status = 'active' WHERE truck_id = ?", [truckId]);
-    }
-
-    await connection.commit();
-    return res.json({ success: true, message: `${truck.truck_code} status updated to ${status}.` });
-  } catch (error) {
-    await connection.rollback();
-    console.error("Update truck status error:", error);
-    return res.status(500).json({ success: false, message: "Unable to update truck status." });
-  } finally {
-    connection.release();
-  }
-});
-
+  },
+);
 
 export default router;

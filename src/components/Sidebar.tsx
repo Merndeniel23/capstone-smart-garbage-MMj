@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   Award,
   Bell,
@@ -48,7 +49,6 @@ export default function Sidebar({
   const {
     userProfile,
     currentUser,
-    notifications,
   } = useAppState();
 
   const activeUser =
@@ -58,13 +58,99 @@ export default function Sidebar({
     activeUser?.name ||
     "System User";
 
-  const unreadCount =
-    notifications.filter(
-      (notification) =>
-        !notification.readBy.includes(
-          username,
-        ),
-    ).length;
+  const [unseenCount, setUnseenCount] =
+    useState(0);
+
+  const loadNotificationBadge =
+    async () => {
+      const token =
+        localStorage.getItem("token") ||
+        sessionStorage.getItem("token") ||
+        localStorage.getItem("authToken") ||
+        sessionStorage.getItem("authToken") ||
+        "";
+
+      if (!token) {
+        setUnseenCount(0);
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          "/api/notifications",
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          return;
+        }
+
+        const data = await response
+          .json()
+          .catch(() => ({}));
+
+        const items = Array.isArray(
+          data.notifications,
+        )
+          ? data.notifications
+          : [];
+
+        setUnseenCount(
+          items.filter(
+            (item: any) =>
+              !Boolean(
+                Number(item.is_seen),
+              ),
+          ).length,
+        );
+      } catch {
+        // Keep the previous badge value if the
+        // notification endpoint is temporarily unavailable.
+      }
+    };
+
+  useEffect(() => {
+    void loadNotificationBadge();
+
+    const timer = window.setInterval(
+      () => void loadNotificationBadge(),
+      10000,
+    );
+
+    const clearSeenBadge = () =>
+      setUnseenCount(0);
+
+    const refreshBadge = () =>
+      void loadNotificationBadge();
+
+    window.addEventListener(
+      "notifications-seen-all",
+      clearSeenBadge,
+    );
+
+    window.addEventListener(
+      "notifications-changed",
+      refreshBadge,
+    );
+
+    return () => {
+      window.clearInterval(timer);
+
+      window.removeEventListener(
+        "notifications-seen-all",
+        clearSeenBadge,
+      );
+
+      window.removeEventListener(
+        "notifications-changed",
+        refreshBadge,
+      );
+    };
+  }, []);
 
   const householdItems: MenuItem[] = [
     {
@@ -88,15 +174,10 @@ export default function Sidebar({
       label: "Payments",
     },
     {
-      id: "endorsements",
-      icon: Award,
-      label: "Endorsements",
-    },
-    {
       id: "notifications",
       icon: Bell,
       label: "Notifications",
-      count: unreadCount,
+      count: unseenCount,
     },
     {
       id: "profile",
@@ -130,7 +211,7 @@ export default function Sidebar({
       id: "notifications",
       icon: Bell,
       label: "Alerts",
-      count: unreadCount,
+      count: unseenCount,
     },
     {
       id: "profile",
@@ -184,7 +265,7 @@ export default function Sidebar({
       id: "notifications",
       icon: Bell,
       label: "System Alerts",
-      count: unreadCount,
+      count: unseenCount,
     },
     {
       id: "profile",
@@ -233,7 +314,7 @@ export default function Sidebar({
       id: "notifications",
       icon: Bell,
       label: "Barangay Alerts",
-      count: unreadCount,
+      count: unseenCount,
     },
     {
       id: "reports",
@@ -287,7 +368,7 @@ export default function Sidebar({
       id: "notifications",
       icon: Bell,
       label: "Municipal Alerts",
-      count: unreadCount,
+      count: unseenCount,
     },
     {
       id: "reports",
@@ -301,6 +382,22 @@ export default function Sidebar({
     },
   ];
 
+  const residentAccessRestricted =
+    role === "household" &&
+    (
+      localStorage.getItem(
+        "sg_requires_location_setup",
+      ) === "true" ||
+      localStorage.getItem(
+        "sg_pending_approval",
+      ) === "true"
+    );
+
+  const restrictedHouseholdItems =
+    householdItems.filter(
+      (item) => item.id === "profile",
+    );
+
   const menuItems =
     role === "super_admin"
       ? superAdminItems
@@ -310,7 +407,9 @@ export default function Sidebar({
           ? leaderItems
           : role === "collector"
             ? collectorItems
-            : householdItems;
+            : residentAccessRestricted
+              ? restrictedHouseholdItems
+              : householdItems;
 
   const roleLabel = (() => {
     switch (role) {
@@ -392,7 +491,9 @@ export default function Sidebar({
 
               {Boolean(item.count) && (
                 <span className="rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                  {item.count}
+                  {(item.count ?? 0) > 99
+                    ? "99+"
+                    : (item.count ?? 0)}
                 </span>
               )}
             </button>

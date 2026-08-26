@@ -52,6 +52,40 @@ async function loadViewer(userId: number) {
   return rows[0] || null;
 }
 
+
+/**
+ * Per-user notification state.
+ *
+ * A notification can be broadcast to many accounts, so seen/read
+ * state must NOT live only on the shared notifications row.
+ * This receipt table lets every account have its own state.
+ */
+async function ensureNotificationReceiptsTable() {
+  await db.execute(
+    `
+    CREATE TABLE IF NOT EXISTS notification_receipts (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      notification_id INT UNSIGNED NOT NULL,
+      user_id INT UNSIGNED NOT NULL,
+      is_seen TINYINT(1) NOT NULL DEFAULT 0,
+      seen_at DATETIME NULL,
+      is_read TINYINT(1) NOT NULL DEFAULT 0,
+      read_at DATETIME NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+
+      PRIMARY KEY (id),
+      UNIQUE KEY unique_notification_user
+        (notification_id, user_id),
+      INDEX idx_notification_receipts_user (user_id),
+      INDEX idx_notification_receipts_notification
+        (notification_id)
+    )
+    `,
+  );
+}
+
 /**
  * GET /api/notifications
  * Loads notifications visible to the logged-in account.
@@ -79,6 +113,8 @@ router.get(
         });
       }
 
+      await ensureNotificationReceiptsTable();
+
       const role = normalizeRole(viewer.role);
 
       const [rows] = await db.query<any[]>(
@@ -96,8 +132,12 @@ router.get(
           n.related_entity_type,
           n.related_entity_id,
           n.created_by,
-          n.is_read,
-          n.read_at,
+
+          COALESCE(receipt.is_seen, 0) AS is_seen,
+          receipt.seen_at,
+          COALESCE(receipt.is_read, 0) AS is_read,
+          receipt.read_at,
+
           n.created_at,
 
           creator.full_name AS created_by_name,
@@ -105,6 +145,10 @@ router.get(
           purok.name AS purok_name
 
         FROM notifications n
+
+        LEFT JOIN notification_receipts receipt
+          ON receipt.notification_id = n.id
+         AND receipt.user_id = ?
 
         LEFT JOIN users creator
           ON creator.id = n.created_by
@@ -151,7 +195,7 @@ router.get(
           )
 
         ORDER BY
-          n.is_read ASC,
+          COALESCE(receipt.is_read, 0) ASC,
           FIELD(n.priority, 'emergency', 'schedule', 'notice'),
           n.created_at DESC,
           n.id DESC
@@ -159,7 +203,8 @@ router.get(
         LIMIT 250
         `,
         [
-          viewerId,
+          viewerId, // receipt.user_id
+          viewerId, // direct recipient visibility
           role,
           viewer.barangay_id || 0,
           role,
@@ -376,6 +421,119 @@ router.post(
   },
 );
 
+
+/**
+ * PATCH /api/notifications/seen-all
+ *
+ * Facebook-style behavior:
+ * opening the notification center clears the numeric "new" badge,
+ * but notifications remain unread until the user explicitly reads them.
+ */
+router.patch(
+  "/seen-all",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    try {
+      const viewerId = Number(req.user?.id);
+      const viewer = await loadViewer(viewerId);
+
+      if (!viewer) {
+        return res.status(404).json({
+          success: false,
+          message: "User account was not found.",
+        });
+      }
+
+      await ensureNotificationReceiptsTable();
+
+      const role = normalizeRole(viewer.role);
+
+      await db.execute(
+        `
+        INSERT INTO notification_receipts
+        (
+          notification_id,
+          user_id,
+          is_seen,
+          seen_at,
+          is_read,
+          read_at
+        )
+        SELECT
+          n.id,
+          ?,
+          1,
+          NOW(),
+          0,
+          NULL
+        FROM notifications n
+        WHERE
+          n.recipient_user_id = ?
+
+          OR (
+            n.recipient_user_id IS NULL
+            AND n.recipient_role = ?
+          )
+
+          OR (
+            n.recipient_user_id IS NULL
+            AND n.recipient_role IS NULL
+            AND n.barangay_id IS NULL
+            AND n.purok_id IS NULL
+          )
+
+          OR (
+            n.recipient_user_id IS NULL
+            AND n.barangay_id = ?
+            AND (
+              n.recipient_role IS NULL
+              OR n.recipient_role = ?
+            )
+          )
+
+          OR (
+            n.recipient_user_id IS NULL
+            AND n.purok_id = ?
+            AND (
+              n.recipient_role IS NULL
+              OR n.recipient_role = ?
+            )
+          )
+
+        ON DUPLICATE KEY UPDATE
+          is_seen = 1,
+          seen_at = COALESCE(seen_at, NOW())
+        `,
+        [
+          viewerId,
+          viewerId,
+          role,
+          viewer.barangay_id || 0,
+          role,
+          viewer.purok_id || 0,
+          role,
+        ],
+      );
+
+      return res.json({
+        success: true,
+        message: "Notifications marked as seen.",
+      });
+    } catch (error) {
+      console.error(
+        "Mark notifications seen error:",
+        error,
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          "Unable to update notification badge state.",
+      });
+    }
+  },
+);
+
 /**
  * PATCH /api/notifications/read-all
  */
@@ -394,48 +552,70 @@ router.patch(
         });
       }
 
+      await ensureNotificationReceiptsTable();
+
       const role = normalizeRole(viewer.role);
 
       await db.execute(
         `
-        UPDATE notifications
-        SET
+        INSERT INTO notification_receipts
+        (
+          notification_id,
+          user_id,
+          is_seen,
+          seen_at,
+          is_read,
+          read_at
+        )
+        SELECT
+          n.id,
+          ?,
+          1,
+          NOW(),
+          1,
+          NOW()
+        FROM notifications n
+        WHERE
+          n.recipient_user_id = ?
+
+          OR (
+            n.recipient_user_id IS NULL
+            AND n.recipient_role = ?
+          )
+
+          OR (
+            n.recipient_user_id IS NULL
+            AND n.recipient_role IS NULL
+            AND n.barangay_id IS NULL
+            AND n.purok_id IS NULL
+          )
+
+          OR (
+            n.recipient_user_id IS NULL
+            AND n.barangay_id = ?
+            AND (
+              n.recipient_role IS NULL
+              OR n.recipient_role = ?
+            )
+          )
+
+          OR (
+            n.recipient_user_id IS NULL
+            AND n.purok_id = ?
+            AND (
+              n.recipient_role IS NULL
+              OR n.recipient_role = ?
+            )
+          )
+
+        ON DUPLICATE KEY UPDATE
+          is_seen = 1,
+          seen_at = COALESCE(seen_at, NOW()),
           is_read = 1,
           read_at = COALESCE(read_at, NOW())
-        WHERE
-          recipient_user_id = ?
-
-          OR (
-            recipient_user_id IS NULL
-            AND recipient_role = ?
-          )
-
-          OR (
-            recipient_user_id IS NULL
-            AND recipient_role IS NULL
-            AND barangay_id IS NULL
-            AND purok_id IS NULL
-          )
-
-          OR (
-            recipient_user_id IS NULL
-            AND barangay_id = ?
-            AND (
-              recipient_role IS NULL
-              OR recipient_role = ?
-            )
-          )
-
-          OR (
-            recipient_user_id IS NULL
-            AND purok_id = ?
-            AND (
-              recipient_role IS NULL
-              OR recipient_role = ?
-            )
-          )
         `,
         [
+          viewerId,
           viewerId,
           role,
           viewer.barangay_id || 0,
@@ -447,14 +627,19 @@ router.patch(
 
       return res.json({
         success: true,
-        message: "All notifications were marked as read.",
+        message:
+          "All notifications were marked as read.",
       });
     } catch (error) {
-      console.error("Mark all notifications error:", error);
+      console.error(
+        "Mark all notifications error:",
+        error,
+      );
 
       return res.status(500).json({
         success: false,
-        message: "Unable to mark notifications as read.",
+        message:
+          "Unable to mark notifications as read.",
       });
     }
   },
@@ -468,8 +653,11 @@ router.patch(
   requireAuth,
   async (req: AuthRequest, res) => {
     try {
-      const notificationId = Number(req.params.id);
-      const viewerId = Number(req.user?.id);
+      const notificationId =
+        Number(req.params.id);
+
+      const viewerId =
+        Number(req.user?.id);
 
       if (
         !Number.isInteger(notificationId) ||
@@ -477,100 +665,127 @@ router.patch(
       ) {
         return res.status(400).json({
           success: false,
-          message: "Notification ID is invalid.",
+          message:
+            "Notification ID is invalid.",
         });
       }
 
-      const viewer = await loadViewer(viewerId);
+      const viewer =
+        await loadViewer(viewerId);
 
       if (!viewer) {
         return res.status(404).json({
           success: false,
-          message: "User account was not found.",
+          message:
+            "User account was not found.",
         });
       }
 
-      const role = normalizeRole(viewer.role);
+      await ensureNotificationReceiptsTable();
 
-      const [rows] = await db.query<any[]>(
-        `
-        SELECT id
-        FROM notifications
-        WHERE id = ?
-          AND (
-            recipient_user_id = ?
+      const role =
+        normalizeRole(viewer.role);
 
-            OR (
-              recipient_user_id IS NULL
-              AND recipient_role = ?
-            )
+      const [rows] =
+        await db.query<any[]>(
+          `
+          SELECT id
+          FROM notifications
+          WHERE id = ?
+            AND (
+              recipient_user_id = ?
 
-            OR (
-              recipient_user_id IS NULL
-              AND recipient_role IS NULL
-              AND barangay_id IS NULL
-              AND purok_id IS NULL
-            )
+              OR (
+                recipient_user_id IS NULL
+                AND recipient_role = ?
+              )
 
-            OR (
-              recipient_user_id IS NULL
-              AND barangay_id = ?
-              AND (
-                recipient_role IS NULL
-                OR recipient_role = ?
+              OR (
+                recipient_user_id IS NULL
+                AND recipient_role IS NULL
+                AND barangay_id IS NULL
+                AND purok_id IS NULL
+              )
+
+              OR (
+                recipient_user_id IS NULL
+                AND barangay_id = ?
+                AND (
+                  recipient_role IS NULL
+                  OR recipient_role = ?
+                )
+              )
+
+              OR (
+                recipient_user_id IS NULL
+                AND purok_id = ?
+                AND (
+                  recipient_role IS NULL
+                  OR recipient_role = ?
+                )
               )
             )
-
-            OR (
-              recipient_user_id IS NULL
-              AND purok_id = ?
-              AND (
-                recipient_role IS NULL
-                OR recipient_role = ?
-              )
-            )
-          )
-        LIMIT 1
-        `,
-        [
-          notificationId,
-          viewerId,
-          role,
-          viewer.barangay_id || 0,
-          role,
-          viewer.purok_id || 0,
-          role,
-        ],
-      );
+          LIMIT 1
+          `,
+          [
+            notificationId,
+            viewerId,
+            role,
+            viewer.barangay_id || 0,
+            role,
+            viewer.purok_id || 0,
+            role,
+          ],
+        );
 
       if (!rows[0]) {
         return res.status(404).json({
           success: false,
-          message: "Notification was not found.",
+          message:
+            "Notification was not found.",
         });
       }
 
       await db.execute(
         `
-        UPDATE notifications
-        SET
+        INSERT INTO notification_receipts
+        (
+          notification_id,
+          user_id,
+          is_seen,
+          seen_at,
+          is_read,
+          read_at
+        )
+        VALUES (?, ?, 1, NOW(), 1, NOW())
+
+        ON DUPLICATE KEY UPDATE
+          is_seen = 1,
+          seen_at = COALESCE(seen_at, NOW()),
           is_read = 1,
-          read_at = NOW()
-        WHERE id = ?
+          read_at = COALESCE(read_at, NOW())
         `,
-        [notificationId],
+        [
+          notificationId,
+          viewerId,
+        ],
       );
 
       return res.json({
         success: true,
-        message: "Notification marked as read.",
+        message:
+          "Notification marked as read.",
       });
     } catch (error) {
-      console.error("Read notification error:", error);
+      console.error(
+        "Read notification error:",
+        error,
+      );
 
       return res.status(500).json({
         success: false,
-        message: "Unable to update the notification.",
+        message:
+          "Unable to update the notification.",
       });
     }
   },
@@ -639,6 +854,16 @@ router.delete(
             "You do not have permission to delete this notification.",
         });
       }
+
+      await ensureNotificationReceiptsTable();
+
+      await db.execute(
+        `
+        DELETE FROM notification_receipts
+        WHERE notification_id = ?
+        `,
+        [notificationId],
+      );
 
       await db.execute(
         `

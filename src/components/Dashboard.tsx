@@ -11,16 +11,13 @@ import {
   Trash2, 
   CheckCircle, 
   ChevronRight, 
-  ShieldAlert, 
   UserCheck, 
   TrendingUp,
   Sparkles,
-  Info,
-  QrCode
+  Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAppState, ScheduleItem, ComplaintItem, PaymentItem } from '../context/AppStateContext';
-import BinQRScanner from './BinQRScanner';
 
 interface DashboardProps {
   setCurrentScreen?: (screen: any) => void;
@@ -36,44 +33,6 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
     addComplaint, 
     addPayment 
   } = useAppState();
-
-  // Local capacity state to fulfill requirement of dynamic/interactive bin level
-  const [binLevel, setBinLevel] = useState<number>(78);
-
-  // System communal points synchronized with collector state
-  const [communalPoints, setCommunalPoints] = useState(() => {
-    const saved = typeof window !== 'undefined' ? localStorage.getItem('sg_communal_points') : null;
-    return saved ? JSON.parse(saved) : [
-      { id: 1, location: 'Purok 4 - Main Road', bins: 3, urgency: 'High', time: '10m away', collected: false, x: 30, y: 40, image: 'https://media.istockphoto.com/id/1323762998/photo/garbage-crisis-in-sector-1-bucharest.jpg?s=612x612&w=0&k=20&c=dlHXHjBYWnI2KMKIoeNNfXS35LypTQ9legUOz3-Iehw=', desc: 'Located near the community basketball court.' },
-      { id: 2, location: 'Purok 1 - Barangay Hall', bins: 5, urgency: 'Medium', time: '25m away', collected: false, x: 65, y: 25, image: 'https://media.istockphoto.com/id/2151562183/photo/the-man-throwing-garbage-into-the-trash-bin.jpg?s=612x612&w=0&k=20&c=JFws0xs9pPNHDc5voGR0bOLO4SEEqY6yxzDW2KQrjXo=', desc: 'Located near the Barangay Hall crossing.' },
-      { id: 3, location: 'Purok 7 - Market Area', bins: 8, urgency: 'Very High', time: '2m away', collected: false, x: 50, y: 70, image: 'https://media.istockphoto.com/id/2151575593/photo/trash-on-the-sidewalk.jpg?s=612x612&w=0&k=20&c=Ypy2z8Aj4CrI7TRonNlHdsttTZuLu4zeMpHk6nUdRSA=', desc: 'Located near the local pharmacy and fresh food market.' },
-    ];
-  });
-
-  // Sync communal points dynamically to monitor collector collection status
-  useEffect(() => {
-    const syncCommunalPoints = () => {
-      const saved = localStorage.getItem('sg_communal_points');
-      if (saved) {
-        try {
-          setCommunalPoints(JSON.parse(saved));
-        } catch (e) {
-          console.error('Error parsing communal points:', e);
-        }
-      }
-    };
-
-    window.addEventListener('storage', syncCommunalPoints);
-    const interval = setInterval(syncCommunalPoints, 2000);
-
-    return () => {
-      window.removeEventListener('storage', syncCommunalPoints);
-      clearInterval(interval);
-    };
-  }, []);
-
-  // Scanner modal open state
-  const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
 
   // Modal open states
   const [activeModal, setActiveModal] = useState<'schedule' | 'complaint' | 'payment' | 'tracker' | null>(null);
@@ -118,33 +77,6 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
       }
     }
   }, [currentUser, userProfile]);
-
-  // Compute live bin level based on user's actual zone/communal point state
-  useEffect(() => {
-    const activeUser = currentUser || userProfile;
-    if (!activeUser) return;
-    const activeZone = (activeUser.communalZone || 'Purok 4').toLowerCase();
-    
-    let point = communalPoints.find((p: any) => p.id === 1); // Default to Purok 4
-    if (activeZone.includes('purok 1')) {
-      point = communalPoints.find((p: any) => p.id === 2);
-    } else if (activeZone.includes('purok 7')) {
-      point = communalPoints.find((p: any) => p.id === 3);
-    }
-
-    if (point) {
-      let level = 78;
-      if (point.collected) {
-        level = 15;
-      } else {
-        if (point.urgency === 'Very High') level = 92;
-        else if (point.urgency === 'High') level = 78;
-        else if (point.urgency === 'Medium') level = 55;
-        else level = 30;
-      }
-      setBinLevel(level);
-    }
-  }, [communalPoints, currentUser, userProfile]);
 
   const activeUser = currentUser || userProfile;
   const displayName = activeUser.name;
@@ -245,7 +177,7 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
         <div>
           <span className="text-emerald-600 font-extrabold text-[10px] uppercase tracking-[0.2em] block mb-1">Central Hub Console</span>
           <h1 className="text-3.5xl font-black text-slate-900 tracking-tight leading-none">Dashboard</h1>
-          <p className="text-slate-500 text-xs mt-1">Real-time household tracking metrics and sanitation shortcuts.</p>
+          <p className="text-slate-500 text-xs mt-1">Resident sanitation services, requests, payments, and account shortcuts.</p>
         </div>
       </header>
 
@@ -255,73 +187,6 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
           <span className="text-xs font-black">{alertText}</span>
         </div>
       )}
-
-      {/* Dynamic Welcome Banner */}
-      <div className={`p-8 rounded-[2.5rem] text-white shadow-lg relative overflow-hidden transition-all duration-500 ${
-        binLevel > 75 
-          ? 'bg-gradient-to-br from-red-600 to-rose-700 shadow-rose-900/10' 
-          : 'bg-[#5CA28F] shadow-emerald-900/10'
-      }`}>
-        <div className="relative z-10 w-full md:w-2/3 space-y-4">
-          <div>
-            <span className="bg-white/20 text-white font-extrabold text-[9px] uppercase tracking-widest px-2.5 py-1 rounded-md">
-              HOUSEHOLD LEDGER ZONE
-            </span>
-          </div>
-          <div>
-            <h2 className="text-3xl font-black tracking-tight">Welcome back, {displayName}!</h2>
-            <p className="text-white/90 font-bold text-sm mt-1">
-              Your current communal bin level is at <strong className="underline text-white font-black">{binLevel}%</strong> ({displayZone}).
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={() => setIsScannerOpen(true)}
-              className="flex items-center gap-2 bg-white text-emerald-800 hover:bg-emerald-100 px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider shadow-md active:scale-95 transition-all border-none cursor-pointer"
-            >
-              <QrCode className="w-4 h-4 text-emerald-600 animate-pulse" />
-              Scan Bin QR Code
-            </button>
-          </div>
-
-          {(() => {
-            const upcomingPickup = schedulesToDisplay.find(s => s.status === 'Pending' || s.status === 'Confirmed');
-            let text = '';
-            let isWarning = binLevel > 75;
-
-            if (binLevel > 75) {
-              if (upcomingPickup) {
-                text = `Warning: Critical capacity at ${binLevel}%! A pickup is already scheduled on ${upcomingPickup.date} (${upcomingPickup.time}). Please prepare your segregated bins for sweep.`;
-              } else {
-                text = `Warning: Critical capacity at ${binLevel}%! No upcoming collections found. We highly recommend booking an Express Pickup request or reporting a sanitation concern.`;
-              }
-            } else if (binLevel >= 40) {
-              if (upcomingPickup) {
-                text = `System Recommendation: Moderate accumulation (${binLevel}%). Upcoming dispatch is active for ${upcomingPickup.date} (${upcomingPickup.time}). Ensure waste is properly packed.`;
-              } else {
-                text = `System Recommendation: Moderate accumulation (${binLevel}%). Standard sanitary conditions maintained. Next regular pickup cycle active.`;
-              }
-            } else {
-              text = `System Recommendation: Safe capacity (${binLevel}%). Your zone bin is clear and under-budget. Great job on recycling and composting!`;
-            }
-
-            return (
-              <div className="flex items-center gap-2 bg-white/10 border border-white/20 p-3.5 rounded-2xl text-xs font-bold w-fit max-w-full">
-                {isWarning ? (
-                  <ShieldAlert className="w-5 h-5 text-white shrink-0 animate-pulse" />
-                ) : (
-                  <Info className="w-5 h-5 text-white shrink-0" />
-                )}
-                <span>{text}</span>
-              </div>
-            );
-          })()}
-        </div>
-        <div className="absolute top-0 right-0 p-8 hidden md:block opacity-10 pointer-events-none transition-transform duration-500">
-           <CalendarIcon className="w-48 h-48" />
-        </div>
-      </div>
 
       {/* Interactive Quick Actions */}
       <section className="space-y-4">
@@ -853,17 +718,6 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
               </button>
             </motion.div>
           </div>
-        )}
-
-        {isScannerOpen && (
-          <BinQRScanner 
-            isOpen={isScannerOpen} 
-            onClose={() => setIsScannerOpen(false)} 
-            onScanSuccess={(level, binId) => {
-              setBinLevel(level);
-              triggerNotification(`📟 Logged a manual bin condition estimate of ${level}% for [${binId}] after physical inspection!`);
-            }}
-          />
         )}
 
       </AnimatePresence>

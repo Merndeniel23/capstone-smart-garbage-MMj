@@ -205,6 +205,10 @@ export default function MembersList() {
     userRole === "admin" ||
     userRole === "super_admin";
 
+  const canLoadDatabaseMembers =
+    canManageUsers ||
+    userRole === "leader";
+
   const leaderPurok = useMemo(
     () =>
       normalizePurok(
@@ -219,7 +223,7 @@ export default function MembersList() {
 
   const loadDatabaseMembers =
     async () => {
-      if (!canManageUsers) {
+      if (!canLoadDatabaseMembers) {
         return;
       }
 
@@ -227,8 +231,13 @@ export default function MembersList() {
       setActionMessage(null);
 
       try {
+        const endpoint =
+          userRole === "leader"
+            ? "/api/admin/purok-members"
+            : "/api/admin/users";
+
         const response = await fetch(
-          "/api/admin/users",
+          endpoint,
           {
             headers: {
               Authorization:
@@ -277,7 +286,7 @@ export default function MembersList() {
 
   useEffect(() => {
     void loadDatabaseMembers();
-  }, [canManageUsers]);
+  }, [canLoadDatabaseMembers, userRole]);
 
   const localMembers =
     useMemo<DirectoryMember[]>(
@@ -303,7 +312,7 @@ export default function MembersList() {
     );
 
   const sourceMembers =
-    canManageUsers
+    canLoadDatabaseMembers
       ? databaseMembers
       : localMembers;
 

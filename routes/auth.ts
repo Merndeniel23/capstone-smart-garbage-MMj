@@ -182,7 +182,6 @@ router.post(
             u.full_name,
             u.email,
             u.password_hash,
-            u.must_change_password,
             u.role,
             u.phone,
             u.address,
@@ -241,8 +240,14 @@ router.post(
           "Login successful.",
         token,
         user,
-        mustChangePassword:
-          Number(user.must_change_password) === 1,
+        needsLocationSetup:
+          user.role === "resident" &&
+          (
+            !user.barangay_id ||
+            !user.purok_id ||
+            !String(user.address || "").trim() ||
+            !String(user.phone || "").trim()
+          ),
       });
     } catch (error) {
       console.error(
@@ -253,127 +258,6 @@ router.post(
       return res.status(500).json({
         message:
           "Unable to login. Check the database connection.",
-      });
-    }
-  },
-);
-
-
-/**
- * AUTHENTICATED: Replace an administrator-issued temporary password.
- */
-router.post(
-  "/change-initial-password",
-  requireAuth,
-  async (req: AuthRequest, res) => {
-    try {
-      const currentPassword = String(
-        req.body.currentPassword || "",
-      );
-
-      const newPassword = String(
-        req.body.newPassword || "",
-      );
-
-      const confirmPassword = String(
-        req.body.confirmPassword || "",
-      );
-
-      if (!currentPassword || !newPassword || !confirmPassword) {
-        return res.status(400).json({
-          message: "Please complete all password fields.",
-        });
-      }
-
-      if (newPassword.length < 8) {
-        return res.status(400).json({
-          message: "New password must contain at least 8 characters.",
-        });
-      }
-
-      if (newPassword !== confirmPassword) {
-        return res.status(400).json({
-          message: "New passwords do not match.",
-        });
-      }
-
-      if (currentPassword === newPassword) {
-        return res.status(400).json({
-          message: "Choose a password different from the temporary password.",
-        });
-      }
-
-      const [rows] = await db.query<any[]>(
-        `
-          SELECT
-            id,
-            password_hash,
-            must_change_password,
-            status
-          FROM users
-          WHERE id = ?
-          LIMIT 1
-        `,
-        [req.user!.id],
-      );
-
-      const user = rows[0];
-
-      if (!user) {
-        return res.status(404).json({
-          message: "User account was not found.",
-        });
-      }
-
-      if (user.status !== "active") {
-        return res.status(403).json({
-          message: "This account is inactive.",
-        });
-      }
-
-      if (Number(user.must_change_password) !== 1) {
-        return res.status(409).json({
-          message: "The temporary password has already been changed.",
-        });
-      }
-
-      const passwordMatches = await bcrypt.compare(
-        currentPassword,
-        user.password_hash,
-      );
-
-      if (!passwordMatches) {
-        return res.status(401).json({
-          message: "The temporary password is incorrect.",
-        });
-      }
-
-      const newPasswordHash = await bcrypt.hash(
-        newPassword,
-        12,
-      );
-
-      await db.execute(
-        `
-          UPDATE users
-          SET
-            password_hash = ?,
-            must_change_password = 0,
-            updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `,
-        [newPasswordHash, user.id],
-      );
-
-      return res.json({
-        message: "Password changed successfully.",
-        mustChangePassword: false,
-      });
-    } catch (error) {
-      console.error("Change initial password error:", error);
-
-      return res.status(500).json({
-        message: "Unable to change the temporary password.",
       });
     }
   },
@@ -649,15 +533,41 @@ router.post(
         existingRows[0];
 
       if (user) {
+        const isIncompleteResidentSetup =
+          user.role === "resident" &&
+          (
+            !user.barangay_id ||
+            !user.purok_id ||
+            !String(user.address || "").trim() ||
+            !String(user.phone || "").trim()
+          );
+
+        if (user.status === "inactive") {
+          return res.status(403).json({
+            message:
+              "This account is inactive. Please contact the Barangay Captain.",
+          });
+        }
+
         if (
-          user.status !== "active"
+          user.status === "pending" &&
+          !isIncompleteResidentSetup
         ) {
-          return res
-            .status(403)
-            .json({
-              message:
-                "This account is currently inactive. Please contact the Barangay Captain.",
-            });
+          return res.status(403).json({
+            message:
+              "Your resident profile is waiting for Barangay Captain approval.",
+            pendingApproval: true,
+          });
+        }
+
+        if (
+          user.status === "pending" &&
+          user.role !== "resident"
+        ) {
+          return res.status(403).json({
+            message:
+              "This account is waiting for administrator approval.",
+          });
         }
       } else {
         /*
@@ -698,7 +608,7 @@ router.post(
                 ?,
                 ?,
                 'resident',
-                'active'
+                'pending'
               )
               `,
               [
@@ -786,7 +696,12 @@ router.post(
         user,
         needsLocationSetup:
           !user.barangay_id ||
-          !user.purok_id,
+          !user.purok_id ||
+          !String(user.address || "").trim() ||
+          !String(user.phone || "").trim(),
+        needsApproval:
+          user.role === "resident" &&
+          user.status === "pending",
       });
     } catch (error: any) {
       console.error(
@@ -900,6 +815,13 @@ router.put(
           req.body.address || "",
         ).trim();
 
+      const submittedPurokId =
+        req.body.purokId === null ||
+        req.body.purokId === undefined ||
+        req.body.purokId === ""
+          ? null
+          : Number(req.body.purokId);
+
       const submittedDutyLatitude =
         req.body.dutyLatitude === null ||
         req.body.dutyLatitude === undefined ||
@@ -921,11 +843,24 @@ router.put(
         });
       }
 
+      if (
+        phone &&
+        !/^\+?\d{7,15}$/.test(phone)
+      ) {
+        return res.status(400).json({
+          message:
+            "Phone number must contain digits only (7 to 15 digits, optional + at the start).",
+        });
+      }
+
       const [currentRows] =
         await db.query<any[]>(
           `
           SELECT
             role,
+            barangay_id,
+            purok_id,
+            phone,
             address,
             duty_latitude,
             duty_longitude
@@ -947,15 +882,92 @@ router.put(
       }
 
       /*
-       * Civilian location/address is locked after registration.
-       * It should be changed through an approved correction request.
+       * Resident address/location becomes locked after the
+       * initial profile has been completed.
+       *
+       * Google-created resident accounts start with NULL
+       * barangay/purok/address, so they are allowed one
+       * initial setup here.
        */
-      const finalAddress =
-        currentUser.role ===
-        "resident"
+      const needsInitialResidentSetup =
+        currentUser.role === "resident" &&
+        (
+          !currentUser.barangay_id ||
+          !currentUser.purok_id ||
+          !String(currentUser.address || "").trim()
+        );
+
+      let finalBarangayId =
+        currentUser.barangay_id ?? null;
+
+      let finalPurokId =
+        currentUser.purok_id ?? null;
+
+      let finalAddress =
+        currentUser.role === "resident"
           ? currentUser.address
           : submittedAddress ||
             currentUser.address;
+
+      if (needsInitialResidentSetup) {
+        if (!phone) {
+          return res.status(400).json({
+            message:
+              "Mobile number is required to complete your resident profile.",
+          });
+        }
+
+        if (!submittedAddress) {
+          return res.status(400).json({
+            message:
+              "Physical address is required to complete your resident profile.",
+          });
+        }
+
+        if (
+          !Number.isInteger(submittedPurokId) ||
+          Number(submittedPurokId) <= 0
+        ) {
+          return res.status(400).json({
+            message:
+              "Select a valid purok to complete your resident profile.",
+          });
+        }
+
+        const [locationRows] =
+          await db.query<any[]>(
+            `
+            SELECT
+              p.id AS purok_id,
+              p.barangay_id
+            FROM puroks p
+            INNER JOIN barangays b
+              ON b.id = p.barangay_id
+            WHERE p.id = ?
+              AND b.is_active = 1
+            LIMIT 1
+            `,
+            [submittedPurokId],
+          );
+
+        const selectedLocation =
+          locationRows[0];
+
+        if (!selectedLocation) {
+          return res.status(400).json({
+            message:
+              "The selected barangay/purok assignment is invalid.",
+          });
+        }
+
+        finalBarangayId =
+          Number(selectedLocation.barangay_id);
+
+        finalPurokId =
+          Number(selectedLocation.purok_id);
+
+        finalAddress = submittedAddress;
+      }
 
       let finalDutyLatitude =
         currentUser.duty_latitude ?? null;
@@ -1003,6 +1015,8 @@ router.put(
         SET
           full_name = ?,
           phone = ?,
+          barangay_id = ?,
+          purok_id = ?,
           address = ?,
           duty_latitude = ?,
           duty_longitude = ?
@@ -1011,6 +1025,8 @@ router.put(
         [
           fullName,
           phone || null,
+          finalBarangayId,
+          finalPurokId,
           finalAddress || null,
           finalDutyLatitude,
           finalDutyLongitude,
@@ -1047,10 +1063,23 @@ router.put(
           [req.user!.id],
         );
 
+      const updatedUser = rows[0];
+
+      const pendingResidentApproval =
+        updatedUser?.role === "resident" &&
+        updatedUser?.status === "pending" &&
+        updatedUser?.barangay_id &&
+        updatedUser?.purok_id &&
+        String(updatedUser?.address || "").trim() &&
+        String(updatedUser?.phone || "").trim();
+
       return res.json({
-        message:
-          "Profile updated successfully.",
-        user: rows[0],
+        message: pendingResidentApproval
+          ? "Resident profile submitted. Please wait for Barangay Captain approval."
+          : "Profile updated successfully.",
+        user: updatedUser,
+        pendingApproval:
+          Boolean(pendingResidentApproval),
       });
     } catch (error) {
       console.error(

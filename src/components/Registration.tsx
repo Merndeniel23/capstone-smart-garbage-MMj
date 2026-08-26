@@ -175,22 +175,26 @@ const [resendCountdown, setResendCountdown] = useState(0);
             ? "collector"
             : "household";
 
-  const mustChangePassword =
-    data?.mustChangePassword === true ||
-    Number(data?.mustChangePassword) === 1 ||
-    Number(data?.user?.must_change_password) === 1;
+  const needsResidentSetup =
+    appRole === "household" &&
+    Boolean(data?.needsLocationSetup);
 
-  const currentScreen = mustChangePassword
-    ? "change-initial-password"
-    : appRole === "super_admin"
-      ? "super-admin-dashboard"
-      : appRole === "admin"
-        ? "admin-dashboard"
-        : appRole === "collector"
-          ? "collector-tasks"
-          : appRole === "leader"
-            ? "leader-dashboard"
-            : "dashboard";
+  const needsResidentApproval =
+    appRole === "household" &&
+    Boolean(data?.needsApproval);
+
+  const currentScreen =
+    needsResidentSetup || needsResidentApproval
+      ? "profile"
+      : appRole === "super_admin"
+        ? "super-admin-dashboard"
+        : appRole === "admin"
+          ? "admin-dashboard"
+          : appRole === "collector"
+            ? "collector-tasks"
+            : appRole === "leader"
+              ? "leader-dashboard"
+              : "dashboard";
 
   const appUser = {
     id: data.user.id,
@@ -230,13 +234,37 @@ const [resendCountdown, setResendCountdown] = useState(0);
   localStorage.setItem("sg_user_role", appRole);
   localStorage.setItem("sg_current_screen", currentScreen);
 
-  if (mustChangePassword) {
+  if (needsResidentSetup) {
+    localStorage.setItem(
+      "sg_requires_location_setup",
+      "true",
+    );
+  } else {
+    localStorage.removeItem(
+      "sg_requires_location_setup",
+    );
+  }
+
+  if (needsResidentApproval) {
+    localStorage.setItem(
+      "sg_pending_approval",
+      "true",
+    );
+  } else {
+    localStorage.removeItem(
+      "sg_pending_approval",
+    );
+  }
+
+  if (data.mustChangePassword === true) {
+    localStorage.setItem(
+      "sg_current_screen",
+      "change-initial-password"
+    );
     localStorage.setItem(
       "sg_temp_login_email",
       data.user.email
     );
-  } else {
-    localStorage.removeItem("sg_temp_login_email");
   }
 
   window.location.reload();
@@ -942,7 +970,7 @@ const handleResetPasswordSubmit = async (
 
         {/* FOOTER */}
         <p className="text-[9px] font-extrabold tracking-widest text-stone-400 uppercase text-center">
-          Barangay Environmental Sinks System • Powered by mern daniel rallos
+          Barangay Environmental Sinks System • Powered by EcoTrack
         </p>
       </div>
 

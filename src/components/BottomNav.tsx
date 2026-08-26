@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { ClipboardCheck, LayoutDashboard, Calendar, User, Bell, Map, ClipboardList, Shield, Users, Award, CreditCard, MessageSquare } from 'lucide-react';
 
 interface BottomNavProps {
@@ -7,13 +8,101 @@ interface BottomNavProps {
 }
 
 export default function BottomNav({ activeTab, onTabChange, role }: BottomNavProps) {
+  const [unseenCount, setUnseenCount] =
+    useState(0);
+
+  const loadNotificationBadge =
+    async () => {
+      const token =
+        localStorage.getItem("token") ||
+        sessionStorage.getItem("token") ||
+        localStorage.getItem("authToken") ||
+        sessionStorage.getItem("authToken") ||
+        "";
+
+      if (!token) {
+        setUnseenCount(0);
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          "/api/notifications",
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        );
+
+        if (!response.ok) return;
+
+        const data = await response
+          .json()
+          .catch(() => ({}));
+
+        const items = Array.isArray(
+          data.notifications,
+        )
+          ? data.notifications
+          : [];
+
+        setUnseenCount(
+          items.filter(
+            (item: any) =>
+              !Boolean(
+                Number(item.is_seen),
+              ),
+          ).length,
+        );
+      } catch {
+        // Keep the last known count.
+      }
+    };
+
+  useEffect(() => {
+    void loadNotificationBadge();
+
+    const timer = window.setInterval(
+      () => void loadNotificationBadge(),
+      10000,
+    );
+
+    const clearSeenBadge = () =>
+      setUnseenCount(0);
+
+    const refreshBadge = () =>
+      void loadNotificationBadge();
+
+    window.addEventListener(
+      "notifications-seen-all",
+      clearSeenBadge,
+    );
+
+    window.addEventListener(
+      "notifications-changed",
+      refreshBadge,
+    );
+
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener(
+        "notifications-seen-all",
+        clearSeenBadge,
+      );
+      window.removeEventListener(
+        "notifications-changed",
+        refreshBadge,
+      );
+    };
+  }, []);
+
   const householdTabs = [
     { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
     { id: 'schedule', icon: Calendar, label: 'Schedule' },
     { id: 'complaints', icon: MessageSquare, label: 'Complaints' },
     { id: 'payments', icon: CreditCard, label: 'Payments' },
-    { id: 'endorsements', icon: Award, label: 'Endorsements' },
-    { id: 'notifications', icon: Bell, label: 'Alerts', count: 5 },
+    { id: 'notifications', icon: Bell, label: 'Alerts', count: unseenCount },
     { id: 'profile', icon: User, label: 'Profile' },
   ];
 
@@ -21,7 +110,7 @@ export default function BottomNav({ activeTab, onTabChange, role }: BottomNavPro
     { id: 'collector-tasks', icon: ClipboardList, label: 'Tasks' },
     { id: 'route-map', icon: Map, label: 'Route Map' },
     { id: 'schedule', icon: Calendar, label: 'Pickup Log' },
-    { id: 'notifications', icon: Bell, label: 'Alerts', count: 12 },
+    { id: 'notifications', icon: Bell, label: 'Alerts', count: unseenCount },
     { id: 'profile', icon: User, label: 'Profile' },
   ];
 
@@ -33,7 +122,7 @@ export default function BottomNav({ activeTab, onTabChange, role }: BottomNavPro
     { id: 'payments', icon: CreditCard, label: 'Verify Payments' },
     { id: 'complaints', icon: MessageSquare, label: 'Complaints' },
     { id: 'schedule', icon: Calendar, label: 'Waste Logs' },
-    { id: 'notifications', icon: Bell, label: 'System Alerts', count: 3 },
+    { id: 'notifications', icon: Bell, label: 'System Alerts', count: unseenCount },
     { id: 'profile', icon: User, label: 'Profile' },
   ];
 
@@ -45,11 +134,30 @@ export default function BottomNav({ activeTab, onTabChange, role }: BottomNavPro
     { id: 'payments', icon: CreditCard, label: 'Ledger Audit' },
     { id: 'complaints', icon: MessageSquare, label: 'Complaints' },
     { id: 'route-map', icon: Map, label: 'Global Map' },
-    { id: 'notifications', icon: Bell, label: 'Global Alerts', count: 42 },
+    { id: 'notifications', icon: Bell, label: 'Global Alerts', count: unseenCount },
     { id: 'profile', icon: User, label: 'Control Center' },
   ];
 
-  const tabs = role === 'collector' ? collectorTabs : role === 'leader' ? leaderTabs : role === 'admin' ? adminTabs : householdTabs;
+  const residentAccessRestricted =
+    role === 'household' &&
+    (
+      localStorage.getItem('sg_requires_location_setup') === 'true' ||
+      localStorage.getItem('sg_pending_approval') === 'true'
+    );
+
+  const restrictedHouseholdTabs =
+    householdTabs.filter((tab) => tab.id === 'profile');
+
+  const tabs =
+    role === 'collector'
+      ? collectorTabs
+      : role === 'leader'
+        ? leaderTabs
+        : role === 'admin'
+          ? adminTabs
+          : residentAccessRestricted
+            ? restrictedHouseholdTabs
+            : householdTabs;
 
   return (
     <nav className="h-20 bg-white border-t border-slate-100 flex items-center gap-1 overflow-x-auto shrink-0 pb-2 px-3 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] w-full">
@@ -71,7 +179,9 @@ export default function BottomNav({ activeTab, onTabChange, role }: BottomNavPro
               <Icon className="w-5.5 h-5.5" />
               {tab.count && (
                 <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full select-none">
-                  {tab.count}
+                  {tab.count > 99
+                    ? "99+"
+                    : tab.count}
                 </span>
               )}
             </div>

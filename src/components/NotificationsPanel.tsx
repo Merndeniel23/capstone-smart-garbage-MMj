@@ -47,6 +47,8 @@ type NotificationItem = {
   created_by_name?: string | null;
   barangay_name?: string | null;
   purok_name?: string | null;
+  is_seen: number | boolean;
+  seen_at?: string | null;
   is_read: number | boolean;
   read_at?: string | null;
   created_at: string;
@@ -216,12 +218,51 @@ export default function NotificationsPanel({
     }
   };
 
-  useEffect(() => {
-    void loadNotifications();
+  const markAllSeen = async () => {
+    try {
+      await apiRequest(
+        "/api/notifications/seen-all",
+        {
+          method: "PATCH",
+        },
+      );
 
-    const timer = window.setInterval(() => {
-      void loadNotifications();
-    }, 10000);
+      setNotifications((current) =>
+        current.map((item) => ({
+          ...item,
+          is_seen: 1,
+          seen_at:
+            item.seen_at ||
+            new Date().toISOString(),
+        })),
+      );
+
+      // The sidebar/bottom-nav badge should disappear
+      // once the notification center has been opened,
+      // while unread items remain visually unread.
+      window.dispatchEvent(
+        new Event("notifications-seen-all"),
+      );
+    } catch {
+      // Seeing notifications should never block
+      // the notification center from opening.
+    }
+  };
+
+  useEffect(() => {
+    const refreshVisibleNotifications =
+      async () => {
+        await loadNotifications();
+        await markAllSeen();
+      };
+
+    void refreshVisibleNotifications();
+
+    const timer = window.setInterval(
+      () =>
+        void refreshVisibleNotifications(),
+      10000,
+    );
 
     return () => {
       window.clearInterval(timer);
@@ -316,6 +357,10 @@ export default function NotificationsPanel({
       setShowCompose(false);
 
       await loadNotifications();
+
+      window.dispatchEvent(
+        new Event("notifications-changed"),
+      );
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -345,12 +390,20 @@ export default function NotificationsPanel({
           item.id === notificationId
             ? {
                 ...item,
+                is_seen: 1,
+                seen_at:
+                  item.seen_at ||
+                  new Date().toISOString(),
                 is_read: 1,
                 read_at:
                   new Date().toISOString(),
               }
             : item,
         ),
+      );
+
+      window.dispatchEvent(
+        new Event("notifications-changed"),
       );
     } catch (requestError) {
       setError(
@@ -380,11 +433,19 @@ export default function NotificationsPanel({
       setNotifications((current) =>
         current.map((item) => ({
           ...item,
+          is_seen: 1,
+          seen_at:
+            item.seen_at ||
+            new Date().toISOString(),
           is_read: 1,
           read_at:
             item.read_at ||
             new Date().toISOString(),
         })),
+      );
+
+      window.dispatchEvent(
+        new Event("notifications-seen-all"),
       );
     } catch (requestError) {
       setError(
