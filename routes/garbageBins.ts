@@ -69,13 +69,7 @@ function validateCoordinates(
  * Purok Leader:
  * - sees only bins in the leader's assigned purok
  *
- * Barangay Captain (admin):
- * - sees only active bins in the captain's assigned barangay
- *
- * Collector:
- * - sees only active bins in the collector's assigned barangay
- *
- * Super Admin:
+ * Admin and Collector:
  * - may view all garbage bins
  */
 router.get(
@@ -123,6 +117,7 @@ router.get(
         LEFT JOIN barangay_collection_schedules sched
           ON sched.barangay_id = b.id
          AND sched.is_active = 1
+         AND sched.day_of_week = DAYNAME(CURDATE())
       `;
 
       const parameters: number[] = [];
@@ -148,10 +143,7 @@ router.get(
         `;
 
         parameters.push(purokId);
-      } else if (
-        req.user?.role === "admin" ||
-        req.user?.role === "collector"
-      ) {
+      } else if (req.user?.role === "collector") {
         const barangayId = Number(
           req.user?.barangay_id,
         );
@@ -163,9 +155,7 @@ router.get(
           return res.status(400).json({
             success: false,
             message:
-              req.user?.role === "admin"
-                ? "Your Barangay Captain account has no assigned barangay."
-                : "Your Garbage Collector account has no assigned barangay.",
+              "Your Garbage Collector account has no assigned barangay.",
           });
         }
 
@@ -209,110 +199,36 @@ router.get(
 /**
  * ADD A NEW GARBAGE BIN
  *
- * Purok Leader:
- * - may register only in the leader's assigned purok
- *
- * Barangay Captain (admin):
- * - may select a purok, but the backend verifies that the
- *   selected purok belongs to the captain's assigned barangay
- *
- * Super Admin / Collector:
- * - may not register garbage-bin locations here
+ * Only a Purok Leader may register a bin.
+ * The purok is taken from the authenticated account,
+ * not from the frontend request.
  */
 router.post(
   "/",
   requireAuth,
   async (req: AuthRequest, res) => {
     try {
-      const role = String(
-        req.user?.role || "",
-      );
-
-      const leaderAccount =
-        isPurokLeader(role);
-
-      const captainAccount =
-        role === "admin";
-
       if (
-        !leaderAccount &&
-        !captainAccount
+        !isPurokLeader(
+          req.user?.role,
+        )
       ) {
         return res.status(403).json({
           success: false,
           message:
-            "Only Barangay Captains and Purok Leaders can register garbage-bin locations.",
+            "Only Purok Leaders can register garbage-bin locations.",
         });
       }
 
-      let purokId: number | null = null;
+      const purokId =
+        getAssignedPurokId(req);
 
-      if (leaderAccount) {
-        purokId =
-          getAssignedPurokId(req);
-
-        if (!purokId) {
-          return res.status(400).json({
-            success: false,
-            message:
-              "Your account has no assigned purok. Ask the administrator to assign one.",
-          });
-        }
-      } else {
-        const barangayId = Number(
-          req.user?.barangay_id,
-        );
-
-        const requestedPurokId = Number(
-          req.body.purok_id,
-        );
-
-        if (
-          !Number.isInteger(barangayId) ||
-          barangayId <= 0
-        ) {
-          return res.status(400).json({
-            success: false,
-            message:
-              "Your Barangay Captain account has no assigned barangay.",
-          });
-        }
-
-        if (
-          !Number.isInteger(requestedPurokId) ||
-          requestedPurokId <= 0
-        ) {
-          return res.status(400).json({
-            success: false,
-            message:
-              "Select a valid purok in your barangay.",
-          });
-        }
-
-        const [purokRows]: any =
-          await db.query(
-            `
-            SELECT id
-            FROM puroks
-            WHERE id = ?
-              AND barangay_id = ?
-            LIMIT 1
-            `,
-            [
-              requestedPurokId,
-              barangayId,
-            ],
-          );
-
-        if (!purokRows.length) {
-          return res.status(403).json({
-            success: false,
-            message:
-              "You can register garbage bins only inside your assigned barangay.",
-          });
-        }
-
-        purokId = requestedPurokId;
+      if (!purokId) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Your account has no assigned purok. Ask the administrator to assign one.",
+        });
       }
 
       const binCode = String(

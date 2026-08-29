@@ -278,7 +278,13 @@ export default function CollectorDashboard({
     );
 
   const [locationStatus, setLocationStatus] =
-    useState("Location sharing is off.");
+    useState(() =>
+      localStorage.getItem(
+        "sg_collector_location_sharing",
+      ) === "true"
+        ? "Live location sharing is on. Waiting for the next GPS update."
+        : "Location sharing is off.",
+    );
 
   const [lastLocationUpdate, setLastLocationUpdate] =
     useState<string | null>(null);
@@ -620,17 +626,22 @@ export default function CollectorDashboard({
             "overflowing",
         ).length,
       completed:
-        requests.filter(
-          (request) =>
-            request.status ===
-            "completed",
-        ).length,
+        activeBins.filter((bin) => {
+          if (!needsCollection(bin)) {
+            return false;
+          }
+
+          return (
+            activeRequestByBin.get(bin.id)
+              ?.status === "completed"
+          );
+        }).length,
       complaints:
         activeComplaints.length,
     };
   }, [
     bins,
-    requests,
+    activeRequestByBin,
     activeComplaints,
   ]);
 

@@ -565,9 +565,13 @@ export default function MapView({
   ]);
 
   useEffect(() => {
-    if (!mapContainerRef.current || mapRef.current) return;
+    const container = mapContainerRef.current;
 
-    const map = L.map(mapContainerRef.current).setView(
+    if (!container || mapRef.current) {
+      return;
+    }
+
+    const map = L.map(container).setView(
       DEFAULT_CENTER,
       14,
     );
@@ -582,23 +586,102 @@ export default function MapView({
     ).addTo(map);
 
     tileLayer.on("tileerror", () => {
-      window.setTimeout(() => tileLayer.redraw(), 1000);
+      window.setTimeout(
+        () => tileLayer.redraw(),
+        1000,
+      );
     });
 
-    markerLayerRef.current = L.layerGroup().addTo(map);
-    routeHistoryLayerRef.current = L.layerGroup().addTo(map);
-    destinationLayerRef.current = L.layerGroup().addTo(map);
-    collectorLayerRef.current = L.layerGroup().addTo(map);
+    markerLayerRef.current =
+      L.layerGroup().addTo(map);
+    routeHistoryLayerRef.current =
+      L.layerGroup().addTo(map);
+    destinationLayerRef.current =
+      L.layerGroup().addTo(map);
+    collectorLayerRef.current =
+      L.layerGroup().addTo(map);
     mapRef.current = map;
 
-    map.on("dragstart zoomstart", () => {
-      userMovedMapRef.current = true;
-    });
+    // Only real mouse/touch interaction should count as the
+    // user moving the map. Programmatic fitBounds/setView calls
+    // must not disable the initial automatic focus.
+    const markUserMovement = (event: L.LeafletEvent) => {
+      if ((event as any).originalEvent) {
+        userMovedMapRef.current = true;
+      }
+    };
 
-    window.setTimeout(() => map.invalidateSize(), 150);
+    map.on("dragstart", markUserMovement);
+    map.on("zoomstart", markUserMovement);
+
+    let resizeTimer: number | null = null;
+
+    const resizeMapPreservingCamera = () => {
+      if (!mapRef.current) {
+        return;
+      }
+
+      const currentMap = mapRef.current;
+      const center = currentMap.getCenter();
+      const zoom = currentMap.getZoom();
+
+      currentMap.invalidateSize({
+        pan: false,
+        animate: false,
+      });
+
+      // Preserve the exact camera while the collapsible sidebar
+      // changes the available content width.
+      currentMap.setView(
+        center,
+        zoom,
+        { animate: false },
+      );
+    };
+
+    const scheduleResize = () => {
+      if (resizeTimer !== null) {
+        window.clearTimeout(resizeTimer);
+      }
+
+      resizeTimer = window.setTimeout(
+        resizeMapPreservingCamera,
+        80,
+      );
+    };
+
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(scheduleResize)
+        : null;
+
+    resizeObserver?.observe(container);
+    window.addEventListener(
+      "resize",
+      scheduleResize,
+    );
+
+    window.setTimeout(
+      resizeMapPreservingCamera,
+      150,
+    );
 
     return () => {
+      if (resizeTimer !== null) {
+        window.clearTimeout(resizeTimer);
+      }
+
+      resizeObserver?.disconnect();
+
+      window.removeEventListener(
+        "resize",
+        scheduleResize,
+      );
+
+      map.off("dragstart", markUserMovement);
+      map.off("zoomstart", markUserMovement);
       map.remove();
+
       mapRef.current = null;
       markerLayerRef.current = null;
       routeHistoryLayerRef.current = null;
@@ -807,88 +890,110 @@ export default function MapView({
       marker.on("click", () => setSelectedId(bin.id));
     });
 
-    if (!mapRef.current) return;
+    const map = mapRef.current;
 
+    if (!map) {
+      return;
+    }
+
+    // Do not lock the initial camera while the first API request
+    // is still loading. Otherwise an empty first render can mark
+    // auto-focus as finished before the real bin coordinates arrive.
     if (
+      !loading &&
       !hasAutoFocusedRef.current &&
       !userMovedMapRef.current
     ) {
-      if (mappedBins.length > 0) {
-        const points: L.LatLngTuple[] =
-          mappedBins.map((bin) => [
-            Number(bin.latitude),
-            Number(bin.longitude),
-          ]);
-
+      window.setTimeout(() => {
         if (
-          getStoredRole() === "collector" &&
-          ownCollectorLocation
+          !mapRef.current ||
+          hasAutoFocusedRef.current ||
+          userMovedMapRef.current
         ) {
-          const collectorLatitude =
-            Number(
-              ownCollectorLocation.latitude,
-            );
-          const collectorLongitude =
-            Number(
-              ownCollectorLocation.longitude,
-            );
+          return;
+        }
+
+        const currentMap = mapRef.current;
+
+        currentMap.invalidateSize({
+          pan: false,
+          animate: false,
+        });
+
+        if (mappedBins.length > 0) {
+          const points: L.LatLngTuple[] =
+            mappedBins.map((bin) => [
+              Number(bin.latitude),
+              Number(bin.longitude),
+            ]);
 
           if (
-            hasUsableCollectorCoordinates(ownCollectorLocation) &&
-            Number.isFinite(collectorLatitude) &&
-            Number.isFinite(collectorLongitude)
+            getStoredRole() === "collector" &&
+            hasUsableCollectorCoordinates(
+              ownCollectorLocation,
+            )
           ) {
             points.push([
-              collectorLatitude,
-              collectorLongitude,
+              Number(
+                ownCollectorLocation.latitude,
+              ),
+              Number(
+                ownCollectorLocation.longitude,
+              ),
             ]);
           }
-        }
 
-        mapRef.current.fitBounds(
-          L.latLngBounds(points),
-          {
-            padding: [50, 50],
-            maxZoom: 17,
-          },
-        );
-      } else if (
-        getStoredRole() === "collector" &&
-        ownCollectorLocation
-      ) {
-        const collectorLatitude =
-          Number(
-            ownCollectorLocation.latitude,
+          currentMap.fitBounds(
+            L.latLngBounds(points),
+            {
+              padding: [50, 50],
+              maxZoom: 17,
+              animate: false,
+            },
           );
-        const collectorLongitude =
-          Number(
-            ownCollectorLocation.longitude,
-          );
-
-        if (
-          hasUsableCollectorCoordinates(ownCollectorLocation) &&
-          Number.isFinite(collectorLatitude) &&
-          Number.isFinite(collectorLongitude)
+        } else if (
+          getStoredRole() === "collector" &&
+          hasUsableCollectorCoordinates(
+            ownCollectorLocation,
+          )
         ) {
-          mapRef.current.setView(
-            [collectorLatitude, collectorLongitude],
+          currentMap.setView(
+            [
+              Number(
+                ownCollectorLocation.latitude,
+              ),
+              Number(
+                ownCollectorLocation.longitude,
+              ),
+            ],
             17,
+            { animate: false },
           );
         } else {
-          mapRef.current.setView(DEFAULT_CENTER, 14);
+          currentMap.setView(
+            DEFAULT_CENTER,
+            14,
+            { animate: false },
+          );
         }
-      } else if (mappedBins.length === 0) {
-        mapRef.current.setView(DEFAULT_CENTER, 14);
-      }
 
-      hasAutoFocusedRef.current = true;
+        hasAutoFocusedRef.current = true;
+      }, 180);
+    } else {
+      window.setTimeout(
+        () =>
+          mapRef.current?.invalidateSize({
+            pan: false,
+            animate: false,
+          }),
+        100,
+      );
     }
-
-    window.setTimeout(
-      () => mapRef.current?.invalidateSize(),
-      100,
-    );
-  }, [visibleBins, ownCollectorLocation]);
+  }, [
+    visibleBins,
+    ownCollectorLocation,
+    loading,
+  ]);
 
   useEffect(() => {
     const historyLayer = routeHistoryLayerRef.current;
@@ -1252,10 +1357,10 @@ export default function MapView({
       )}
 
       <div className="grid gap-5 xl:grid-cols-[1.6fr_1fr]">
-        <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
+        <div className="relative isolate overflow-hidden rounded-2xl border bg-white shadow-sm">
           <div
             ref={mapContainerRef}
-            className="h-[560px] w-full"
+            className="relative z-0 h-[560px] w-full"
           />
         </div>
 

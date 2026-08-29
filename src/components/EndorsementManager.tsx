@@ -28,6 +28,13 @@ interface EndorsementRequest {
   id: string;
   householdName: string;
   purok: string;
+  barangay?: string;
+  address?: string;
+  requesterEmail?: string;
+  requesterPhone?: string;
+  requesterAccountCode?: string;
+  endorsedBy?: string;
+  approvedBy?: string;
   type: EndorsementType;
   date: string;
   description: string;
@@ -36,46 +43,7 @@ interface EndorsementRequest {
   issuedAt?: string;
 }
 
-const INITIAL_ENDORSEMENTS: EndorsementRequest[] = [
-  {
-    id: 'END-30219',
-    householdName: 'Echavia Household',
-    purok: 'Purok 4',
-    type: 'Barangay Clearance Support',
-    date: 'May 25, 2026',
-    description: 'Requesting clearance support proving our household has completed all community scheduled sorting audits and has all local trash fees fully settled for the mid-year municipal evaluation.',
-    status: 'Pending Leader Review',
-  },
-  {
-    id: 'END-40122',
-    householdName: 'Rallos Household',
-    purok: 'Purok 1',
-    type: 'Barangay Clearance Support',
-    date: 'May 20, 2026',
-    description: 'Requesting verified certificate proving waste compliance score above 95% for local green household tax rebate eligibility.',
-    status: 'Purok Leader Endorsed',
-  },
-  {
-    id: 'END-10492',
-    householdName: 'Delacruz Household',
-    purok: 'Purok 3',
-    type: 'Sanitary Clearance Support',
-    date: 'Apr 25, 2026',
-    description: 'Requires official endorsement proving proper hazardous materials containment and safe automobile lead-acid battery storage.',
-    status: 'Bureau Approved',
-    adminMemo: 'Household verified in person. Proper standard battery enclosure with safe secondary spill barriers present.',
-    issuedAt: 'May 02, 2026'
-  },
-  {
-    id: 'END-78219',
-    householdName: 'Bayubay Household',
-    purok: 'Purok 7',
-    type: 'Sanitary Clearance Support',
-    date: 'May 10, 2026',
-    description: 'Needs endorsement to replace damaged central community standard sorting plastic bin destroyed during heavy road works.',
-    status: 'Purok Leader Endorsed',
-  }
-];
+const INITIAL_ENDORSEMENTS: EndorsementRequest[] = [];
 
 interface EndorsementManagerProps {
   role: 'household' | 'collector' | 'leader' | 'admin';
@@ -84,28 +52,262 @@ interface EndorsementManagerProps {
 export default function EndorsementManager({ role }: EndorsementManagerProps) {
   const { currentUser, userProfile } = useAppState();
   const activeUser = currentUser || userProfile;
-  const displayName = activeUser?.name || 'Household';
-  const displayZone = activeUser?.communalZone || 'Purok 4';
-  
-  const getPurokName = (zoneStr: string) => {
-    if (!zoneStr) return 'Purok 4';
-    const match = zoneStr.match(/Purok\s*\d+/i);
-    return match ? match[0] : zoneStr;
-  };
-  const userPurok = getPurokName(displayZone);
+  const activeUserData = (activeUser || {}) as any;
 
-  const [endorsements, setEndorsements] = useState<EndorsementRequest[]>([]);
-  const [householdName, setHouseholdName] = useState(displayName);
-  const [purok, setPurok] = useState(userPurok);
+  const displayName =
+    activeUserData.full_name ||
+    activeUserData.name ||
+    'Household';
+
+  const displayZone =
+    activeUserData.communalZone || '';
+
+  const getPurokName = (zoneStr: string) => {
+    if (!zoneStr) return '';
+
+    const match = zoneStr.match(/Purok\s*\d+/i);
+
+    return match
+      ? match[0]
+      : zoneStr.split(',')[0]?.trim() || '';
+  };
+
+  const getBarangayName = (zoneStr: string) => {
+    if (!zoneStr) return '';
+
+    const parts = zoneStr
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    return parts.length > 1
+      ? parts.slice(1).join(', ')
+      : '';
+  };
+
+  const initialPurok =
+    activeUserData.purok_name ||
+    activeUserData.purok ||
+    getPurokName(displayZone);
+
+  const initialBarangay =
+    activeUserData.barangay_name ||
+    activeUserData.barangay ||
+    getBarangayName(displayZone);
+
+  const initialAddress =
+    activeUserData.address || '';
+
+  const initialEmail =
+    activeUserData.email || '';
+
+  const initialPhone =
+    activeUserData.phone || '';
+
+  const initialAccountCode =
+    activeUserData.householdId ||
+    activeUserData.account_code ||
+    activeUserData.user_code ||
+    '';
+
+  const [endorsements, setEndorsements] =
+    useState<EndorsementRequest[]>([]);
+
+  const [householdName, setHouseholdName] =
+    useState(displayName);
+
+  const [purok, setPurok] =
+    useState(initialPurok);
+
+  const [barangay, setBarangay] =
+    useState(initialBarangay);
+
+  const [registeredAddress, setRegisteredAddress] =
+    useState(initialAddress);
+
+  const [requesterEmail, setRequesterEmail] =
+    useState(initialEmail);
+
+  const [requesterPhone, setRequesterPhone] =
+    useState(initialPhone);
+
+  const [requesterAccountCode, setRequesterAccountCode] =
+    useState(initialAccountCode);
+
+  const [profileLoading, setProfileLoading] =
+    useState(role === 'household');
 
   useEffect(() => {
-    if (displayName) setHouseholdName(displayName);
+    if (displayName) {
+      setHouseholdName(displayName);
+    }
   }, [displayName]);
 
   useEffect(() => {
-    if (userPurok) setPurok(userPurok);
-  }, [userPurok]);
-  const [selectedType, setSelectedType] = useState<EndorsementType>('Barangay Clearance Support');
+    if (initialPurok) {
+      setPurok(initialPurok);
+    }
+
+    if (initialBarangay) {
+      setBarangay(initialBarangay);
+    }
+
+    if (initialAddress) {
+      setRegisteredAddress(initialAddress);
+    }
+
+    if (initialEmail) {
+      setRequesterEmail(initialEmail);
+    }
+
+    if (initialPhone) {
+      setRequesterPhone(initialPhone);
+    }
+
+    if (initialAccountCode) {
+      setRequesterAccountCode(initialAccountCode);
+    }
+  }, [
+    initialPurok,
+    initialBarangay,
+    initialAddress,
+    initialEmail,
+    initialPhone,
+    initialAccountCode,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRegisteredArea = async () => {
+      const token =
+        localStorage.getItem('token') ||
+        sessionStorage.getItem('token') ||
+        localStorage.getItem('authToken') ||
+        sessionStorage.getItem('authToken') ||
+        '';
+
+      if (!token) {
+        setProfileLoading(false);
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          '/api/auth/me',
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          return;
+        }
+
+        const data = await response
+          .json()
+          .catch(() => ({}));
+
+        const user = data?.user || data || {};
+
+        if (cancelled) {
+          return;
+        }
+
+        const resolvedName =
+          user.full_name ||
+          user.name ||
+          displayName;
+
+        const resolvedPurok =
+          user.purok_name ||
+          user.purok ||
+          getPurokName(
+            user.communalZone || displayZone,
+          );
+
+        const resolvedBarangay =
+          user.barangay_name ||
+          user.barangay ||
+          getBarangayName(
+            user.communalZone || displayZone,
+          );
+
+        const resolvedAddress =
+          user.address ||
+          initialAddress;
+
+        const resolvedEmail =
+          user.email ||
+          initialEmail;
+
+        const resolvedPhone =
+          user.phone ||
+          initialPhone;
+
+        const resolvedAccountCode =
+          user.householdId ||
+          user.household_id ||
+          user.account_code ||
+          user.user_code ||
+          initialAccountCode;
+
+        if (resolvedName) {
+          setHouseholdName(resolvedName);
+        }
+
+        if (resolvedPurok) {
+          setPurok(resolvedPurok);
+        }
+
+        if (resolvedBarangay) {
+          setBarangay(resolvedBarangay);
+        }
+
+        if (resolvedAddress) {
+          setRegisteredAddress(resolvedAddress);
+        }
+
+        if (resolvedEmail) {
+          setRequesterEmail(resolvedEmail);
+        }
+
+        if (resolvedPhone) {
+          setRequesterPhone(resolvedPhone);
+        }
+
+        if (resolvedAccountCode) {
+          setRequesterAccountCode(
+            String(resolvedAccountCode),
+          );
+        }
+      } catch {
+        // Keep the profile information already stored in AppState.
+      } finally {
+        if (!cancelled) {
+          setProfileLoading(false);
+        }
+      }
+    };
+
+    void loadRegisteredArea();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    displayName,
+    displayZone,
+    initialAddress,
+    initialEmail,
+    initialPhone,
+    initialAccountCode,
+  ]);
+
+  const selectedType: EndorsementType =
+    'Barangay Clearance Support';
   const [desc, setDesc] = useState('');
   const [notification, setNotification] = useState('');
   
@@ -136,6 +338,12 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
   useEffect(() => {
     if (activeCertificate) {
       setCertApplicantName(activeCertificate.householdName);
+
+      if (activeCertificate.barangay) {
+        setCertBarangayName(
+          activeCertificate.barangay,
+        );
+      }
       // Pre-populate date details based on certificate issue date
       const d = new Date(activeCertificate.issuedAt || activeCertificate.date);
       if (!isNaN(d.getTime())) {
@@ -175,17 +383,66 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
   }, [activeCertificate]);
 
   useEffect(() => {
-    const saved = localStorage.getItem('sg_endorsements');
+    const demoIds = new Set([
+      'END-30219',
+      'END-40122',
+      'END-10492',
+      'END-78219',
+    ]);
+
+    const saved = localStorage.getItem(
+      'sg_endorsements',
+    );
+
     if (saved) {
-      setEndorsements(JSON.parse(saved));
+      try {
+        const parsed = JSON.parse(saved);
+
+        const cleaned = Array.isArray(parsed)
+          ? parsed.filter(
+              (item) =>
+                item &&
+                !demoIds.has(String(item.id)),
+            )
+          : [];
+
+        setEndorsements(cleaned);
+
+        localStorage.setItem(
+          'sg_endorsements',
+          JSON.stringify(cleaned),
+        );
+      } catch {
+        setEndorsements([]);
+        localStorage.setItem(
+          'sg_endorsements',
+          '[]',
+        );
+      }
     } else {
-      localStorage.setItem('sg_endorsements', JSON.stringify(INITIAL_ENDORSEMENTS));
-      setEndorsements(INITIAL_ENDORSEMENTS);
+      localStorage.setItem(
+        'sg_endorsements',
+        JSON.stringify(
+          INITIAL_ENDORSEMENTS,
+        ),
+      );
+
+      setEndorsements(
+        INITIAL_ENDORSEMENTS,
+      );
     }
   }, []);
 
   const handleRequest = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!purok || !barangay) {
+      alert(
+        'Your registered Barangay and Purok are required. Please complete your Profile address first.',
+      );
+      return;
+    }
+
     if (!desc.trim()) {
       alert('Please describe your request justification.');
       return;
@@ -193,8 +450,14 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
     const newReq: EndorsementRequest = {
       id: `END-${Math.floor(10000 + Math.random() * 90000)}`,
-      householdName: householdName.trim() || 'Echavia Household',
-      purok: purok,
+      householdName: householdName.trim() || displayName,
+      purok,
+      barangay,
+      address: registeredAddress,
+      requesterEmail: requesterEmail || undefined,
+      requesterPhone: requesterPhone || undefined,
+      requesterAccountCode:
+        requesterAccountCode || undefined,
       type: selectedType,
       date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       description: desc.trim(),
@@ -213,7 +476,11 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
   const handleLeaderEndorse = (id: string) => {
     const updated = endorsements.map((item) => {
       if (item.id === id && item.status === 'Pending Leader Review') {
-        return { ...item, status: 'Purok Leader Endorsed' as const };
+        return {
+          ...item,
+          status: 'Purok Leader Endorsed' as const,
+          endorsedBy: displayName,
+        };
       }
       return item;
     });
@@ -223,7 +490,11 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
     
     // Auto-update selected request in processing side panel if active
     if (selectedRequest && selectedRequest.id === id) {
-      setSelectedRequest({ ...selectedRequest, status: 'Purok Leader Endorsed' });
+      setSelectedRequest({
+        ...selectedRequest,
+        status: 'Purok Leader Endorsed',
+        endorsedBy: displayName,
+      });
     }
 
     setTimeout(() => setNotification(''), 4000);
@@ -236,6 +507,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
           ...item, 
           status: 'Bureau Approved' as const,
           adminMemo: adminMemoInput.trim() || 'Approved municipal waste guidelines criteria met.',
+          approvedBy: displayName,
           issuedAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
         };
       }
@@ -270,8 +542,10 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
     if (!firstNonApproved) {
       const dReq: EndorsementRequest = {
         id: `END-${Math.floor(10000 + Math.random() * 90000)}`,
-        householdName: householdName.trim() || 'Echavia Household',
-        purok: 'Purok 4',
+        householdName: householdName.trim() || displayName,
+        purok: purok || 'Unassigned Purok',
+        barangay: barangay || undefined,
+        address: registeredAddress || undefined,
         type: 'Barangay Clearance Support',
         date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
         description: 'Auto-generated sandbox request for testing certificate view.',
@@ -330,15 +604,43 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
   };
 
   const filteredEndorsements = endorsements.filter((item) => {
-    // Household sees only their request
+    // Household sees only their own requests.
     if (role === 'household') {
-      const isOwner = (item.householdName || '').toLowerCase() === householdName.toLowerCase() ||
-                      (item.householdName || '').toLowerCase() === displayName.toLowerCase() ||
-                      (item.householdName || '').toLowerCase().includes(displayName.toLowerCase()) ||
-                      (item.householdName || '').toLowerCase().includes(householdName.toLowerCase());
-      if (!isOwner) return false;
+      const isOwner =
+        (item.householdName || '').toLowerCase() === householdName.toLowerCase() ||
+        (item.householdName || '').toLowerCase() === displayName.toLowerCase() ||
+        (item.householdName || '').toLowerCase().includes(displayName.toLowerCase()) ||
+        (item.householdName || '').toLowerCase().includes(householdName.toLowerCase());
+
+      if (!isOwner) {
+        return false;
+      }
     }
-    
+
+    // Route requests automatically to the Purok Leader
+    // responsible for the resident's registered purok.
+    if (
+      role === 'leader' &&
+      purok &&
+      item.purok &&
+      item.purok.toLowerCase() !==
+        purok.toLowerCase()
+    ) {
+      return false;
+    }
+
+    // Barangay Captains are scoped to their barangay whenever
+    // the endorsement record contains structured barangay data.
+    if (
+      role === 'admin' &&
+      barangay &&
+      item.barangay &&
+      item.barangay.toLowerCase() !==
+        barangay.toLowerCase()
+    ) {
+      return false;
+    }
+
     // Tab filters
     if (activeTab === 'pending_leader') return item.status === 'Pending Leader Review';
     if (activeTab === 'leader_endorsed') return item.status === 'Purok Leader Endorsed';
@@ -352,6 +654,67 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500 pb-20 md:pb-0">
+      <style>{`
+        /* Official certificate should always look like real paper,
+           even while the dashboard itself is in dark mode. */
+        html.sg-dark #barangay-endorsement-print-area,
+        html.sg-dark #barangay-endorsement-print-area.endorsement-paper {
+          background: #ffffff !important;
+          color: #0f172a !important;
+          color-scheme: light !important;
+        }
+
+        html.sg-dark #barangay-endorsement-print-area [class~="text-slate-950"],
+        html.sg-dark #barangay-endorsement-print-area [class~="text-slate-900"],
+        html.sg-dark #barangay-endorsement-print-area [class~="text-slate-850"],
+        html.sg-dark #barangay-endorsement-print-area [class~="text-slate-800"] {
+          color: #0f172a !important;
+        }
+
+        html.sg-dark #barangay-endorsement-print-area [class~="text-slate-700"],
+        html.sg-dark #barangay-endorsement-print-area [class~="text-slate-600"] {
+          color: #334155 !important;
+        }
+
+        html.sg-dark #barangay-endorsement-print-area [class~="text-slate-500"] {
+          color: #64748b !important;
+        }
+
+        html.sg-dark #barangay-endorsement-print-area [class~="text-slate-400"] {
+          color: #94a3b8 !important;
+        }
+
+        html.sg-dark #barangay-endorsement-print-area [class~="text-slate-300"] {
+          color: #cbd5e1 !important;
+        }
+
+        html.sg-dark #barangay-endorsement-print-area [class~="border-slate-950"],
+        html.sg-dark #barangay-endorsement-print-area [class~="border-slate-900"],
+        html.sg-dark #barangay-endorsement-print-area [class~="border-slate-800"] {
+          border-color: #1e293b !important;
+        }
+
+        html.sg-dark #barangay-endorsement-print-area [class~="border-slate-300"],
+        html.sg-dark #barangay-endorsement-print-area [class~="border-slate-200"] {
+          border-color: #cbd5e1 !important;
+        }
+
+        html.sg-dark #barangay-endorsement-print-area .endorsement-watermark {
+          color: rgba(100, 116, 139, 0.28) !important;
+        }
+
+        @media print {
+          #barangay-endorsement-print-area,
+          #barangay-endorsement-print-area * {
+            color-scheme: light !important;
+          }
+
+          #barangay-endorsement-print-area {
+            background: #ffffff !important;
+            color: #0f172a !important;
+          }
+        }
+      `}</style>
       
       {/* Header Panel */}
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -406,65 +769,78 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
               <form onSubmit={handleRequest} className="space-y-4">
                 <div className="space-y-1">
-                  <label className="text-slate-500 font-extrabold text-[10px] uppercase tracking-wider block font-bold">Resident Name / Applicant Org</label>
-                  <input 
+                  <label className="text-slate-500 font-extrabold text-[10px] uppercase tracking-wider block font-bold">
+                    Resident Name
+                  </label>
+
+                  <input
                     type="text"
-                    required
+                    readOnly
                     value={householdName}
-                    onChange={(e) => setHouseholdName(e.target.value)}
-                    placeholder="e.g. Echavia Household"
-                    className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:bg-white transition-all"
+                    className="w-full px-4 py-3.5 bg-slate-100 border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 cursor-not-allowed"
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-slate-500 font-extrabold text-[10px] uppercase tracking-wider block font-bold">Purok Area Location</label>
-                    <select 
-                      value={purok}
-                      onChange={(e) => setPurok(e.target.value)}
-                      className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-850 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                    >
-                      {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((p) => (
-                        <option key={p} value={`Purok ${p}`}>Purok {p}</option>
-                      ))}
-                    </select>
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-wider text-emerald-700">
+                        Registered Service Area
+                      </p>
+
+                      <p className="mt-1 text-sm font-black text-slate-800">
+                        {profileLoading
+                          ? 'Loading your registered address...'
+                          : purok && barangay
+                            ? `${purok}, ${barangay}`
+                            : 'Profile area not yet configured'}
+                      </p>
+
+                      {registeredAddress && (
+                        <p className="mt-1 text-xs font-medium text-slate-500">
+                          {registeredAddress}
+                        </p>
+                      )}
+                    </div>
+
+                    <span className="shrink-0 rounded-full bg-emerald-100 px-2.5 py-1 text-[9px] font-black uppercase text-emerald-700">
+                      Automatic
+                    </span>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-slate-500 font-extrabold text-[10px] uppercase tracking-wider block font-bold">Required Document Type</label>
-                    <select 
-                      value={selectedType}
-                      onChange={(e) => setSelectedType(e.target.value as any)}
-                      className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-850 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                    >
-                      <option value="Barangay Clearance Support">Barangay Clearance Support</option>
-                      <option value="Sanitary Clearance Support">Sanitary Clearance Support</option>
-                    </select>
-                  </div>
+                  <p className="mt-3 text-[10px] font-semibold leading-relaxed text-emerald-700/80">
+                    Barangay and Purok are taken automatically from your saved Profile address and cannot be changed in this request.
+                  </p>
                 </div>
 
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
-                    <label className="text-slate-500 font-extrabold text-[10px] uppercase tracking-wider block font-bold">Justification & sorting records</label>
-                    <span className="text-[10px] text-emerald-600 font-bold">Recommended: Provide audit details</span>
+                    <label className="text-slate-500 font-extrabold text-[10px] uppercase tracking-wider block font-bold">Request Justification</label>
+                    <span className="text-[10px] text-emerald-600 font-bold">Describe why you need this endorsement</span>
                   </div>
                   <textarea 
                     value={desc}
                     onChange={(e) => setDesc(e.target.value)}
-                    placeholder="Provide evidence. (e.g. Requiring Barangay Sanitary Clearance for opening small grocery startup, zero-waste criteria proof, state compliance scores)"
+                    placeholder="Briefly explain the purpose of your endorsement request."
                     rows={4}
                     className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:bg-white transition-all font-medium leading-relaxed"
                     required
                   />
                 </div>
 
-                <button 
+                <button
                   type="submit"
-                  className="w-full py-4 bg-emerald-500 hover:bg-emerald-600 active:scale-95 transition-all text-white font-extrabold rounded-2xl text-xs shadow-xl shadow-emerald-500/10 cursor-pointer flex items-center justify-center gap-2"
+                  disabled={
+                    profileLoading ||
+                    !purok ||
+                    !barangay
+                  }
+                  className="w-full py-4 bg-emerald-500 hover:bg-emerald-600 active:scale-95 transition-all text-white font-extrabold rounded-2xl text-xs shadow-xl shadow-emerald-500/10 cursor-pointer flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Plus className="w-4 h-4" />
-                  Submit Official Request Form
+                  {profileLoading
+                    ? 'Loading Registered Area...'
+                    : 'Submit Official Request Form'}
                 </button>
               </form>
             </div>
@@ -490,6 +866,9 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       <span className="font-mono text-[9px] text-slate-400 font-black">{selectedRequest.id}</span>
                       <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase text-white bg-slate-800`}>
                         {selectedRequest.purok}
+                        {selectedRequest.barangay
+                          ? `, ${selectedRequest.barangay}`
+                          : ''}
                       </span>
                     </div>
 
@@ -605,7 +984,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                   Your Barangay Clearance / Sanitary Support form is ready!
                 </p>
                 <p className="text-xs text-slate-500 leading-relaxed font-medium">
-                  Signed and officially issued by Barangay Chairman <strong>{certChairmanName}</strong>. You can view, download, or print it now.
+                  Signed and officially issued by Barangay Captain <strong>{certChairmanName}</strong>. You can view, download, or print it now.
                 </p>
               </div>
               <button 
@@ -714,7 +1093,12 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       {item.type}
                     </span>
                     <span className="text-[10px] text-slate-400 font-medium">{item.date}</span>
-                    <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md">{item.purok}</span>
+                    <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md">
+                      {item.purok}
+                      {item.barangay
+                        ? `, ${item.barangay}`
+                        : ''}
+                    </span>
                   </div>
 
                   <div>
@@ -852,7 +1236,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                         <span className="text-[9.5px] uppercase tracking-wider text-slate-400 font-black block">Printing Instructions</span>
                         <ul className="text-slate-350 text-[11px] space-y-1.5 list-disc pl-4 leading-relaxed font-normal">
                           <li>You can print or download this endorsement by clicking the button below or pressing <kbd className="px-1 py-0.5 bg-slate-950 text-white rounded text-[9px] border border-slate-850 font-mono">Ctrl + P</kbd> on your computer.</li>
-                          <li>Deliver a copy of this form directly to <strong>{certRecipient}</strong> at the <strong>{certLocation}</strong>.</li>
+                          <li>Keep the approved copy for your barangay waste-compliance or clearance transaction.</li>
                           <li>Verifiable at any time via municipal scanning terminals.</li>
                         </ul>
                       </div>
@@ -868,220 +1252,142 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       </div>
                     </div>
 
-                    <button
-                      onClick={() => window.print()}
-                      className="w-full mt-auto py-3 bg-[#05BC8F] hover:bg-[#049a75] active:scale-95 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer focus:outline-none font-sans"
-                    >
-                      <Printer className="w-4.5 h-4.5" />
-                      Print Official Form
-                    </button>
+                    {activeCertificate.status === 'Bureau Approved' ? (
+                      <button
+                        onClick={() => window.print()}
+                        className="w-full mt-auto py-3 bg-[#05BC8F] hover:bg-[#049a75] active:scale-95 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer focus:outline-none font-sans"
+                      >
+                        <Printer className="w-4.5 h-4.5" />
+                        Print Approved Certificate
+                      </button>
+                    ) : (
+                      <div className="mt-auto rounded-xl border border-amber-800/30 bg-amber-950/20 p-3 text-center text-[10px] font-bold text-amber-300">
+                        Preview only — waiting for Barangay Captain approval.
+                      </div>
+                    )}
                   </>
                 ) : (
                   <>
-                    <div className="border-b border-slate-100 pb-3">
-                  <h3 className="font-extrabold text-sm text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                    <FileText className="w-4.5 h-4.5 text-[#05BC8F]" />
-                    Document Configurator
-                  </h3>
-                  <p className="text-[11px] text-slate-400 mt-0.5">Customize fields below to reprint or change certificate stipulations.</p>
-                </div>
-
-                {/* FIELDS LIST (Fixed/Scroll container) */}
-                <div className="space-y-3.5 max-h-[50vh] lg:max-h-[64vh] overflow-y-auto pr-1">
-                  
-                  {/* Barangay & Chairman */}
-                  <div className="space-y-2 bg-slate-50 p-2.5 rounded-xl border border-slate-150">
-                    <span className="text-[9px] font-black uppercase text-amber-800 tracking-wider">Barangay Secretariat</span>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase tracking-wider font-extrabold text-slate-500 block">Barangay Name</label>
-                      <input 
-                        type="text"
-                        value={certBarangayName}
-                        onChange={(e) => setCertBarangayName(e.target.value)}
-                        className="w-full px-2.5 py-1.5 bg-white border border-slate-250 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                        placeholder="e.g. Bang-bang"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase tracking-wider font-extrabold text-slate-500 block">Barangay Chairman</label>
-                      <input 
-                        type="text"
-                        value={certChairmanName}
-                        onChange={(e) => setCertChairmanName(e.target.value)}
-                        className="w-full px-2.5 py-1.5 bg-white border border-slate-250 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                        placeholder="e.g. April Jhon De Atras"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Recipient Details */}
-                  <div className="space-y-2 bg-slate-50 p-2.5 rounded-xl border border-slate-150">
-                    <span className="text-[9px] font-black uppercase text-indigo-800 tracking-wider font-extrabold">Addressed To</span>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase tracking-wider font-extrabold text-slate-500 block">Recipient Name</label>
-                      <input 
-                        type="text"
-                        value={certRecipient}
-                        onChange={(e) => setCertRecipient(e.target.value)}
-                        className="w-full px-2.5 py-1.5 bg-white border border-slate-250 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase tracking-wider font-extrabold text-slate-500 block">Designation / Role</label>
-                      <input 
-                        type="text"
-                        value={certDesignation}
-                        onChange={(e) => setCertDesignation(e.target.value)}
-                        className="w-full px-2.5 py-1.5 bg-white border border-slate-250 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase tracking-wider font-extrabold text-slate-500 block">Office / City Location</label>
-                      <input 
-                        type="text"
-                        value={certLocation}
-                        onChange={(e) => setCertLocation(e.target.value)}
-                        className="w-full px-2.5 py-1.5 bg-white border border-slate-250 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Certified Resident / Applicant */}
-                  <div className="space-y-2 bg-slate-50 p-2.5 rounded-xl border border-slate-150">
-                    <span className="text-[9px] font-black uppercase text-emerald-800 tracking-wider">Certified Beneficiary</span>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase tracking-wider font-extrabold text-slate-500 block">Applicant Name</label>
-                      <input 
-                        type="text"
-                        value={certApplicantName}
-                        onChange={(e) => setCertApplicantName(e.target.value)}
-                        className="w-full px-2.5 py-1.5 bg-white border border-slate-250 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="space-y-1">
-                        <label className="text-[9px] uppercase font-bold text-slate-550 block">Gender</label>
-                        <select 
-                          value={certGender}
-                          onChange={(e) => setCertGender(e.target.value)}
-                          className="w-full p-1.5 bg-white border border-slate-250 rounded-lg text-[11px] font-bold text-slate-800 focus:ring-1 focus:ring-emerald-500"
-                        >
-                          <option value="Male">Male</option>
-                          <option value="Female">Female</option>
-                        </select>
+                    <div className="border-b border-slate-100 pb-4">
+                      <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-emerald-600">
+                        <FileCheck className="h-4 w-4" />
+                        Verified Request Data
                       </div>
-                      <div className="space-y-1">
-                        <label className="text-[9px] uppercase font-bold text-slate-550 block">Civil Status</label>
-                        <select 
-                          value={certCivilStatus}
-                          onChange={(e) => setCertCivilStatus(e.target.value)}
-                          className="w-full p-1.5 bg-white border border-slate-250 rounded-lg text-[11px] font-bold text-slate-800 focus:ring-1 focus:ring-emerald-500"
-                        >
-                          <option value="Single">Single</option>
-                          <option value="Married">Married</option>
-                          <option value="Widowed">Widowed</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
 
-                  {/* Co-Resident partner info */}
-                  <div className="space-y-2 bg-slate-50 p-2.5 rounded-xl border border-slate-150">
-                    <span className="text-[9px] font-black uppercase text-rose-800 tracking-wider">Co-Resident / Living With</span>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase tracking-wider font-extrabold text-slate-500 block">Living with Full Name</label>
-                      <input 
-                        type="text"
-                        value={certCoResident}
-                        onChange={(e) => setCertCoResident(e.target.value)}
-                        className="w-full px-2.5 py-1.5 bg-white border border-slate-250 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="space-y-1">
-                        <label className="text-[9px] uppercase font-bold text-slate-550 block">Gender</label>
-                        <select 
-                          value={certCoGender}
-                          onChange={(e) => setCoGender(e.target.value)}
-                          className="w-full p-1.5 bg-white border border-slate-250 rounded-lg text-[11px] font-bold text-slate-800 focus:ring-1 focus:ring-emerald-500"
-                        >
-                          <option value="Female">Female</option>
-                          <option value="Male">Male</option>
-                        </select>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[9px] uppercase font-bold text-slate-550 block">Civil Status</label>
-                        <select 
-                          value={certCoCivilStatus}
-                          onChange={(e) => setCoCivilStatus(e.target.value)}
-                          className="w-full p-1.5 bg-white border border-slate-250 rounded-lg text-[11px] font-bold text-slate-800 focus:ring-1 focus:ring-emerald-500"
-                        >
-                          <option value="Single">Single</option>
-                          <option value="Married">Married</option>
-                          <option value="Widowed">Widowed</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
+                      <h3 className="mt-1 text-base font-black text-slate-800">
+                        Certificate Review
+                      </h3>
 
-                  {/* Project / Beneficiary target */}
-                  <div className="space-y-2 bg-slate-50 p-2.5 rounded-xl border border-slate-150">
-                    <span className="text-[9px] font-black uppercase text-teal-800 tracking-wider">Beneficiary Inclusion Objective</span>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase tracking-wider font-extrabold text-slate-500 block">Target Project / Authority</label>
-                      <textarea 
-                        value={certNhaPurpose}
-                        onChange={(e) => setCertNhaPurpose(e.target.value)}
-                        rows={2}
-                        className="w-full p-2 bg-white border border-slate-250 rounded-lg text-[11px] font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      />
+                      <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+                        Resident identity, credentials, and service area are locked to the submitted request snapshot. The certificate always follows whoever actually submitted the request.
+                      </p>
                     </div>
-                  </div>
 
-                  {/* Issuance Timestamps */}
-                  <div className="space-y-2 bg-slate-50 p-2.5 rounded-xl border border-slate-150">
-                    <span className="text-[9px] font-black uppercase text-slate-800 tracking-wider">Decree Issuance Date</span>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-extrabold text-slate-500 block">Day Suffix</label>
-                        <input 
-                          type="text"
-                          value={certDay}
-                          onChange={(e) => setCertDay(e.target.value)}
-                          className="w-full px-2 py-1 bg-white border border-slate-250 rounded-lg text-xs font-bold text-slate-800 focus:outline-none"
-                          placeholder="e.g. 14th"
-                        />
+                    <div className="space-y-3 overflow-y-auto pr-1">
+                      <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">
+                          Requesting Resident
+                        </p>
+
+                        <p className="mt-1 text-sm font-black text-slate-800">
+                          {activeCertificate.householdName}
+                        </p>
+
+                        <div className="mt-2 space-y-1 text-[10px] font-medium text-slate-500">
+                          {activeCertificate.requesterAccountCode && (
+                            <p>
+                              Account Code: <strong>{activeCertificate.requesterAccountCode}</strong>
+                            </p>
+                          )}
+
+                          {activeCertificate.requesterEmail && (
+                            <p>
+                              Email: {activeCertificate.requesterEmail}
+                            </p>
+                          )}
+
+                          {activeCertificate.requesterPhone && (
+                            <p>
+                              Contact: {activeCertificate.requesterPhone}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-extrabold text-slate-500 block">Month & Year</label>
-                        <input 
-                          type="text"
-                          value={certMonthYear}
-                          onChange={(e) => setCertMonthYear(e.target.value)}
-                          className="w-full px-2 py-1 bg-white border border-slate-250 rounded-lg text-xs font-bold text-slate-800 focus:outline-none"
-                          placeholder="e.g. April, 2020"
-                        />
+
+                      <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4">
+                        <p className="text-[9px] font-black uppercase tracking-wider text-emerald-700">
+                          Registered Service Area
+                        </p>
+                        <p className="mt-1 text-sm font-black text-slate-800">
+                          {activeCertificate.purok}
+                          {activeCertificate.barangay
+                            ? `, ${activeCertificate.barangay}`
+                            : ''}
+                        </p>
+
+                        {activeCertificate.address && (
+                          <p className="mt-1 text-[11px] font-medium text-slate-500">
+                            {activeCertificate.address}
+                          </p>
+                        )}
                       </div>
+
+                      <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">
+                          Endorsement Purpose
+                        </p>
+                        <p className="mt-2 text-xs leading-relaxed text-slate-600">
+                          {activeCertificate.description}
+                        </p>
+                      </div>
+
+                      <div className={`rounded-2xl border p-4 ${
+                        activeCertificate.status === 'Bureau Approved'
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                          : activeCertificate.status === 'Purok Leader Endorsed'
+                            ? 'border-indigo-200 bg-indigo-50 text-indigo-800'
+                            : 'border-amber-200 bg-amber-50 text-amber-800'
+                      }`}>
+                        <p className="text-[9px] font-black uppercase tracking-wider opacity-70">
+                          Current Status
+                        </p>
+                        <p className="mt-1 text-xs font-black uppercase">
+                          {activeCertificate.status}
+                        </p>
+                      </div>
+
+                      {activeCertificate.adminMemo && (
+                        <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                          <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">
+                            Barangay Verification Memo
+                          </p>
+                          <p className="mt-2 text-xs leading-relaxed text-slate-600">
+                            {activeCertificate.adminMemo}
+                          </p>
+                        </div>
+                      )}
                     </div>
-                  </div>
 
-                </div>
-
-                    {/* Print button on sidebar */}
-                    <button
-                      onClick={() => window.print()}
-                      className="w-full mt-auto py-3 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer focus:outline-none font-sans"
-                    >
-                      <Printer className="w-4.5 h-4.5" />
-                      Print Official Form
-                    </button>
+                    {activeCertificate.status === 'Bureau Approved' ? (
+                      <button
+                        onClick={() => window.print()}
+                        className="mt-auto flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-xs font-extrabold uppercase tracking-wider text-white transition hover:bg-emerald-700"
+                      >
+                        <Printer className="h-4 w-4" />
+                        Print Approved Certificate
+                      </button>
+                    ) : (
+                      <div className="mt-auto rounded-xl border border-amber-200 bg-amber-50 p-3 text-center text-[10px] font-bold text-amber-700">
+                        Preview only — official printing is enabled after Barangay Captain approval.
+                      </div>
+                    )}
                   </>
                 )}
               </div>
 
               {/* RIGHT COLUMN: HIGH FIDELITY PAPER BLUEPRINT REPRESENTATION */}
-              <div 
-                className="flex-1 bg-white p-6 md:p-14 flex flex-col justify-between shadow-xs print:p-0 print:shadow-none print:w-full print:block"
+              <div
+                className="endorsement-paper flex-1 bg-white p-6 md:p-14 flex flex-col justify-between shadow-xs print:p-0 print:shadow-none print:w-full print:block"
                 id="barangay-endorsement-print-area"
               >
                 
@@ -1091,8 +1397,8 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                   {/* Subtle watermarking diagonal text */}
                   {activeCertificate?.status !== 'Bureau Approved' && (
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none overflow-hidden z-0">
-                      <span className="text-slate-200/40 text-4xl sm:text-6xl font-sans font-black tracking-widest uppercase -rotate-12 select-none whitespace-nowrap">
-                        PENDING FINAL STAMP
+                      <span className="endorsement-watermark text-slate-200/40 text-4xl sm:text-6xl font-sans font-black tracking-widest uppercase -rotate-12 select-none whitespace-nowrap">
+                        PENDING FINAL APPROVAL
                       </span>
                     </div>
                   )}
@@ -1138,36 +1444,80 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                         OFFICE OF THE PUNONG BARANGAY
                       </h2>
                       <h1 className="text-2xl md:text-3xl font-sans font-black tracking-widest text-slate-950 uppercase pt-4">
-                        ENDORSEMENT
+                        BARANGAY WASTE COMPLIANCE ENDORSEMENT
                       </h1>
                     </div>
                   </div>
 
-                  {/* ADDRESS BLOCK */}
-                  <div className="space-y-1 text-slate-900 font-sans text-xs md:text-sm text-left max-w-sm">
-                    <p className="font-extrabold text-slate-950">{certRecipient}</p>
-                    <p className="text-slate-700 font-normal">{certDesignation}</p>
-                    <p className="text-slate-700 font-normal">{certLocation}</p>
+                  {/* VERIFIED RESIDENT BLOCK */}
+                  <div className="space-y-1 text-slate-900 font-sans text-xs md:text-sm text-left max-w-lg">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                      Certified Resident
+                    </p>
+                    <p className="font-extrabold text-slate-950">
+                      {activeCertificate.householdName}
+                    </p>
+
+                    {activeCertificate.requesterAccountCode && (
+                      <p className="text-slate-600 font-normal">
+                        Account Code: {activeCertificate.requesterAccountCode}
+                      </p>
+                    )}
+
+                    <p className="text-slate-700 font-normal">
+                      {activeCertificate.purok}
+                      {activeCertificate.barangay
+                        ? `, Barangay ${activeCertificate.barangay}`
+                        : ''}
+                    </p>
+
+                    {activeCertificate.address && (
+                      <p className="text-slate-600 font-normal">
+                        Address: {activeCertificate.address}
+                      </p>
+                    )}
+
+                    {activeCertificate.requesterEmail && (
+                      <p className="text-slate-600 font-normal">
+                        Email: {activeCertificate.requesterEmail}
+                      </p>
+                    )}
+
+                    {activeCertificate.requesterPhone && (
+                      <p className="text-slate-600 font-normal">
+                        Contact: {activeCertificate.requesterPhone}
+                      </p>
+                    )}
                   </div>
 
                   {/* CERTIFICATION TEXT BODY */}
-                  <div className="font-serif text-slate-950 text-xs md:text-sm text-justify leading-relaxed space-y-6 md:space-y-8 font-serif px-1 max-w-xl mx-auto">
-                    <p className="indent-8 font-serif">
-                      THIS IS TO CERTIFY that <strong className="font-sans font-extrabold text-slate-950 border-b border-slate-900/60 pb-0.5 px-0.5">{certApplicantName}</strong>, of 
-                      legal age, Filipino, {certGender}, {certCivilStatus}, living in with <strong className="font-sans font-extrabold text-slate-950 border-b border-slate-900/60 pb-0.5 px-0.5">{certCoResident}</strong>, 
-                      Filipino, {certCoGender}, {certCoCivilStatus} and residents of Brgy. {certBarangayName}, Basey, Samar.
+                  <div className="font-serif text-slate-950 text-xs md:text-sm text-justify leading-relaxed space-y-6 md:space-y-8 px-1 max-w-xl mx-auto">
+                    <p className="indent-8">
+                      THIS IS TO CERTIFY that <strong className="font-sans font-extrabold text-slate-950 border-b border-slate-900/60 pb-0.5 px-0.5">{activeCertificate.householdName}</strong>
+                      {activeCertificate.requesterAccountCode
+                        ? ` (Account ${activeCertificate.requesterAccountCode})`
+                        : ''} is the registered resident who submitted this request under <strong>{activeCertificate.purok}</strong>
+                      {activeCertificate.barangay
+                        ? `, Barangay ${activeCertificate.barangay}`
+                        : ''}. The identity and service-area details shown in this certificate are copied from the resident's registered account and are not editable from the endorsement form.
                     </p>
 
-                    <p className="indent-8 font-serif">
-                      This is to formally endorse the above-named person to be included in the list of 
-                      additional beneficiaries qualified for <strong className="font-sans font-extrabold text-slate-950">{certNhaPurpose}</strong>. As 
-                      per the assessment, they possesses the qualifications required as such and that no objection 
-                      s have been raised by any members of the Sangguniang Barangay Council.
+                    <p className="indent-8">
+                      The resident submitted an endorsement request for the following waste-management or community-compliance purpose: <strong className="font-sans font-bold text-slate-950">“{activeCertificate.description}”</strong>
                     </p>
 
-                    <p className="indent-8 font-serif">
-                      Given this <span className="font-sans font-bold">{certDay}</span> day of <span className="font-sans font-bold">{certMonthYear}</span> at 
-                      Barangay {certBarangayName}, Basey, Samar.
+                    <p className="indent-8">
+                      The request has been reviewed through the Smart Garbage Monitoring System. The Purok Leader endorsement confirms the resident and service-area information shown above. Final issuance is subject to Barangay Captain approval.
+                    </p>
+
+                    {activeCertificate.adminMemo && (
+                      <p className="indent-8">
+                        Barangay verification note: <strong>{activeCertificate.adminMemo}</strong>
+                      </p>
+                    )}
+
+                    <p className="indent-8">
+                      Issued/recorded on <span className="font-sans font-bold">{activeCertificate.issuedAt || activeCertificate.date}</span> at Barangay {activeCertificate.barangay || certBarangayName}.
                     </p>
                   </div>
 
@@ -1179,10 +1529,11 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       <div className="pt-2">
                         <span className="text-[11px] text-indigo-600 font-serif font-black italic block leading-none">Verified Purok Leader</span>
                         <strong className="text-xs text-slate-900 font-bold block border-b border-slate-350 pb-0.5">
-                          {activeCertificate?.purok} Administrator
+                          {activeCertificate.endorsedBy ||
+                            'Awaiting Purok Leader'}
                         </strong>
                         <span className="text-[9px] uppercase font-bold text-slate-400 block tracking-wider font-sans">
-                          Purok Council Representative
+                          Purok Leader / Verifier
                         </span>
                       </div>
                     </div>
@@ -1195,20 +1546,20 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                           <>
                             <span className="text-xs text-emerald-600 font-serif font-bold italic block leading-none">✓ Official Digitally Signed</span>
                             <strong className="text-xs md:text-sm text-slate-950 font-extrabold tracking-wide uppercase block border-b-2 border-slate-950 pb-0.5">
-                              HON. {certChairmanName.toUpperCase()}
+                              HON. {(activeCertificate.approvedBy || certChairmanName).toUpperCase()}
                             </strong>
                             <span className="text-[10px] md:text-xs font-black uppercase tracking-wider text-slate-500 block font-sans">
-                              Barangay Chairman
+                              Barangay Captain
                             </span>
                           </>
                         ) : (
                           <>
                             <span className="text-xs text-amber-600 font-serif font-medium italic block leading-none">⌛ Awaiting Admin Review</span>
                             <strong className="text-xs md:text-sm text-slate-400 font-bold tracking-wide uppercase block border-b-2 border-slate-200 pb-0.5">
-                              HON. {certChairmanName.toUpperCase()}
+                              HON. {(activeCertificate.approvedBy || certChairmanName).toUpperCase()}
                             </strong>
                             <span className="text-[10px] md:text-xs font-black uppercase tracking-wider text-slate-300 block font-sans">
-                              Barangay Chairman
+                              Barangay Captain
                             </span>
                           </>
                         )}
@@ -1228,13 +1579,19 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                 >
                   ✕ Close
                 </button>
-                <button
-                  onClick={() => window.print()}
-                  className="px-5 py-2.5 bg-[#05BC8F] hover:bg-[#049a75] text-white text-xs font-black rounded-lg shadow-md transition-all flex items-center gap-1.5"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  Print Form
-                </button>
+                {activeCertificate.status === 'Bureau Approved' ? (
+                  <button
+                    onClick={() => window.print()}
+                    className="px-5 py-2.5 bg-[#05BC8F] hover:bg-[#049a75] text-white text-xs font-black rounded-lg shadow-md transition-all flex items-center gap-1.5"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    Print Certificate
+                  </button>
+                ) : (
+                  <span className="text-[10px] font-bold uppercase text-amber-300">
+                    Awaiting final approval
+                  </span>
+                )}
               </div>
 
             </motion.div>

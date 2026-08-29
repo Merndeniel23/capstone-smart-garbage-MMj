@@ -10,10 +10,11 @@ import {
   FileText,
   KeyRound,
   LayoutDashboard,
-  LogOut,
   Map,
   MapPinned,
   MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   Settings,
   Shield,
   Truck,
@@ -29,7 +30,7 @@ import {
 interface SidebarProps {
   activeTab: string;
   onTabChange: (tab: any) => void;
-  onLogout: () => void;
+  onLogout?: () => void;
   role: AppRole;
 }
 
@@ -43,7 +44,6 @@ interface MenuItem {
 export default function Sidebar({
   activeTab,
   onTabChange,
-  onLogout,
   role,
 }: SidebarProps) {
   const {
@@ -60,6 +60,27 @@ export default function Sidebar({
 
   const [unseenCount, setUnseenCount] =
     useState(0);
+
+  const [collapsed, setCollapsed] =
+    useState(
+      () =>
+        localStorage.getItem(
+          "sg_sidebar_collapsed",
+        ) === "true",
+    );
+
+  const toggleSidebar = () => {
+    setCollapsed((current) => {
+      const next = !current;
+
+      localStorage.setItem(
+        "sg_sidebar_collapsed",
+        String(next),
+      );
+
+      return next;
+    });
+  };
 
   const loadNotificationBadge =
     async () => {
@@ -169,6 +190,11 @@ export default function Sidebar({
       label: "Complaints",
     },
     {
+      id: "endorsements",
+      icon: Award,
+      label: "Endorsements",
+    },
+    {
       id: "payments",
       icon: CreditCard,
       label: "Payments",
@@ -203,7 +229,7 @@ export default function Sidebar({
       label: "Route Map",
     },
     {
-      id: "schedule",
+      id: "collector-pickup-log",
       icon: Truck,
       label: "Pickup Log",
     },
@@ -438,27 +464,81 @@ export default function Sidebar({
             : User;
 
   return (
-    <aside className="sticky top-0 z-20 hidden h-screen w-64 shrink-0 flex-col bg-[#14532d] text-white shadow-xl transition-all duration-300 md:flex">
-      <div className="mb-6 flex items-center gap-3 border-b border-white/10 p-6">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/15 shadow-inner">
-          <RoleIcon className="h-5 w-5 text-emerald-100" />
+    <aside
+      className={`sticky top-0 z-20 hidden h-screen shrink-0 flex-col text-white shadow-xl transition-all duration-300 md:flex ${
+        collapsed
+          ? "w-20"
+          : "w-64"
+      } bg-[#14532d] dark:bg-[#0b2a20]`}
+    >
+      <div
+        className={`flex items-center border-b border-white/10 ${
+          collapsed
+            ? "justify-center p-3"
+            : "justify-between gap-3 p-5"
+        }`}
+      >
+        <div
+          className={`flex min-w-0 items-center ${
+            collapsed
+              ? "justify-center"
+              : "gap-3"
+          }`}
+        >
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/10 shadow-inner ring-1 ring-white/5 dark:bg-emerald-300/10">
+            <RoleIcon className="h-5 w-5 text-emerald-100 dark:text-emerald-200" />
+          </div>
+
+          {!collapsed && (
+            <div className="min-w-0">
+              <p className="text-[9px] font-black uppercase tracking-widest text-emerald-300 dark:text-emerald-300/80">
+                {roleLabel}
+              </p>
+
+              <p
+                className="mt-0.5 max-w-[132px] truncate text-sm font-extrabold text-white"
+                title={username}
+              >
+                {username}
+              </p>
+            </div>
+          )}
         </div>
 
-        <div className="min-w-0">
-          <p className="text-[9px] font-black uppercase tracking-widest text-emerald-300">
-            {roleLabel}
-          </p>
-
-          <p
-            className="mt-0.5 max-w-[150px] truncate text-sm font-extrabold text-white"
-            title={username}
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            title="Collapse sidebar"
+            aria-label="Collapse sidebar"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/70 transition hover:bg-white/10 hover:text-white"
           >
-            {username}
-          </p>
-        </div>
+            <PanelLeftClose className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-y-auto px-4 pb-4">
+      {collapsed && (
+        <div className="flex justify-center border-b border-white/10 py-3">
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            title="Expand sidebar"
+            aria-label="Expand sidebar"
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/70 transition hover:bg-white/10 hover:text-white"
+          >
+            <PanelLeftOpen className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      <nav
+        className={`flex-1 space-y-1 overflow-y-auto pb-4 pt-4 ${
+          collapsed
+            ? "px-3"
+            : "px-4"
+        }`}
+      >
         {menuItems.map((item) => {
           const Icon = item.icon;
           const isActive =
@@ -468,50 +548,73 @@ export default function Sidebar({
             <button
               key={item.id}
               type="button"
+              title={
+                collapsed
+                  ? item.label
+                  : undefined
+              }
+              aria-label={item.label}
               onClick={() =>
                 onTabChange(item.id)
               }
-              className={`group flex w-full items-center gap-3 rounded-xl px-4 py-3 transition-all duration-200 ${
+              className={`group relative flex w-full items-center rounded-xl py-3 transition-all duration-200 ${
+                collapsed
+                  ? "justify-center px-0"
+                  : "gap-3 px-4"
+              } ${
                 isActive
-                  ? "bg-white/15 font-semibold text-white"
-                  : "text-white/70 hover:bg-white/5 hover:text-white"
+                  ? "bg-white/15 font-semibold text-white ring-1 ring-white/10 dark:bg-emerald-300/10 dark:text-emerald-50 dark:ring-emerald-300/10"
+                  : "text-white/70 hover:bg-white/5 hover:text-white dark:text-slate-300 dark:hover:bg-white/[0.06] dark:hover:text-emerald-50"
               }`}
             >
               <Icon
-                className={`h-5 w-5 transition-transform duration-200 ${
+                className={`h-5 w-5 shrink-0 transition-transform duration-200 ${
                   isActive
                     ? "scale-110"
                     : "group-hover:scale-105"
                 }`}
               />
 
-              <span className="flex-1 text-left text-sm">
-                {item.label}
-              </span>
+              {!collapsed && (
+                <span className="flex-1 text-left text-sm">
+                  {item.label}
+                </span>
+              )}
 
               {Boolean(item.count) && (
-                <span className="rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                  {(item.count ?? 0) > 99
-                    ? "99+"
-                    : (item.count ?? 0)}
-                </span>
+                collapsed ? (
+                  <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[8px] font-black text-white">
+                    {(item.count ?? 0) > 9
+                      ? "9+"
+                      : (item.count ?? 0)}
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                    {(item.count ?? 0) > 99
+                      ? "99+"
+                      : (item.count ?? 0)}
+                  </span>
+                )
               )}
             </button>
           );
         })}
       </nav>
 
-      <div className="border-t border-white/10 p-4">
-        <button
-          type="button"
-          onClick={onLogout}
-          className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-white/70 transition-all duration-200 hover:bg-rose-500/20 hover:text-rose-100"
-        >
-          <LogOut className="h-5 w-5" />
-          <span className="text-sm font-semibold">
-            Sign Out
-          </span>
-        </button>
+      <div
+        className={`border-t border-white/10 ${
+          collapsed
+            ? "p-3"
+            : "px-5 py-4"
+        }`}
+      >
+        {!collapsed ? (
+          <p className="text-center text-[9px] font-bold uppercase tracking-[0.18em] text-white/35 dark:text-emerald-100/30">
+            Smart Garbage Monitoring
+          </p>
+        ) : (
+          <div className="mx-auto h-1.5 w-1.5 rounded-full bg-emerald-300/50" />
+        )}
       </div>
     </aside>
   );

@@ -124,7 +124,7 @@ function roleLabel(role: ManagedUser["role"]) {
       return "Garbage Collector";
 
     default:
-      return "Civilian";
+      return "Resident";
   }
 }
 
@@ -134,14 +134,16 @@ export default function UserManagement() {
   const [puroks, setPuroks] = useState<Purok[]>([]);
 
   const [activeTab, setActiveTab] = useState<
-    "all" | "residents" | "collectors" | "leaders"
+    "all" | "pending" | "residents" | "collectors" | "leaders"
   >("all");
 
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const [selectedUser, setSelectedUser] = useState<ManagedUser | null>(null);
   const [selectedRole, setSelectedRole] = useState<ManagedRole>("resident");
@@ -161,6 +163,36 @@ export default function UserManagement() {
     generateTemporaryPassword,
   );
   const [showTemporaryPassword, setShowTemporaryPassword] = useState(false);
+
+  const refreshUsers = async (silent = true) => {
+    if (silent) {
+      setRefreshing(true);
+    }
+
+    try {
+      const usersData = await apiRequest("/admin/users");
+
+      setUsers(
+        Array.isArray(usersData.users)
+          ? usersData.users
+          : [],
+      );
+
+      setLastUpdated(new Date());
+    } catch (err) {
+      if (!silent) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to refresh users.",
+        );
+      }
+    } finally {
+      if (silent) {
+        setRefreshing(false);
+      }
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -183,6 +215,7 @@ export default function UserManagement() {
           ? locationsData.puroks
           : [],
       );
+      setLastUpdated(new Date());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load users.");
     } finally {
@@ -191,7 +224,23 @@ export default function UserManagement() {
   };
 
   useEffect(() => {
-    loadData();
+    void loadData();
+
+    const timer = window.setInterval(
+      () => void refreshUsers(true),
+      5000,
+    );
+
+    const refreshOnFocus = () => {
+      void refreshUsers(true);
+    };
+
+    window.addEventListener("focus", refreshOnFocus);
+
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshOnFocus);
+    };
   }, []);
 
   const filteredUsers = useMemo(() => {
@@ -206,13 +255,35 @@ export default function UserManagement() {
 
       const matchesTab =
         activeTab === "all" ||
+        (activeTab === "pending" && user.status === "pending") ||
         (activeTab === "residents" && user.role === "resident") ||
         (activeTab === "collectors" && user.role === "collector") ||
         (activeTab === "leaders" && user.role === "purok_leader");
 
       return matchesSearch && matchesTab;
+    }).sort((a, b) => {
+      const pendingDifference =
+        Number(b.status === "pending") -
+        Number(a.status === "pending");
+
+      if (pendingDifference !== 0) {
+        return pendingDifference;
+      }
+
+      return (
+        new Date(b.created_at).getTime() -
+        new Date(a.created_at).getTime()
+      );
     });
   }, [users, searchTerm, activeTab]);
+
+  const pendingCount = useMemo(
+    () =>
+      users.filter(
+        (user) => user.status === "pending",
+      ).length,
+    [users],
+  );
 
   const visiblePuroks = useMemo(() => {
     const barangayId = Number(selectedBarangayId);
@@ -422,7 +493,77 @@ export default function UserManagement() {
   };
 
   return (
-    <div className="space-y-8 pb-20 md:pb-0">
+    <>
+      <style>{`
+        html.sg-dark .user-management-page [class~="bg-white"],
+        html.sg-dark .user-management-page [class~="bg-slate-50"],
+        html.sg-dark .user-management-page [class~="bg-slate-100"] {
+          background-color: #152033 !important;
+        }
+
+        html.sg-dark .user-management-page [class~="text-slate-900"],
+        html.sg-dark .user-management-page [class~="text-slate-800"],
+        html.sg-dark .user-management-page [class~="text-slate-700"],
+        html.sg-dark .user-management-page [class~="text-slate-600"] {
+          color: #e5edf7 !important;
+        }
+
+        html.sg-dark .user-management-page [class~="text-slate-500"],
+        html.sg-dark .user-management-page [class~="text-slate-400"] {
+          color: #a9b7ca !important;
+        }
+
+        html.sg-dark .user-management-page [class~="border-slate-100"],
+        html.sg-dark .user-management-page [class~="border-slate-200"] {
+          border-color: #344258 !important;
+        }
+
+        html.sg-dark .user-management-page input,
+        html.sg-dark .user-management-page select,
+        html.sg-dark .user-management-page textarea {
+          background-color: #0f1827 !important;
+          color: #f8fafc !important;
+          border-color: #46556c !important;
+        }
+
+        html.sg-dark .user-management-page input::placeholder,
+        html.sg-dark .user-management-page textarea::placeholder {
+          color: #8fa0b6 !important;
+        }
+
+        html.sg-dark .user-management-page [class~="bg-amber-50"] {
+          background-color: #2c2314 !important;
+          border-color: #8a5a16 !important;
+        }
+
+        html.sg-dark .user-management-page [class~="text-amber-700"],
+        html.sg-dark .user-management-page [class~="text-amber-800"] {
+          color: #fbd38d !important;
+        }
+
+        html.sg-dark .user-management-page [class~="bg-emerald-50"] {
+          background-color: #0e2c25 !important;
+        }
+
+        html.sg-dark .user-management-page [class~="text-emerald-700"],
+        html.sg-dark .user-management-page [class~="text-emerald-800"] {
+          color: #86efac !important;
+        }
+
+        html.sg-dark .user-management-page [class~="bg-rose-50"] {
+          background-color: #321820 !important;
+        }
+
+        html.sg-dark .user-management-page [class~="text-rose-700"] {
+          color: #fda4af !important;
+        }
+
+        html.sg-dark .user-management-page tbody tr:hover {
+          background-color: #1b293e !important;
+        }
+      `}</style>
+
+      <div className="user-management-page space-y-8 pb-20 md:pb-0">
       <header className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="mb-1 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-indigo-600">
@@ -434,7 +575,7 @@ export default function UserManagement() {
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             Manage Municipal, Barangay Captain, Purok Leader, Collector, and
-            Civilian accounts.
+            Resident accounts.
           </p>
         </div>
 
@@ -465,6 +606,19 @@ export default function UserManagement() {
               className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
             />
           </div>
+
+          <button
+            type="button"
+            onClick={() => void refreshUsers(true)}
+            className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-black uppercase text-slate-700"
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${
+                refreshing ? "animate-spin" : ""
+              }`}
+            />
+            Refresh
+          </button>
         </div>
       </header>
 
@@ -480,10 +634,37 @@ export default function UserManagement() {
         </div>
       )}
 
-      <div className="flex w-fit gap-2 rounded-2xl bg-slate-100 p-1">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+          <span className="relative flex h-2.5 w-2.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+          </span>
+          Live sync every 5 seconds
+          {lastUpdated && (
+            <span className="normal-case tracking-normal">
+              · {lastUpdated.toLocaleTimeString()}
+            </span>
+          )}
+        </div>
+
+        {pendingCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setActiveTab("pending")}
+            className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] font-black uppercase text-amber-700"
+          >
+            {pendingCount} Pending Account
+            {pendingCount === 1 ? "" : "s"}
+          </button>
+        )}
+      </div>
+
+      <div className="flex w-fit max-w-full gap-2 overflow-x-auto rounded-2xl bg-slate-100 p-1">
         {[
           { id: "all", label: "All Users" },
-          { id: "residents", label: "Civilians" },
+          { id: "pending", label: `Pending (${pendingCount})` },
+          { id: "residents", label: "Residents" },
           { id: "collectors", label: "Collectors" },
           { id: "leaders", label: "Purok Leaders" },
         ].map((tab) => (
@@ -608,7 +789,9 @@ export default function UserManagement() {
                             title={
                               user.status === "active"
                                 ? "Deactivate account"
-                                : "Activate account"
+                                : user.status === "pending"
+                                  ? "Approve and activate account"
+                                  : "Activate account"
                             }
                           >
                             {user.status === "active" ? (
@@ -857,7 +1040,7 @@ export default function UserManagement() {
                     }
                     className="w-full appearance-none rounded-xl border border-slate-200 bg-white p-3 pr-10"
                   >
-                    <option value="resident">Civilian</option>
+                    <option value="resident">Resident</option>
                     <option value="purok_leader">Purok Leader</option>
                     <option value="collector">Garbage Collector</option>
                   </select>
@@ -914,7 +1097,7 @@ export default function UserManagement() {
                 {selectedRole === "collector" &&
                   "The Garbage Collector will serve the selected barangay and receive assigned collection or complaint tasks."}
                 {selectedRole === "resident" &&
-                  "The account will return to Civilian access and retain its selected residential purok."}
+                  "The account will return to Resident access and retain its selected residential purok."}
               </div>
             </div>
 
@@ -938,6 +1121,7 @@ export default function UserManagement() {
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }
