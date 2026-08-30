@@ -1,5 +1,6 @@
 import { Router } from "express";
 import crypto from "crypto";
+import type { PoolConnection } from "mysql2/promise";
 import { db } from "../config/db.js";
 import {
   requireAuth,
@@ -22,6 +23,12 @@ const ALLOWED_CATEGORIES = new Set([
   "hazardous_disposal",
 ]);
 
+const CATEGORY_AMOUNTS: Record<string, number> = {
+  weekly_fee: 5,
+  special_heavy_trash: 80,
+  hazardous_disposal: 120,
+};
+
 const ALLOWED_METHODS = new Set([
   "gcash",
   "maya",
@@ -30,7 +37,7 @@ const ALLOWED_METHODS = new Set([
 
 function positiveInteger(value: unknown) {
   const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0
+  return Number.isSafeInteger(parsed) && parsed > 0
     ? parsed
     : null;
 }
@@ -77,8 +84,12 @@ function validateImageDataUrl(
   return proof;
 }
 
-async function getViewer(userId: number) {
-  const [rows] = await db.query<any[]>(
+async function getViewer(
+  userId: number,
+  executor: any = db,
+  forUpdate = false,
+) {
+  const [rows] = await executor.query(
     `
     SELECT
       id,
@@ -90,6 +101,7 @@ async function getViewer(userId: number) {
     WHERE id = ?
       AND status = 'active'
     LIMIT 1
+    ${forUpdate ? "FOR UPDATE" : ""}
     `,
     [userId],
   );
@@ -258,6 +270,8 @@ router.post(
     req: AuthRequest,
     res,
   ) => {
+    let connection: PoolConnection | null = null;
+
     try {
       const userId =
         positiveInteger(req.user?.id);
@@ -270,28 +284,11 @@ router.post(
         });
       }
 
-      const viewer =
-        await getViewer(userId);
-
-      if (
-        !viewer ||
-        viewer.role !== "resident"
-      ) {
+      if (req.user?.role !== "resident") {
         return res.status(403).json({
           success: false,
           message:
             "Only a resident can submit a payment.",
-        });
-      }
-
-      if (
-        !viewer.barangay_id ||
-        !viewer.purok_id
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Complete your barangay and purok assignment before paying.",
         });
       }
 
@@ -325,7 +322,7 @@ router.post(
             req.body.receipt_proof,
         );
 
-      const amount = Number(
+      const submittedAmount = Number(
         req.body.amount,
       );
 
@@ -334,6 +331,19 @@ router.post(
           success: false,
           message:
             "Select a valid payment category.",
+        });
+      }
+
+      const amount = CATEGORY_AMOUNTS[category];
+
+      if (
+        !Number.isFinite(submittedAmount) ||
+        Math.abs(submittedAmount - amount) > 0.001
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "The submitted amount does not match the official fee for this category.",
         });
       }
 
@@ -350,14 +360,12 @@ router.post(
       }
 
       if (
-        !billingPeriod ||
-        !Number.isFinite(amount) ||
-        amount <= 0
+        !billingPeriod
       ) {
         return res.status(400).json({
           success: false,
           message:
-            "A billing period and valid amount are required.",
+            "A billing period is required.",
         });
       }
 
@@ -380,11 +388,68 @@ router.post(
         });
       }
 
+      connection = await db.getConnection();
+
+      await connection.beginTransaction();
+
+      const viewer = await getViewer(
+        userId,
+        connection,
+        true,
+      );
+
+      if (
+        !viewer ||
+        viewer.role !== "resident"
+      ) {
+        await connection.rollback();
+        return res.status(403).json({
+          success: false,
+          message:
+            "Only a resident can submit a payment.",
+        });
+      }
+
+      if (
+        !viewer.barangay_id ||
+        !viewer.purok_id
+      ) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message:
+            "Complete your barangay and purok assignment before paying.",
+        });
+      }
+
+      const [locationRows] = await connection.query<any[]>(
+        `
+        SELECT p.id
+        FROM puroks p
+        INNER JOIN barangays b ON b.id = p.barangay_id
+        WHERE p.id = ?
+          AND p.barangay_id = ?
+          AND b.is_active = 1
+        LIMIT 1
+        FOR UPDATE
+        `,
+        [viewer.purok_id, viewer.barangay_id],
+      );
+
+      if (!locationRows[0]) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message:
+            "Your registered purok and barangay assignment is invalid.",
+        });
+      }
+
       const transactionCode =
         createTransactionCode();
 
       const [result] =
-        await db.execute<any>(
+        await connection.execute<any>(
           `
           INSERT INTO payments
           (
@@ -429,6 +494,8 @@ router.post(
           ],
         );
 
+      await connection.commit();
+
       return res.status(201).json({
         success: true,
         message:
@@ -437,6 +504,10 @@ router.post(
         transactionCode,
       });
     } catch (error: any) {
+      if (connection) {
+        await connection.rollback();
+      }
+
       if (
         error?.code ===
         "ER_DUP_ENTRY"
@@ -458,6 +529,8 @@ router.post(
         message:
           "Unable to submit the payment.",
       });
+    } finally {
+      connection?.release();
     }
   },
 );
@@ -487,7 +560,7 @@ router.patch(
         });
       }
 
-      const viewer =
+      let viewer =
         await getViewer(userId);
 
       if (
@@ -523,7 +596,34 @@ router.patch(
         });
       }
 
+      if (action === "reject" && remarks.length < 5) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Provide a short reason when rejecting a payment.",
+        });
+      }
+
       await connection.beginTransaction();
+
+      viewer = await getViewer(
+        userId,
+        connection,
+        true,
+      );
+
+      if (
+        !viewer ||
+        viewer.role !== "purok_leader" ||
+        !viewer.purok_id
+      ) {
+        await connection.rollback();
+        return res.status(403).json({
+          success: false,
+          message:
+            "Purok Leader access with an assigned purok is required.",
+        });
+      }
 
       const [rows] =
         await connection.query<any[]>(
@@ -555,7 +655,7 @@ router.patch(
         Number(viewer.purok_id)
       ) {
         await connection.rollback();
-        return res.status(403).json({
+        return res.status(404).json({
           success: false,
           message:
             "You can only review payments from your assigned purok.",
@@ -579,7 +679,7 @@ router.patch(
           ? "pending_remittance"
           : "rejected_by_leader";
 
-      await connection.execute(
+      const [result] = await connection.execute<any>(
         `
         UPDATE payments
         SET
@@ -588,6 +688,7 @@ router.patch(
           leader_verified_at = NOW(),
           leader_remarks = ?
         WHERE id = ?
+          AND status = 'pending_leader_verification'
         `,
         [
           nextStatus,
@@ -596,6 +697,15 @@ router.patch(
           paymentId,
         ],
       );
+
+      if (result.affectedRows !== 1) {
+        await connection.rollback();
+        return res.status(409).json({
+          success: false,
+          message:
+            "This payment was changed before the review could be saved.",
+        });
+      }
 
       await connection.commit();
 
@@ -650,7 +760,7 @@ router.patch(
         });
       }
 
-      const viewer =
+      let viewer =
         await getViewer(userId);
 
       if (
@@ -686,6 +796,25 @@ router.patch(
 
       await connection.beginTransaction();
 
+      viewer = await getViewer(
+        userId,
+        connection,
+        true,
+      );
+
+      if (
+        !viewer ||
+        viewer.role !== "purok_leader" ||
+        !viewer.purok_id
+      ) {
+        await connection.rollback();
+        return res.status(403).json({
+          success: false,
+          message:
+            "Purok Leader access with an assigned purok is required.",
+        });
+      }
+
       const [rows] =
         await connection.query<any[]>(
           `
@@ -716,7 +845,7 @@ router.patch(
         Number(viewer.purok_id)
       ) {
         await connection.rollback();
-        return res.status(403).json({
+        return res.status(404).json({
           success: false,
           message:
             "You can only remit payments from your assigned purok.",
@@ -735,7 +864,7 @@ router.patch(
         });
       }
 
-      await connection.execute(
+      const [result] = await connection.execute<any>(
         `
         UPDATE payments
         SET
@@ -744,6 +873,7 @@ router.patch(
           remittance_proof = ?,
           remitted_at = NOW()
         WHERE id = ?
+          AND status = 'pending_remittance'
         `,
         [
           reference,
@@ -751,6 +881,15 @@ router.patch(
           paymentId,
         ],
       );
+
+      if (result.affectedRows !== 1) {
+        await connection.rollback();
+        return res.status(409).json({
+          success: false,
+          message:
+            "This payment was changed before the remittance could be saved.",
+        });
+      }
 
       await connection.commit();
 
@@ -803,7 +942,7 @@ router.patch(
         });
       }
 
-      const viewer =
+      let viewer =
         await getViewer(userId);
 
       if (
@@ -860,7 +999,34 @@ router.patch(
         });
       }
 
+      if (action === "discrepancy" && remarks.length < 5) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Provide a short explanation for the discrepancy.",
+        });
+      }
+
       await connection.beginTransaction();
+
+      viewer = await getViewer(
+        userId,
+        connection,
+        true,
+      );
+
+      if (
+        !viewer ||
+        !["admin", "super_admin"].includes(viewer.role) ||
+        (viewer.role === "admin" && !viewer.barangay_id)
+      ) {
+        await connection.rollback();
+        return res.status(403).json({
+          success: false,
+          message:
+            "Barangay Admin access with an assigned barangay is required.",
+        });
+      }
 
       const [rows] =
         await connection.query<any[]>(
@@ -868,7 +1034,10 @@ router.patch(
           SELECT
             id,
             barangay_id,
-            status
+            amount,
+            status,
+            admin_remarks,
+            discrepancy_amount
           FROM payments
           WHERE id = ?
           FOR UPDATE
@@ -893,19 +1062,18 @@ router.patch(
           Number(viewer.barangay_id)
       ) {
         await connection.rollback();
-        return res.status(403).json({
+        return res.status(404).json({
           success: false,
           message:
             "You can only confirm remittances from your assigned barangay.",
         });
       }
 
-      if (
-        payment.status !==
-          "pending_admin_confirmation" &&
-        payment.status !==
-          "discrepancy"
-      ) {
+      const legalTransition =
+        payment.status === "pending_admin_confirmation" ||
+        (payment.status === "discrepancy" && action === "confirm");
+
+      if (!legalTransition) {
         await connection.rollback();
         return res.status(409).json({
           success: false,
@@ -914,12 +1082,24 @@ router.patch(
         });
       }
 
+      if (
+        action === "discrepancy" &&
+        Number.isFinite(Number(payment.amount)) &&
+        discrepancyAmount > Number(payment.amount)
+      ) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "Discrepancy cannot exceed the original payment amount.",
+        });
+      }
+
       const nextStatus: PaymentStatus =
         action === "confirm"
           ? "completed"
           : "discrepancy";
 
-      await connection.execute(
+      const [result] = await connection.execute<any>(
         `
         UPDATE payments
         SET
@@ -929,17 +1109,28 @@ router.patch(
           admin_remarks = ?,
           discrepancy_amount = ?
         WHERE id = ?
+          AND status = ?
         `,
         [
           nextStatus,
           viewer.id,
-          remarks || null,
+          remarks || payment.admin_remarks || null,
           action === "discrepancy"
             ? discrepancyAmount
-            : null,
+            : payment.discrepancy_amount ?? null,
           paymentId,
+          payment.status,
         ],
       );
+
+      if (result.affectedRows !== 1) {
+        await connection.rollback();
+        return res.status(409).json({
+          success: false,
+          message:
+            "This remittance changed before the review could be saved.",
+        });
+      }
 
       await connection.commit();
 

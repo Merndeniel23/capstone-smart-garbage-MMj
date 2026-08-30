@@ -7,8 +7,15 @@ import { Resend } from "resend";
 import { db } from "../config/db.js";
 import {
   requireAuth,
+  requireAuthenticatedAccount,
+  requireSessionAccount,
+  requireTemporaryPasswordAccount,
   type AuthRequest,
 } from "../middleware/auth.js";
+import {
+  getJwtSecret,
+  isStrongPassword,
+} from "../config/security.js";
 
 const router = Router();
 
@@ -16,9 +23,25 @@ const googleClient = new OAuth2Client(
   process.env.GOOGLE_CLIENT_ID,
 );
 
-const resend = new Resend(
-  process.env.RESEND_API_KEY,
-);
+function getResendClient() {
+  const apiKey = String(process.env.RESEND_API_KEY || "").trim();
+  return apiKey ? new Resend(apiKey) : null;
+}
+
+function getResendFromAddress() {
+  const configured = String(process.env.RESEND_FROM_EMAIL || "").trim();
+
+  // The Resend test sender works for local development. A deployed app must
+  // replace it with a sender from a verified domain.
+  if (
+    !configured ||
+    /YOUR-VERIFIED-SENDER|YOUR-DOMAIN|noreply@example\.com/i.test(configured)
+  ) {
+    return "Smart Garbage <onboarding@resend.dev>";
+  }
+
+  return configured;
+}
 
 function createToken(user: {
   id: number;
@@ -27,6 +50,8 @@ function createToken(user: {
   barangay_id?: number | null;
   purok_id?: number | null;
 }) {
+  const jwtSecret = getJwtSecret();
+
   return jwt.sign(
     {
       id: user.id,
@@ -37,8 +62,7 @@ function createToken(user: {
       purok_id:
         user.purok_id ?? null,
     },
-    process.env.JWT_SECRET ||
-      "change-me",
+    jwtSecret,
     {
       expiresIn: "12h",
     },
@@ -49,6 +73,78 @@ function normalizeEmail(value: unknown) {
   return String(value || "")
     .trim()
     .toLowerCase();
+}
+
+function isValidEmail(value: string) {
+  return value.length <= 150 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function escapeHtml(value: unknown) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function normalizePhilippinePhone(value: unknown) {
+  return String(value || "")
+    .trim()
+    .replace(/[\s()-]/g, "");
+}
+
+function isValidPhilippinePhone(value: string) {
+  return /^(?:09\d{9}|\+639\d{9})$/.test(value);
+}
+
+function createOtpHash(email: string, otp: string) {
+  const secret = getJwtSecret();
+
+  return crypto
+    .createHmac("sha256", secret)
+    .update(`${normalizeEmail(email)}:${otp}`)
+    .digest("hex");
+}
+
+function otpMatches(email: string, otp: string, storedHash: unknown) {
+  const expected = Buffer.from(createOtpHash(email, otp), "hex");
+  const actual = Buffer.from(String(storedHash || ""), "hex");
+
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+async function sendRegistrationVerificationEmail(
+  email: string,
+  fullName: string,
+  otp: string,
+) {
+  const client = getResendClient();
+
+  if (!client) {
+    return new Error("Email verification is not configured on the server.");
+  }
+
+  try {
+    const { error } = await client.emails.send({
+      from: getResendFromAddress(),
+      to: email,
+      subject: "Verify your Smart Garbage account",
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 520px; margin: auto;">
+          <h2>Verify your Smart Garbage account</h2>
+          <p>Hello ${escapeHtml(fullName)},</p>
+          <p>Your 6-digit email verification code is:</p>
+          <div style="font-size: 32px; font-weight: bold; letter-spacing: 8px;">${otp}</div>
+          <p>This code expires after 10 minutes. If you did not create this account, ignore this email.</p>
+        </div>
+      `,
+    });
+
+    return error ? new Error("Unable to send the verification email.") : null;
+  } catch {
+    return new Error("Unable to send the verification email.");
+  }
 }
 
 async function findPasswordResetUser(
@@ -165,7 +261,7 @@ router.post(
         req.body.password || "",
       );
 
-      if (!email || !password) {
+      if (!email || email.length > 150 || !password || password.length > 72) {
         return res.status(400).json({
           message:
             "Email and password are required.",
@@ -188,6 +284,7 @@ router.post(
             u.duty_latitude,
             u.duty_longitude,
             u.status,
+            u.must_change_password,
             b.name AS barangay_name,
             p.name AS purok_name
           FROM users u
@@ -240,6 +337,7 @@ router.post(
           "Login successful.",
         token,
         user,
+        mustChangePassword: Boolean(user.must_change_password),
         needsLocationSetup:
           user.role === "resident" &&
           (
@@ -293,6 +391,8 @@ router.post(
         req.body.phone || "",
       ).trim();
 
+      const normalizedPhone = normalizePhilippinePhone(phone);
+
       const address = String(
         req.body.address || "",
       ).trim();
@@ -304,11 +404,17 @@ router.post(
       if (
         !fullName ||
         !email ||
-        password.length < 8
+        !isStrongPassword(password)
       ) {
         return res.status(400).json({
           message:
-            "Full name, valid email, and password of at least 8 characters are required.",
+            "Full name, valid email, and a password with at least 8 characters, uppercase, lowercase, and a number are required.",
+        });
+      }
+
+      if (fullName.length > 150 || address.length > 255) {
+        return res.status(400).json({
+          message: "Full name or address is too long.",
         });
       }
 
@@ -316,6 +422,25 @@ router.post(
         return res.status(400).json({
           message:
             "Phone number and complete address are required.",
+        });
+      }
+
+      if (!isValidEmail(email)) {
+        return res.status(400).json({
+          message: "Enter a valid email address.",
+        });
+      }
+
+      if (!isValidPhilippinePhone(normalizedPhone)) {
+        return res.status(400).json({
+          message:
+            "Enter a valid Philippine mobile number (09XXXXXXXXX or +639XXXXXXXXX).",
+        });
+      }
+
+      if (!getResendClient()) {
+        return res.status(503).json({
+          message: "Email verification is not configured on the server.",
         });
       }
 
@@ -388,7 +513,7 @@ router.post(
             'resident',
             ?,
             ?,
-            'active'
+            'pending'
           )
           `,
           [
@@ -397,15 +522,47 @@ router.post(
             fullName,
             email,
             passwordHash,
-            phone,
+            normalizedPhone,
             address,
           ],
         );
 
+      const userId = Number(result.insertId);
+      const verificationOtp = String(crypto.randomInt(100000, 1000000));
+
+      await db.execute(
+        `
+        INSERT INTO email_verifications
+          (user_id, email, otp_hash, attempt_count, expires_at)
+        VALUES (?, ?, ?, 0, ?)
+        `,
+        [
+          userId,
+          email,
+          createOtpHash(email, verificationOtp),
+          new Date(Date.now() + 10 * 60 * 1000),
+        ],
+      );
+
+      const emailError = await sendRegistrationVerificationEmail(
+        email,
+        fullName,
+        verificationOtp,
+      );
+
+      if (emailError) {
+        await db.execute("DELETE FROM users WHERE id = ? AND status = 'pending'", [userId]);
+        return res.status(503).json({
+          message: "Unable to send the verification email. Please try again.",
+        });
+      }
+
       return res.status(201).json({
         message:
-          "Civilian account registered successfully.",
-        userId: result.insertId,
+          "Registration started. Check your email for the verification code.",
+        verificationRequired: true,
+        email,
+        userId,
         assignment: {
           barangay_id:
             selectedPurok.barangay_id,
@@ -440,6 +597,164 @@ router.post(
     }
   },
 );
+
+/**
+ * Confirm the email address used for a new public registration. Verification
+ * is deliberately separate from login so an unverified address cannot create
+ * an active account or access tenant data.
+ */
+router.post("/verify-registration-email", async (req, res) => {
+  const email = normalizeEmail(req.body.email);
+  const otp = String(req.body.otp || "").trim();
+
+  if (!isValidEmail(email) || !/^\d{6}$/.test(otp)) {
+    return res.status(400).json({
+      message: "A valid email and 6-digit verification code are required.",
+    });
+  }
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [userRows] = await connection.query<any[]>(
+      `
+      SELECT id, full_name, status, email_verified_at
+      FROM users
+      WHERE LOWER(email) = ?
+        AND role = 'resident'
+      LIMIT 1
+      FOR UPDATE
+      `,
+      [email],
+    );
+
+    const user = userRows[0];
+
+    if (!user || user.status !== "pending" || user.email_verified_at) {
+      await connection.rollback();
+      return res.status(400).json({ message: "Invalid or expired verification code." });
+    }
+
+    const [verificationRows] = await connection.query<any[]>(
+      `
+      SELECT id, otp_hash, attempt_count, expires_at
+      FROM email_verifications
+      WHERE user_id = ?
+        AND email = ?
+        AND verified_at IS NULL
+      ORDER BY id DESC
+      LIMIT 1
+      FOR UPDATE
+      `,
+      [user.id, email],
+    );
+
+    const verification = verificationRows[0];
+
+    if (
+      !verification ||
+      Number(verification.attempt_count || 0) >= 5 ||
+      new Date(verification.expires_at).getTime() <= Date.now()
+    ) {
+      await connection.rollback();
+      return res.status(400).json({ message: "Invalid or expired verification code." });
+    }
+
+    if (!otpMatches(email, otp, verification.otp_hash)) {
+      await connection.execute(
+        `UPDATE email_verifications SET attempt_count = attempt_count + 1 WHERE id = ?`,
+        [verification.id],
+      );
+      await connection.commit();
+      return res.status(400).json({ message: "Invalid or expired verification code." });
+    }
+
+    await connection.execute(
+      `UPDATE email_verifications SET verified_at = NOW() WHERE id = ? AND verified_at IS NULL`,
+      [verification.id],
+    );
+    await connection.execute(
+      `
+      UPDATE users
+      SET status = 'active', email_verified_at = NOW(), updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND status = 'pending' AND email_verified_at IS NULL
+      `,
+      [user.id],
+    );
+
+    await connection.commit();
+    return res.json({
+      message: "Email verified successfully. You can now sign in.",
+      email,
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error("Verify registration email error:", error);
+    return res.status(500).json({ message: "Unable to verify the email address." });
+  } finally {
+    connection.release();
+  }
+});
+
+router.post("/resend-registration-email", async (req, res) => {
+  const email = normalizeEmail(req.body.email);
+
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ message: "Enter a valid email address." });
+  }
+
+  try {
+    const [userRows] = await db.query<any[]>(
+      `SELECT id, full_name, status, email_verified_at FROM users WHERE LOWER(email) = ? AND role = 'resident' LIMIT 1`,
+      [email],
+    );
+    const user = userRows[0];
+
+    if (!user || user.status !== "pending" || user.email_verified_at) {
+      return res.json({ message: "If the account is awaiting verification, a new code has been sent." });
+    }
+
+    const [recentRows] = await db.query<any[]>(
+      `
+      SELECT created_at
+      FROM email_verifications
+      WHERE user_id = ?
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [user.id],
+    );
+    const recentCreatedAt = recentRows[0]?.created_at
+      ? new Date(recentRows[0].created_at).getTime()
+      : 0;
+
+    if (recentCreatedAt && Date.now() - recentCreatedAt < 60 * 1000) {
+      return res.status(429).json({
+        message: "Please wait before requesting another verification code.",
+      });
+    }
+
+    const otp = String(crypto.randomInt(100000, 1000000));
+    await db.execute("DELETE FROM email_verifications WHERE user_id = ?", [user.id]);
+    await db.execute(
+      `INSERT INTO email_verifications (user_id, email, otp_hash, attempt_count, expires_at) VALUES (?, ?, ?, 0, ?)`,
+      [user.id, email, createOtpHash(email, otp), new Date(Date.now() + 10 * 60 * 1000)],
+    );
+
+    const emailError = await sendRegistrationVerificationEmail(email, user.full_name, otp);
+
+    if (emailError) {
+      return res.status(503).json({ message: "Unable to send the verification email. Please try again." });
+    }
+
+    return res.json({ message: "If the account is awaiting verification, a new code has been sent." });
+  } catch (error) {
+    console.error("Resend registration email error:", error);
+    return res.status(500).json({ message: "Unable to resend the verification email." });
+  }
+});
 
 router.post(
   "/google",
@@ -736,7 +1051,7 @@ router.post(
 
 router.get(
   "/me",
-  requireAuth,
+  requireSessionAccount,
   async (
     req: AuthRequest,
     res,
@@ -757,6 +1072,7 @@ router.get(
             u.phone,
             u.address,
             u.status,
+            u.must_change_password,
             u.created_at
           FROM users u
           LEFT JOIN barangays b
@@ -796,7 +1112,7 @@ router.get(
 
 router.put(
   "/update-profile",
-  requireAuth,
+  requireAuthenticatedAccount,
   async (
     req: AuthRequest,
     res,
@@ -840,6 +1156,12 @@ router.put(
         return res.status(400).json({
           message:
             "Full name is required.",
+        });
+      }
+
+      if (fullName.length > 150 || submittedAddress.length > 255) {
+        return res.status(400).json({
+          message: "Full name or address is too long.",
         });
       }
 
@@ -1095,6 +1417,135 @@ router.put(
   },
 );
 
+router.put(
+  "/change-temporary-password",
+  requireTemporaryPasswordAccount,
+  async (req: AuthRequest, res) => {
+    const connection = await db.getConnection();
+
+    try {
+      const userId = Number(req.user?.id);
+      const currentPassword = String(req.body.currentPassword || "");
+      const newPassword = String(req.body.newPassword || "");
+      const confirmPassword = String(req.body.confirmPassword || "");
+
+      if (!Number.isInteger(userId) || userId <= 0) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required.",
+        });
+      }
+
+      if (!currentPassword || !newPassword || newPassword !== confirmPassword) {
+        return res.status(400).json({
+          success: false,
+          message: "Complete the password fields and ensure the new passwords match.",
+        });
+      }
+
+      if (!isStrongPassword(newPassword)) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Use 8-72 characters with uppercase, lowercase, and a number.",
+        });
+      }
+
+      await connection.beginTransaction();
+
+      const [rows] = await connection.query<any[]>(
+        `
+        SELECT id, password_hash, must_change_password
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+        FOR UPDATE
+        `,
+        [userId],
+      );
+
+      const user = rows[0];
+
+      if (!user) {
+        await connection.rollback();
+        return res.status(404).json({
+          success: false,
+          message: "Account was not found.",
+        });
+      }
+
+      if (!Boolean(user.must_change_password)) {
+        await connection.rollback();
+        return res.status(409).json({
+          success: false,
+          message: "This account no longer has a temporary password.",
+        });
+      }
+
+      const currentMatches = await bcrypt.compare(
+        currentPassword,
+        user.password_hash,
+      );
+
+      if (!currentMatches) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "Current temporary password is incorrect.",
+        });
+      }
+
+      if (await bcrypt.compare(newPassword, user.password_hash)) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "Choose a password different from the temporary password.",
+        });
+      }
+
+      const passwordHash = await bcrypt.hash(newPassword, 12);
+      const [result]: any = await connection.execute(
+        `
+        UPDATE users
+        SET
+          password_hash = ?,
+          must_change_password = 0,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND must_change_password = 1
+        `,
+        [passwordHash, userId],
+      );
+
+      if (Number(result.affectedRows) !== 1) {
+        await connection.rollback();
+        return res.status(409).json({
+          success: false,
+          message: "The temporary password was already changed.",
+        });
+      }
+
+      await connection.commit();
+
+      return res.json({
+        success: true,
+        mustChangePassword: false,
+        message: "Permanent password saved successfully.",
+      });
+    } catch (error) {
+      await connection.rollback();
+      console.error("Change temporary password error:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Unable to change the temporary password.",
+      });
+    } finally {
+      connection.release();
+    }
+  },
+);
+
 router.post(
   "/forgot-password",
   async (req, res) => {
@@ -1103,7 +1554,7 @@ router.post(
         req.body.email,
       );
 
-      if (!identifier) {
+      if (!identifier || identifier.length > 150) {
         return res.status(400).json({
           message:
             "Email is required.",
@@ -1123,9 +1574,9 @@ router.post(
       }
 
       if (user.status !== "active") {
-        return res.status(403).json({
+        return res.json({
           message:
-            "This account is inactive. Please contact an administrator.",
+            "If the account exists, an OTP has been sent to its registered email.",
         });
       }
 
@@ -1148,6 +1599,7 @@ router.post(
       const expiresAt = new Date(
         Date.now() + 10 * 60 * 1000,
       );
+      const otpHash = createOtpHash(accountEmail, otp);
 
       await db.execute(
         `
@@ -1162,14 +1614,15 @@ router.post(
         INSERT INTO password_resets
         (
           email,
-          otp,
+          otp_hash,
+          attempt_count,
           expires_at
         )
-        VALUES (?, ?, ?)
+        VALUES (?, ?, 0, ?)
         `,
         [
           accountEmail,
-          otp,
+          otpHash,
           expiresAt,
         ],
       );
@@ -1193,18 +1646,31 @@ router.post(
         });
       }
 
-      const { error } =
-        await resend.emails.send({
-          from:
-            process.env.RESEND_FROM_EMAIL ||
-            "Smart Garbage <onboarding@resend.dev>",
+      const resendClient = getResendClient();
+
+      if (!resendClient) {
+        await db.execute(
+          `DELETE FROM password_resets WHERE email = ?`,
+          [accountEmail],
+        );
+        return res.status(503).json({
+          message: "Password-reset email service is not configured.",
+        });
+      }
+
+      let emailError: unknown = null;
+
+      try {
+        const { error } =
+          await resendClient.emails.send({
+          from: getResendFromAddress(),
           to: recipientEmail,
           subject:
             "Smart Garbage Password Reset OTP",
           html: `
             <div style="font-family: Arial, sans-serif; max-width: 520px; margin: auto;">
               <h2>Smart Garbage Password Reset</h2>
-              <p>Hello ${user.full_name},</p>
+              <p>Hello ${escapeHtml(user.full_name)},</p>
               <p>Your 6-digit password reset OTP is:</p>
               <div style="font-size: 32px; font-weight: bold; letter-spacing: 8px;">
                 ${otp}
@@ -1213,12 +1679,16 @@ router.post(
               <p>If you did not request this reset, ignore this email.</p>
             </div>
           `,
-        });
+          });
+        emailError = error;
+      } catch (sendError) {
+        emailError = sendError;
+      }
 
-      if (error) {
+      if (emailError) {
         console.error(
           "Resend email error:",
-          error,
+          emailError,
         );
 
         await db.execute(
@@ -1267,6 +1737,7 @@ router.post(
 
       if (
         !identifier ||
+        identifier.length > 150 ||
         !/^\d{6}$/.test(otp)
       ) {
         return res.status(400).json({
@@ -1296,15 +1767,17 @@ router.post(
           SELECT
             id,
             email,
-            otp,
+            otp_hash,
+            attempt_count,
+            consumed_at,
             expires_at
           FROM password_resets
           WHERE email = ?
-            AND otp = ?
+            AND consumed_at IS NULL
           ORDER BY id DESC
           LIMIT 1
           `,
-          [accountEmail, otp],
+          [accountEmail],
         );
 
       const resetRequest =
@@ -1314,6 +1787,12 @@ router.post(
         return res.status(400).json({
           message:
             "Incorrect or expired OTP.",
+        });
+      }
+
+      if (Number(resetRequest.attempt_count || 0) >= 5) {
+        return res.status(429).json({
+          message: "Too many incorrect OTP attempts. Request a new code.",
         });
       }
 
@@ -1335,6 +1814,39 @@ router.post(
             "The OTP has expired. Request a new one.",
         });
       }
+
+      if (!otpMatches(accountEmail, otp, resetRequest.otp_hash)) {
+        const [attemptResult] = await db.execute<any>(
+          `
+          UPDATE password_resets
+          SET attempt_count = attempt_count + 1
+          WHERE id = ?
+            AND consumed_at IS NULL
+            AND attempt_count < 5
+          `,
+          [resetRequest.id],
+        );
+
+        if (Number(attemptResult.affectedRows) !== 1) {
+          return res.status(429).json({
+            message: "Too many incorrect OTP attempts. Request a new code.",
+          });
+        }
+
+        return res.status(400).json({
+          message: "Incorrect or expired OTP.",
+        });
+      }
+
+      await db.execute(
+        `
+        UPDATE password_resets
+        SET verified_at = NOW()
+        WHERE id = ?
+          AND consumed_at IS NULL
+        `,
+        [resetRequest.id],
+      );
 
       return res.json({
         message:
@@ -1372,6 +1884,7 @@ router.post(
 
       if (
         !identifier ||
+        identifier.length > 150 ||
         !/^\d{6}$/.test(otp)
       ) {
         return res.status(400).json({
@@ -1380,10 +1893,10 @@ router.post(
         });
       }
 
-      if (newPassword.length < 8) {
+      if (!isStrongPassword(newPassword)) {
         return res.status(400).json({
           message:
-            "The new password must contain at least 8 characters.",
+            "The new password must contain 8-72 characters with uppercase, lowercase, and a number.",
         });
       }
 
@@ -1407,14 +1920,18 @@ router.post(
           `
           SELECT
             id,
+            otp_hash,
+            attempt_count,
+            verified_at,
+            consumed_at,
             expires_at
           FROM password_resets
           WHERE email = ?
-            AND otp = ?
+            AND consumed_at IS NULL
           ORDER BY id DESC
           LIMIT 1
           `,
-          [accountEmail, otp],
+          [accountEmail],
         );
 
       const resetRequest =
@@ -1424,6 +1941,15 @@ router.post(
         return res.status(400).json({
           message:
             "Incorrect or expired OTP.",
+        });
+      }
+
+      if (
+        Number(resetRequest.attempt_count || 0) >= 5 ||
+        !otpMatches(accountEmail, otp, resetRequest.otp_hash)
+      ) {
+        return res.status(400).json({
+          message: "Incorrect or expired OTP.",
         });
       }
 
@@ -1446,6 +1972,12 @@ router.post(
         });
       }
 
+      if (!resetRequest.verified_at) {
+        return res.status(400).json({
+          message: "Verify the OTP before resetting the password.",
+        });
+      }
+
       const passwordHash =
         await bcrypt.hash(
           newPassword,
@@ -1457,6 +1989,25 @@ router.post(
 
       try {
         await connection.beginTransaction();
+
+        const [consumeResult] = await connection.execute<any>(
+          `
+          UPDATE password_resets
+          SET consumed_at = NOW()
+          WHERE id = ?
+            AND consumed_at IS NULL
+            AND verified_at IS NOT NULL
+            AND expires_at > NOW()
+          `,
+          [resetRequest.id],
+        );
+
+        if (Number(consumeResult.affectedRows) !== 1) {
+          await connection.rollback();
+          return res.status(409).json({
+            message: "This OTP has already been used or has expired.",
+          });
+        }
 
         await connection.execute(
           `
@@ -1470,14 +2021,6 @@ router.post(
             passwordHash,
             user.id,
           ],
-        );
-
-        await connection.execute(
-          `
-          DELETE FROM password_resets
-          WHERE email = ?
-          `,
-          [accountEmail],
         );
 
         await connection.commit();
@@ -1520,11 +2063,20 @@ router.get(
   ) => {
     try {
       if (
-        req.user?.role !== "admin"
+        String(req.user?.role || "").toLowerCase() !== "admin"
       ) {
         return res.status(403).json({
           message:
             "Barangay Captain access is required.",
+        });
+      }
+
+      const barangayId = Number(req.user?.barangay_id);
+
+      if (!Number.isInteger(barangayId) || barangayId <= 0) {
+        return res.status(403).json({
+          message:
+            "Your Barangay Captain account must be assigned to a barangay.",
         });
       }
 
@@ -1544,10 +2096,12 @@ router.get(
           FROM users
           WHERE role = 'collector'
             AND status = 'pending'
+            AND barangay_id = ?
           ORDER BY
             created_at DESC,
             id DESC
           `,
+          [barangayId],
         );
 
       return res.json({
@@ -1576,11 +2130,26 @@ router.patch(
   ) => {
     try {
       if (
-        req.user?.role !== "admin"
+        String(req.user?.role || "").toLowerCase() !== "admin"
       ) {
         return res.status(403).json({
           message:
             "Barangay Captain access is required.",
+        });
+      }
+
+      const reviewerId = Number(req.user?.id);
+      const barangayId = Number(req.user?.barangay_id);
+
+      if (
+        !Number.isInteger(reviewerId) ||
+        reviewerId <= 0 ||
+        !Number.isInteger(barangayId) ||
+        barangayId <= 0
+      ) {
+        return res.status(403).json({
+          message:
+            "Your Barangay Captain account must be assigned to a barangay.",
         });
       }
 
@@ -1615,8 +2184,49 @@ router.patch(
         });
       }
 
-      const [rows] =
-        await db.query<any[]>(
+      const nextStatus =
+        action === "approve"
+          ? "active"
+          : "inactive";
+
+      const connection = await db.getConnection();
+
+      try {
+        await connection.beginTransaction();
+
+        // Lock and re-check the reviewer so a simultaneous role, status, or
+        // tenant change cannot authorize a collector transition with stale
+        // request data.
+        const [reviewerRows] = await connection.query<any[]>(
+          `
+          SELECT
+            role,
+            status,
+            barangay_id
+          FROM users
+          WHERE id = ?
+          LIMIT 1
+          FOR UPDATE
+          `,
+          [reviewerId],
+        );
+
+        const reviewer = reviewerRows[0];
+
+        if (
+          !reviewer ||
+          String(reviewer.role || "").toLowerCase() !== "admin" ||
+          String(reviewer.status || "").toLowerCase() !== "active" ||
+          Number(reviewer.barangay_id) !== barangayId
+        ) {
+          await connection.rollback();
+          return res.status(403).json({
+            message:
+              "Barangay Captain access is required.",
+          });
+        }
+
+        const [rows] = await connection.query<any[]>(
           `
           SELECT
             id,
@@ -1627,59 +2237,69 @@ router.patch(
           FROM users
           WHERE id = ?
             AND role = 'collector'
+            AND barangay_id = ?
           LIMIT 1
+          FOR UPDATE
           `,
-          [collectorId],
+          [collectorId, barangayId],
         );
 
-      const collector =
-        rows[0];
+        const collector = rows[0];
 
-      if (!collector) {
-        return res.status(404).json({
+        if (!collector) {
+          await connection.rollback();
+          return res.status(404).json({
+            message:
+              "Collector account was not found.",
+          });
+        }
+
+        if (String(collector.status).toLowerCase() !== "pending") {
+          await connection.rollback();
+          return res.status(409).json({
+            message:
+              "This collector account has already been reviewed.",
+          });
+        }
+
+        const [updateResult] = await connection.execute<any>(
+          `
+          UPDATE users
+          SET status = ?
+          WHERE id = ?
+            AND role = 'collector'
+            AND barangay_id = ?
+            AND status = 'pending'
+          `,
+          [nextStatus, collectorId, barangayId],
+        );
+
+        if (Number(updateResult.affectedRows) !== 1) {
+          await connection.rollback();
+          return res.status(409).json({
+            message:
+              "This collector account has already been reviewed.",
+          });
+        }
+
+        await connection.commit();
+
+        return res.json({
           message:
-            "Collector account was not found.",
+            action === "approve"
+              ? "Garbage Collector account approved successfully."
+              : "Garbage Collector account rejected successfully.",
+          collector: {
+            ...collector,
+            status: nextStatus,
+          },
         });
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      } finally {
+        connection.release();
       }
-
-      if (
-        collector.status !==
-        "pending"
-      ) {
-        return res.status(409).json({
-          message:
-            "This collector account has already been reviewed.",
-        });
-      }
-
-      const nextStatus =
-        action === "approve"
-          ? "active"
-          : "inactive";
-
-      await db.execute(
-        `
-        UPDATE users
-        SET status = ?
-        WHERE id = ?
-          AND role = 'collector'
-        `,
-        [
-          nextStatus,
-          collectorId,
-        ],
-      );
-
-      return res.json({
-        message:
-          action === "approve"
-            ? "Garbage Collector account approved successfully."
-            : "Garbage Collector account rejected successfully.",
-        collector: {
-          ...collector,
-          status: nextStatus,
-        },
-      });
     } catch (error) {
       console.error(
         "Collector verification error:",

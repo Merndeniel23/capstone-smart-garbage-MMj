@@ -1,115 +1,139 @@
 # Smart Garbage Monitoring System
 
-A comprehensive, responsive, and highly interactive full-stack civic waste management platform. It bridges the gap between Households, Purok Leaders, and Waste Collectors to ensure real-time garbage bin tracking, seamless payment validation, official Barangay endorsements, and automated collection dispatches.
+A full-stack barangay waste-management application built with React, Express,
+TypeScript, and MySQL. Operational records are shared through the API rather
+than stored as browser-only mock data.
 
----
+## Main workflows
 
-## 🚀 Key Features
+- Residents register with a verified email address, maintain their address, view
+  collection schedules, file complaints, submit payment proof, request
+  endorsements, and track progress.
+- Purok Leaders inspect registered bins, review requests from their purok, and
+  endorse eligible resident certificates.
+- Collectors receive collection work, update collection runs and complaint
+  progress, and share an on-duty map location.
+- Barangay Captains manage their barangay's users, bins, schedules,
+  notifications, complaints, payments, endorsements, and reports.
+- Super Administrators view municipality-wide data and provision barangay
+  captains and truck crews.
+- Approved endorsement certificates receive a server-generated certificate
+  number and public high-entropy verification code.
 
-### 1. **Pickup Schedule & Live Timelines**
-- **Schedules Ledger**: Monitor community collection cycles and active routes.
-- **Smart Recommendations**: Real-time evaluation of communal bin fill rates that automatically offers dynamic system alerts (e.g., warning of critical overflow or confirmation of under-budget sanitary thresholds).
-- **Automated Reminders**: Push notification simulation 1 hour before scheduled collections start in the user's specific Purok zone.
+Every authenticated API request reloads the current account status, role, and
+location assignment from MySQL. Tenant-sensitive operations are restricted by
+barangay, purok, ownership, or collector assignment as appropriate.
 
-### 2. **Sanitation Concerns & Action Ledger**
-- **Report Hazards**: Households can log complaints (e.g., Overflowing Communal Barrels, Missed Pickups, Illegal Littering) with photos and precise landmarks.
-- **Interactive Tracking**: Transparent, multi-stage workflow showing assignments, collector dispatches, and leader resolutions.
+## In-app AI assistant
 
-### 3. **Digital Endorsement & Certificate Manager**
-- **Barangay clearances**: Residents can apply for Official Waste Compliance Certifications.
-- **Leader Board**: Purok Leaders can review, electronically endorse, and generate clean PDF-style certificates complete with watermarked security tags and official seals.
+The authenticated assistant is available from the chat button. Its Gemini
+client runs only on the server and receives a small, role-scoped context of
+operational aggregates (for example, schedules, bin conditions, and permitted
+status counts). Residents see their own records, Purok Leaders see their
+assigned purok, collectors see assigned work, Barangay Captains see their
+barangay, and Super Administrators see municipality-wide aggregates. It does
+not receive passwords, tokens, OTPs, API keys, or raw private records, and it
+refuses unrelated questions. Questions can be asked in English or Cebuano.
 
-### 4. **Civic Payment Portal**
-- **Billing History**: Securely view municipal garbage collection fees, monthly dues, and penalties.
-- **Secure Simulation**: Integrated GCash and Maya transaction pipelines with instant payment ledger updates upon admin verification.
+## Requirements
 
-### 5. **Interactive Garbage Route Map**
-- **Live Pin Mapping**: Real-time visual tracking of communal and residential pickup spots.
-- **Route Dispatcher**: Collectors can activate routes, calculate travel estimates, and verify collection points with photo-proof uploads.
+- Node.js 20 or newer
+- MySQL 8 or a compatible MySQL server
+- npm
 
----
+Google sign-in and the AI assistant are optional. Email delivery is required
+for new registrations and password recovery; configure Resend before exposing
+registration in a deployed environment.
 
-## 🛠️ Tech Stack
+## Local setup
 
-- **Frontend**: React 18 with TypeScript
-- **Styling**: Tailwind CSS (Utility-First)
-- **Icons**: Lucide React
-- **Animations**: Motion (framer-motion) for polished transitions
-- **Development Tooling**: Vite
+1. Install dependencies:
 
----
-
-## ⚙️ Running Locally
-
-Follow these steps to run the application on your local machine.
-
-### Prerequisites
-Make sure you have [Node.js](https://nodejs.org/) installed (v18+ recommended).
-
-### Installation
-
-1. **Clone the repository or extract the ZIP file**:
-   ```bash
-   git clone <your-repository-url>
-   cd smart-garbage-monitoring
-   ```
-
-2. **Install all dependencies**:
    ```bash
    npm install
    ```
 
-3. **Start the development server**:
+2. Copy `.env.example` to `.env`, then set the MySQL connection and a long,
+   random `JWT_SECRET` (at least 32 characters), plus `RESEND_API_KEY` and a
+   verified `RESEND_FROM_EMAIL` for registration verification:
+
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+3. Create or migrate the database. This command is idempotent and does not
+   reset passwords belonging to existing accounts:
+
+   ```bash
+   npm run db:setup
+   ```
+
+4. Start the application:
+
    ```bash
    npm run dev
    ```
-   Open `http://localhost:3000` in your browser to view the application.
 
-4. **Build for production**:
-   ```bash
-   npm run build
-   ```
-   This compiles the optimized production-ready bundle.
+5. Open `http://localhost:3001`.
 
----
+## Optional demo accounts
 
-## 📁 Project Structure
+Set `SEED_DEMO_DATA=true` only in a development environment, then rerun
+`npm run db:setup`. Missing demo accounts are created with password
+`password123`; existing account passwords are never overwritten.
+
+| Role | Email |
+| --- | --- |
+| Barangay Captain | `admin@barangay.gov` |
+| Purok Leader | `leader@barangay.gov` |
+| Collector | `collector@barangay.gov` |
+| Resident | `resident@example.com` |
+
+Do not enable demo seeding in production.
+
+## Initial Super Administrator
+
+Configure these environment variables with real, private values:
+
+- `SUPER_ADMIN_NAME`
+- `SUPER_ADMIN_EMAIL`
+- `SUPER_ADMIN_RECOVERY_EMAIL`
+- `SUPER_ADMIN_TEMP_PASSWORD`
+
+The temporary password must contain at least 12 characters, uppercase and
+lowercase letters, a number, and a symbol. Then run:
+
+```bash
+npm run create-super-admin
+```
+
+The command refuses to overwrite an existing account and prints a one-time
+offline recovery code. Store that code securely. The Super Administrator must
+replace the temporary password after the first login.
+
+## Validation and production
+
+```bash
+npm run lint
+npm run build
+npm start
+```
+
+`npm start` serves the built frontend and API from the configured `PORT`.
+Set `NODE_ENV=production` and explicitly configure `CORS_ORIGINS` for the
+deployed origin.
+
+## Project layout
 
 ```text
-├── src/
-│   ├── components/       # UI Components (Dashboards, MapView, Payments, etc.)
-│   ├── context/          # AppStateContext containing local storage sync & state
-│   ├── index.css         # Global Styles & Tailwind configuration
-│   ├── main.tsx          # App entry-point
-│   └── App.tsx           # Layout wrapper & main navigation
-├── package.json          # Dependency configurations & scripts
-└── tsconfig.json         # TypeScript configuration
+config/       MySQL connection
+middleware/   Authentication and request security
+routes/       Express API modules
+scripts/      Database setup and Super Administrator bootstrap
+src/          React application
+server.ts     Express and Vite/static server entry point
 ```
 
----
-
-*This system has been built and refined to support cleaner, greener, and more connected smart communities.*
-
-## Manual Purok Leader Bin Inspection Module
-
-The former sensor-based workflow has been replaced with physical inspections performed by a Purok Leader.
-
-### Features
-- Record bin ID, Purok, exact location, observed status, remarks, and optional photo evidence.
-- Status choices: Empty, Half-full, Full, Overflowing, and Damaged.
-- Full and Overflowing inspections automatically create collector notifications and collection requests.
-- Inspection history is visible to Purok Leaders and Administrators.
-- Records are persisted in the browser using localStorage for this prototype build.
-
-### Test accounts
-- Purok Leader: `leader@barangay.gov` / `password123`
-- Administrator: `admin@barangay.gov` / `password123`
-- Collector: `collector@barangay.gov` / `password123`
-- Household: `test@household.com` / `password123`
-
-### Run locally
-```bash
-npm install
-npm run dev
-```
-Then open `http://localhost:3000`.
+Important configuration defaults are documented in `.env.example`. Never
+commit the real `.env`, database credentials, JWT secret, API keys, recovery
+codes, or production passwords.

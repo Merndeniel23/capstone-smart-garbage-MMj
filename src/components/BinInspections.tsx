@@ -13,6 +13,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { useAppState } from '../context/AppStateContext';
 
 type DatabaseStatus =
   | 'empty'
@@ -41,12 +42,14 @@ interface InspectionForm {
   photoPath: string;
 }
 
-const API_URL = 'http://localhost:3001/api/inspections';
+const API_URL = '/api/inspections';
 
 function getToken(): string {
   return (
     localStorage.getItem('token') ||
     localStorage.getItem('authToken') ||
+    sessionStorage.getItem('token') ||
+    sessionStorage.getItem('authToken') ||
     ''
   );
 }
@@ -106,6 +109,8 @@ const statusLabel: Record<DatabaseStatus, string> = {
 };
 
 export default function BinInspections() {
+  const { userRole } = useAppState();
+  const canCreateInspection = userRole === 'leader';
   const [inspections, setInspections] = useState<InspectionRecord[]>([]);
   const [form, setForm] = useState<InspectionForm>(defaultForm);
   const [showForm, setShowForm] = useState(false);
@@ -289,23 +294,25 @@ export default function BinInspections() {
             Refresh
           </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setShowForm((previous) => !previous);
-              setError('');
-              setSuccessMessage('');
-            }}
-            className="flex items-center justify-center gap-2 bg-emerald-600 text-white px-5 py-3 rounded-2xl font-black text-sm border-none cursor-pointer shadow-lg shadow-emerald-600/20"
-          >
-            {showForm ? (
-              <X className="w-4 h-4" />
-            ) : (
-              <Plus className="w-4 h-4" />
-            )}
+          {canCreateInspection && (
+            <button
+              type="button"
+              onClick={() => {
+                setShowForm((previous) => !previous);
+                setError('');
+                setSuccessMessage('');
+              }}
+              className="flex items-center justify-center gap-2 bg-emerald-600 text-white px-5 py-3 rounded-2xl font-black text-sm border-none cursor-pointer shadow-lg shadow-emerald-600/20"
+            >
+              {showForm ? (
+                <X className="w-4 h-4" />
+              ) : (
+                <Plus className="w-4 h-4" />
+              )}
 
-            {showForm ? 'Close Form' : 'New Inspection'}
-          </button>
+              {showForm ? 'Close Form' : 'New Inspection'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -353,7 +360,7 @@ export default function BinInspections() {
         </div>
       </div>
 
-      {showForm && (
+      {canCreateInspection && showForm && (
         <form
           onSubmit={submitInspection}
           className="bg-white rounded-3xl border border-slate-100 shadow-xl p-6 space-y-4"

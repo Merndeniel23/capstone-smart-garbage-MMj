@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { 
   Award, 
   CheckCircle, 
@@ -24,7 +24,16 @@ type EndorsementType =
   | 'Barangay Clearance Support' 
   | 'Sanitary Clearance Support';
 
+type EndorsementStatus =
+  | 'Pending Leader Review'
+  | 'Purok Leader Endorsed'
+  | 'Bureau Approved'
+  | 'Rejected by Purok Leader'
+  | 'Rejected by Barangay Captain'
+  | 'Withdrawn';
+
 interface EndorsementRequest {
+  databaseId: number;
   id: string;
   householdName: string;
   purok: string;
@@ -38,15 +47,147 @@ interface EndorsementRequest {
   type: EndorsementType;
   date: string;
   description: string;
-  status: 'Pending Leader Review' | 'Purok Leader Endorsed' | 'Bureau Approved';
+  status: EndorsementStatus;
+  rawStatus:
+    | 'pending_leader_review'
+    | 'leader_endorsed'
+    | 'leader_rejected'
+    | 'approved'
+    | 'admin_rejected'
+    | 'withdrawn';
   adminMemo?: string;
+  leaderMemo?: string;
   issuedAt?: string;
+  certificateNumber?: string;
+  verificationCode?: string;
 }
 
-const INITIAL_ENDORSEMENTS: EndorsementRequest[] = [];
-
 interface EndorsementManagerProps {
-  role: 'household' | 'collector' | 'leader' | 'admin';
+  role:
+    | 'household'
+    | 'collector'
+    | 'leader'
+    | 'admin'
+    | 'super_admin';
+}
+
+function getToken() {
+  return (
+    localStorage.getItem('token') ||
+    sessionStorage.getItem('token') ||
+    localStorage.getItem('authToken') ||
+    sessionStorage.getItem('authToken') ||
+    ''
+  );
+}
+
+async function endorsementApi(
+  endpoint = '',
+  options: RequestInit = {},
+) {
+  const token = getToken();
+  const response = await fetch(
+    `/api/endorsements${endpoint}`,
+    {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token
+          ? { Authorization: `Bearer ${token}` }
+          : {}),
+        ...(options.headers || {}),
+      },
+    },
+  );
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      data.message || 'Endorsement request failed.',
+    );
+  }
+
+  return data;
+}
+
+function formatDate(value: unknown) {
+  const date = new Date(String(value || ''));
+
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function displayStatus(
+  value: EndorsementRequest['rawStatus'],
+): EndorsementStatus {
+  switch (value) {
+    case 'leader_endorsed':
+      return 'Purok Leader Endorsed';
+    case 'leader_rejected':
+      return 'Rejected by Purok Leader';
+    case 'approved':
+      return 'Bureau Approved';
+    case 'admin_rejected':
+      return 'Rejected by Barangay Captain';
+    case 'withdrawn':
+      return 'Withdrawn';
+    default:
+      return 'Pending Leader Review';
+  }
+}
+
+function mapEndorsement(row: any): EndorsementRequest {
+  const rawStatus = String(
+    row.status || 'pending_leader_review',
+  ) as EndorsementRequest['rawStatus'];
+
+  return {
+    databaseId: Number(row.id),
+    id: String(row.request_code || `END-${row.id}`),
+    householdName: String(
+      row.requester_name_snapshot || '',
+    ),
+    purok: String(row.purok_name_snapshot || ''),
+    barangay: String(
+      row.barangay_name_snapshot || '',
+    ),
+    address: String(
+      row.requester_address_snapshot || '',
+    ),
+    requesterEmail: String(
+      row.requester_email_snapshot || '',
+    ),
+    requesterPhone:
+      row.requester_phone_snapshot || undefined,
+    requesterAccountCode: `RES-${row.requester_id}`,
+    endorsedBy: row.leader_name_snapshot || undefined,
+    approvedBy: row.admin_name_snapshot || undefined,
+    type:
+      row.request_type === 'sanitary_clearance_support'
+        ? 'Sanitary Clearance Support'
+        : 'Barangay Clearance Support',
+    date: formatDate(row.created_at),
+    description: String(row.purpose || ''),
+    status: displayStatus(rawStatus),
+    rawStatus,
+    adminMemo: row.admin_remarks || undefined,
+    leaderMemo: row.leader_remarks || undefined,
+    issuedAt: row.issued_at
+      ? formatDate(row.issued_at)
+      : undefined,
+    certificateNumber:
+      row.certificate_number || undefined,
+    verificationCode:
+      row.verification_code || undefined,
+  };
 }
 
 export default function EndorsementManager({ role }: EndorsementManagerProps) {
@@ -137,179 +278,13 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
   const [profileLoading, setProfileLoading] =
     useState(role === 'household');
 
-  useEffect(() => {
-    if (displayName) {
-      setHouseholdName(displayName);
-    }
-  }, [displayName]);
-
-  useEffect(() => {
-    if (initialPurok) {
-      setPurok(initialPurok);
-    }
-
-    if (initialBarangay) {
-      setBarangay(initialBarangay);
-    }
-
-    if (initialAddress) {
-      setRegisteredAddress(initialAddress);
-    }
-
-    if (initialEmail) {
-      setRequesterEmail(initialEmail);
-    }
-
-    if (initialPhone) {
-      setRequesterPhone(initialPhone);
-    }
-
-    if (initialAccountCode) {
-      setRequesterAccountCode(initialAccountCode);
-    }
-  }, [
-    initialPurok,
-    initialBarangay,
-    initialAddress,
-    initialEmail,
-    initialPhone,
-    initialAccountCode,
-  ]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadRegisteredArea = async () => {
-      const token =
-        localStorage.getItem('token') ||
-        sessionStorage.getItem('token') ||
-        localStorage.getItem('authToken') ||
-        sessionStorage.getItem('authToken') ||
-        '';
-
-      if (!token) {
-        setProfileLoading(false);
-        return;
-      }
-
-      try {
-        const response = await fetch(
-          '/api/auth/me',
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          },
-        );
-
-        if (!response.ok) {
-          return;
-        }
-
-        const data = await response
-          .json()
-          .catch(() => ({}));
-
-        const user = data?.user || data || {};
-
-        if (cancelled) {
-          return;
-        }
-
-        const resolvedName =
-          user.full_name ||
-          user.name ||
-          displayName;
-
-        const resolvedPurok =
-          user.purok_name ||
-          user.purok ||
-          getPurokName(
-            user.communalZone || displayZone,
-          );
-
-        const resolvedBarangay =
-          user.barangay_name ||
-          user.barangay ||
-          getBarangayName(
-            user.communalZone || displayZone,
-          );
-
-        const resolvedAddress =
-          user.address ||
-          initialAddress;
-
-        const resolvedEmail =
-          user.email ||
-          initialEmail;
-
-        const resolvedPhone =
-          user.phone ||
-          initialPhone;
-
-        const resolvedAccountCode =
-          user.householdId ||
-          user.household_id ||
-          user.account_code ||
-          user.user_code ||
-          initialAccountCode;
-
-        if (resolvedName) {
-          setHouseholdName(resolvedName);
-        }
-
-        if (resolvedPurok) {
-          setPurok(resolvedPurok);
-        }
-
-        if (resolvedBarangay) {
-          setBarangay(resolvedBarangay);
-        }
-
-        if (resolvedAddress) {
-          setRegisteredAddress(resolvedAddress);
-        }
-
-        if (resolvedEmail) {
-          setRequesterEmail(resolvedEmail);
-        }
-
-        if (resolvedPhone) {
-          setRequesterPhone(resolvedPhone);
-        }
-
-        if (resolvedAccountCode) {
-          setRequesterAccountCode(
-            String(resolvedAccountCode),
-          );
-        }
-      } catch {
-        // Keep the profile information already stored in AppState.
-      } finally {
-        if (!cancelled) {
-          setProfileLoading(false);
-        }
-      }
-    };
-
-    void loadRegisteredArea();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    displayName,
-    displayZone,
-    initialAddress,
-    initialEmail,
-    initialPhone,
-    initialAccountCode,
-  ]);
-
   const selectedType: EndorsementType =
     'Barangay Clearance Support';
   const [desc, setDesc] = useState('');
   const [notification, setNotification] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [recordsLoading, setRecordsLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
   
   // Admin-specific processing states
   const [selectedRequest, setSelectedRequest] = useState<EndorsementRequest | null>(null);
@@ -319,121 +294,80 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
   // Printing/Certificate Modal reference
   const [activeCertificate, setActiveCertificate] = useState<EndorsementRequest | null>(null);
 
-  // Live Certificate customization states (replicates user-provided reference)
-  const [certRecipient, setCertRecipient] = useState('Corazon G. Tabucao');
-  const [certDesignation, setCertDesignation] = useState('Project Development Officer II');
-  const [certLocation, setCertLocation] = useState('Basey, Samar');
-  const [certCoResident, setCertCoResident] = useState('Richelle Barsana Gacus');
-  const [certApplicantName, setCertApplicantName] = useState('');
-  const [certGender, setCertGender] = useState('Male');
-  const [certCoGender, setCoGender] = useState('Female');
-  const [certCivilStatus, setCertCivilStatus] = useState('Single');
-  const [certCoCivilStatus, setCoCivilStatus] = useState('Single');
-  const [certNhaPurpose, setCertNhaPurpose] = useState('National Housing Authority (NHA) relocations');
-  const [certDay, setCertDay] = useState('14th');
-  const [certMonthYear, setCertMonthYear] = useState('April, 2026');
-  const [certChairmanName, setCertChairmanName] = useState('April Jhon De Atras');
-  const [certBarangayName, setCertBarangayName] = useState('Bang-bang');
-
-  useEffect(() => {
-    if (activeCertificate) {
-      setCertApplicantName(activeCertificate.householdName);
-
-      if (activeCertificate.barangay) {
-        setCertBarangayName(
-          activeCertificate.barangay,
-        );
+  const loadEndorsements = useCallback(
+    async (quiet = false) => {
+      if (!quiet) {
+        setRecordsLoading(true);
       }
-      // Pre-populate date details based on certificate issue date
-      const d = new Date(activeCertificate.issuedAt || activeCertificate.date);
-      if (!isNaN(d.getTime())) {
-        const day = d.getDate();
-        let suffix = 'th';
-        if (day === 1 || day === 21 || day === 31) suffix = 'st';
-        else if (day === 2 || day === 22) suffix = 'nd';
-        else if (day === 3 || day === 23) suffix = 'rd';
-        setCertDay(`${day}${suffix}`);
-        setCertMonthYear(d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }));
-      } else {
-        setCertDay('27th');
-        setCertMonthYear('May, 2026');
-      }
-      
-      // Auto-populate based on household name for co-residents
-      if (activeCertificate.householdName.toLowerCase().includes('echavia')) {
-        setCertCoResident('Echavia Family members');
-        setCertGender('Male');
-        setCoGender('Female');
-        setCertCivilStatus('Married');
-        setCoCivilStatus('Single');
-      } else if (activeCertificate.householdName.toLowerCase().includes('rallos')) {
-        setCertCoResident('Echavia Family');
-        setCertGender('Male');
-        setCoGender('Female');
-        setCertCivilStatus('Single');
-        setCoCivilStatus('Married');
-      } else {
-        setCertCoResident('Richelle Barsana Gacus');
-        setCertGender('Male');
-        setCoGender('Female');
-        setCertCivilStatus('Single');
-        setCoCivilStatus('Single');
-      }
-    }
-  }, [activeCertificate]);
 
-  useEffect(() => {
-    const demoIds = new Set([
-      'END-30219',
-      'END-40122',
-      'END-10492',
-      'END-78219',
-    ]);
-
-    const saved = localStorage.getItem(
-      'sg_endorsements',
-    );
-
-    if (saved) {
       try {
-        const parsed = JSON.parse(saved);
+        const data = await endorsementApi();
+        const viewer = data.viewer || {};
 
-        const cleaned = Array.isArray(parsed)
-          ? parsed.filter(
-              (item) =>
-                item &&
-                !demoIds.has(String(item.id)),
-            )
-          : [];
-
-        setEndorsements(cleaned);
-
-        localStorage.setItem(
-          'sg_endorsements',
-          JSON.stringify(cleaned),
+        setEndorsements(
+          Array.isArray(data.endorsements)
+            ? data.endorsements.map(mapEndorsement)
+            : [],
         );
-      } catch {
-        setEndorsements([]);
-        localStorage.setItem(
-          'sg_endorsements',
-          '[]',
+
+        setHouseholdName(
+          String(viewer.full_name || displayName),
         );
+        setPurok(
+          String(viewer.purok_name || initialPurok),
+        );
+        setBarangay(
+          String(
+            viewer.barangay_name || initialBarangay,
+          ),
+        );
+        setRegisteredAddress(
+          String(viewer.address || initialAddress),
+        );
+        setRequesterEmail(
+          String(viewer.email || initialEmail),
+        );
+        setRequesterPhone(
+          String(viewer.phone || initialPhone),
+        );
+        setRequesterAccountCode(
+          String(
+            viewer.account_code || initialAccountCode,
+          ),
+        );
+        setErrorMessage('');
+      } catch (error) {
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : 'Unable to load endorsements.',
+        );
+      } finally {
+        setRecordsLoading(false);
+        setProfileLoading(false);
       }
-    } else {
-      localStorage.setItem(
-        'sg_endorsements',
-        JSON.stringify(
-          INITIAL_ENDORSEMENTS,
-        ),
-      );
+    },
+    [
+      displayName,
+      initialAddress,
+      initialAccountCode,
+      initialBarangay,
+      initialEmail,
+      initialPhone,
+      initialPurok,
+    ],
+  );
 
-      setEndorsements(
-        INITIAL_ENDORSEMENTS,
-      );
-    }
-  }, []);
+  useEffect(() => {
+    void loadEndorsements();
+  }, [loadEndorsements]);
 
-  const handleRequest = (e: React.FormEvent) => {
+  const showNotification = (message: string) => {
+    setNotification(message);
+    window.setTimeout(() => setNotification(''), 4000);
+  };
+
+  const handleRequest = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!purok || !barangay) {
@@ -443,142 +377,132 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
       return;
     }
 
-    if (!desc.trim()) {
-      alert('Please describe your request justification.');
+    if (desc.trim().length < 10) {
+      alert('Please describe your request justification using at least 10 characters.');
       return;
     }
 
-    const newReq: EndorsementRequest = {
-      id: `END-${Math.floor(10000 + Math.random() * 90000)}`,
-      householdName: householdName.trim() || displayName,
-      purok,
-      barangay,
-      address: registeredAddress,
-      requesterEmail: requesterEmail || undefined,
-      requesterPhone: requesterPhone || undefined,
-      requesterAccountCode:
-        requesterAccountCode || undefined,
-      type: selectedType,
-      date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-      description: desc.trim(),
-      status: 'Pending Leader Review',
-    };
+    setActionLoading(true);
+    setErrorMessage('');
 
-    const updated = [newReq, ...endorsements];
-    setEndorsements(updated);
-    localStorage.setItem('sg_endorsements', JSON.stringify(updated));
-
-    setDesc('');
-    setNotification('Endorsement application submitted to your Purok Leader!');
-    setTimeout(() => setNotification(''), 4000);
-  };
-
-  const handleLeaderEndorse = (id: string) => {
-    const updated = endorsements.map((item) => {
-      if (item.id === id && item.status === 'Pending Leader Review') {
-        return {
-          ...item,
-          status: 'Purok Leader Endorsed' as const,
-          endorsedBy: displayName,
-        };
-      }
-      return item;
-    });
-    setEndorsements(updated);
-    localStorage.setItem('sg_endorsements', JSON.stringify(updated));
-    setNotification(`Successfully endorsed request ${id}! Authorized by Purok Leader.`);
-    
-    // Auto-update selected request in processing side panel if active
-    if (selectedRequest && selectedRequest.id === id) {
-      setSelectedRequest({
-        ...selectedRequest,
-        status: 'Purok Leader Endorsed',
-        endorsedBy: displayName,
+    try {
+      const data = await endorsementApi('', {
+        method: 'POST',
+        body: JSON.stringify({
+          requestType: selectedType,
+          purpose: desc.trim(),
+        }),
       });
+
+      setDesc('');
+      showNotification(data.message);
+      await loadEndorsements(true);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : 'Unable to submit the endorsement.',
+      );
+    } finally {
+      setActionLoading(false);
     }
-
-    setTimeout(() => setNotification(''), 4000);
   };
 
-  const handleAdminApprove = (id: string) => {
-    const updated = endorsements.map((item) => {
-      if (item.id === id) {
-        return { 
-          ...item, 
-          status: 'Bureau Approved' as const,
-          adminMemo: adminMemoInput.trim() || 'Approved municipal waste guidelines criteria met.',
-          approvedBy: displayName,
-          issuedAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-        };
-      }
-      return item;
-    });
-    setEndorsements(updated);
-    localStorage.setItem('sg_endorsements', JSON.stringify(updated));
-    setNotification(`Request ${id} officially certified & Sanitary/Barangay document generated!`);
+  const reviewRequest = async (
+    request: EndorsementRequest,
+    reviewer: 'leader' | 'admin',
+    action: 'endorse' | 'approve' | 'reject',
+  ) => {
+    setActionLoading(true);
+    setErrorMessage('');
 
-    // Complete review and reset
-    setSelectedRequest(null);
-    setAdminMemoInput('');
-    setTimeout(() => setNotification(''), 4000);
-  };
+    try {
+      const data = await endorsementApi(
+        `/${request.databaseId}/${reviewer}-review`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            action,
+            remarks: adminMemoInput.trim(),
+          }),
+        },
+      );
 
-  const handleDelete = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation(); // Avoid triggering inspection selects
-    const updated = endorsements.filter(item => item.id !== id);
-    setEndorsements(updated);
-    localStorage.setItem('sg_endorsements', JSON.stringify(updated));
-    
-    if (selectedRequest && selectedRequest.id === id) {
+      showNotification(data.message);
       setSelectedRequest(null);
+      setAdminMemoInput('');
+      await loadEndorsements(true);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : 'Unable to review the endorsement.',
+      );
+    } finally {
+      setActionLoading(false);
     }
-    
-    setNotification(`Deleted request ${id}`);
-    setTimeout(() => setNotification(''), 3000);
   };
 
-  const handleSimulateSandboxApproval = () => {
-    const firstNonApproved = endorsements.find(item => item.status !== 'Bureau Approved');
-    if (!firstNonApproved) {
-      const dReq: EndorsementRequest = {
-        id: `END-${Math.floor(10000 + Math.random() * 90000)}`,
-        householdName: householdName.trim() || displayName,
-        purok: purok || 'Unassigned Purok',
-        barangay: barangay || undefined,
-        address: registeredAddress || undefined,
-        type: 'Barangay Clearance Support',
-        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        description: 'Auto-generated sandbox request for testing certificate view.',
-        status: 'Bureau Approved',
-        adminMemo: 'Auto-approved in Sandbox Simulator Mode.',
-        issuedAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-      };
-      const updated = [dReq, ...endorsements];
-      setEndorsements(updated);
-      localStorage.setItem('sg_endorsements', JSON.stringify(updated));
-      setActiveCertificate(dReq);
-      setNotification('Sandbox Demo: Approved certificate created & opened!');
-    } else {
-      const updated = endorsements.map((item) => {
-        if (item.id === firstNonApproved.id) {
-          return {
-            ...item,
-            status: 'Bureau Approved' as const,
-            adminMemo: 'Sandbox Auto-approved for fast testing!',
-            issuedAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-          };
-        }
-        return item;
-      });
-      setEndorsements(updated);
-      localStorage.setItem('sg_endorsements', JSON.stringify(updated));
-      const approvedItem = updated.find(i => i.id === firstNonApproved.id);
-      if (approvedItem) {
-        setActiveCertificate(approvedItem);
-      }
-      setNotification('Sandbox Demo: Approved first request successfully & loaded certificate!');
+  const handleLeaderEndorse = (
+    request: EndorsementRequest,
+  ) => {
+    void reviewRequest(request, 'leader', 'endorse');
+  };
+
+  const handleAdminApprove = (
+    request: EndorsementRequest,
+  ) => {
+    void reviewRequest(request, 'admin', 'approve');
+  };
+
+  const handleReject = (
+    request: EndorsementRequest,
+    reviewer: 'leader' | 'admin',
+  ) => {
+    if (adminMemoInput.trim().length < 5) {
+      setErrorMessage(
+        'Enter a short review reason before rejecting the request.',
+      );
+      return;
     }
-    setTimeout(() => setNotification(''), 4000);
+
+    void reviewRequest(request, reviewer, 'reject');
+  };
+
+  const handleDelete = async (
+    request: EndorsementRequest,
+    e: React.MouseEvent,
+  ) => {
+    e.stopPropagation();
+
+    if (
+      !window.confirm(
+        `Withdraw request ${request.id}? The audit record will be retained.`,
+      )
+    ) {
+      return;
+    }
+
+    setActionLoading(true);
+    setErrorMessage('');
+
+    try {
+      const data = await endorsementApi(
+        `/${request.databaseId}`,
+        { method: 'DELETE' },
+      );
+
+      showNotification(data.message);
+      await loadEndorsements(true);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : 'Unable to withdraw the request.',
+      );
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   // Helper label styles
@@ -604,44 +528,6 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
   };
 
   const filteredEndorsements = endorsements.filter((item) => {
-    // Household sees only their own requests.
-    if (role === 'household') {
-      const isOwner =
-        (item.householdName || '').toLowerCase() === householdName.toLowerCase() ||
-        (item.householdName || '').toLowerCase() === displayName.toLowerCase() ||
-        (item.householdName || '').toLowerCase().includes(displayName.toLowerCase()) ||
-        (item.householdName || '').toLowerCase().includes(householdName.toLowerCase());
-
-      if (!isOwner) {
-        return false;
-      }
-    }
-
-    // Route requests automatically to the Purok Leader
-    // responsible for the resident's registered purok.
-    if (
-      role === 'leader' &&
-      purok &&
-      item.purok &&
-      item.purok.toLowerCase() !==
-        purok.toLowerCase()
-    ) {
-      return false;
-    }
-
-    // Barangay Captains are scoped to their barangay whenever
-    // the endorsement record contains structured barangay data.
-    if (
-      role === 'admin' &&
-      barangay &&
-      item.barangay &&
-      item.barangay.toLowerCase() !==
-        barangay.toLowerCase()
-    ) {
-      return false;
-    }
-
-    // Tab filters
     if (activeTab === 'pending_leader') return item.status === 'Pending Leader Review';
     if (activeTab === 'leader_endorsed') return item.status === 'Purok Leader Endorsed';
     if (activeTab === 'approved') return item.status === 'Bureau Approved';
@@ -651,6 +537,13 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
   const approvedDocs = filteredEndorsements.filter(item => item.status === 'Bureau Approved');
   const endorsedDocs = filteredEndorsements.filter(item => item.status === 'Purok Leader Endorsed');
+  const certificateBarangayName =
+    activeCertificate?.barangay ||
+    barangay ||
+    'Registered Barangay';
+  const certificateApproverName =
+    activeCertificate?.approvedBy ||
+    'Awaiting Barangay Captain';
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500 pb-20 md:pb-0">
@@ -746,6 +639,13 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
         </div>
       )}
 
+      {errorMessage && (
+        <div className="bg-rose-50 border border-rose-200 text-rose-800 px-6 py-4 rounded-[1.5rem] flex items-center gap-3 shadow-sm">
+          <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
+          <span className="text-sm font-bold">{errorMessage}</span>
+        </div>
+      )}
+
       {/* Main Multi-Grid Dashboard Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         
@@ -832,6 +732,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                   type="submit"
                   disabled={
                     profileLoading ||
+                    actionLoading ||
                     !purok ||
                     !barangay
                   }
@@ -840,7 +741,9 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                   <Plus className="w-4 h-4" />
                   {profileLoading
                     ? 'Loading Registered Area...'
-                    : 'Submit Official Request Form'}
+                    : actionLoading
+                      ? 'Submitting Request...'
+                      : 'Submit Official Request Form'}
                 </button>
               </form>
             </div>
@@ -896,19 +799,36 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                         <p className="text-xs text-emerald-800 font-medium leading-relaxed">
                           As <strong className="text-emerald-700">Purok Leader</strong>, you are certifying that this household actively participates in scheduled garbage assemblies and maintains acceptable hygiene ratings.
                         </p>
-                        <button
-                          onClick={() => {
-                            handleLeaderEndorse(selectedRequest.id);
-                          }}
-                          className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md shadow-emerald-700/10 active:scale-95 flex items-center justify-center gap-2"
-                        >
-                          <UserCheck className="w-4 h-4" />
-                          Sign and Endorse to Bureau Main Admin
-                        </button>
+                        <textarea
+                          value={adminMemoInput}
+                          onChange={(e) => setAdminMemoInput(e.target.value)}
+                          placeholder="Optional endorsement note; a reason is required when rejecting."
+                          rows={3}
+                          className="w-full p-3 bg-white border border-emerald-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            disabled={actionLoading}
+                            onClick={() => {
+                              handleLeaderEndorse(selectedRequest);
+                            }}
+                            className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md shadow-emerald-700/10 active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
+                          >
+                            <UserCheck className="w-4 h-4" />
+                            Endorse to Captain
+                          </button>
+                          <button
+                            disabled={actionLoading}
+                            onClick={() => handleReject(selectedRequest, 'leader')}
+                            className="px-4 py-3 bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold text-xs rounded-xl transition-all disabled:opacity-50"
+                          >
+                            Reject
+                          </button>
+                        </div>
                       </div>
                     )}
 
-                    {role === 'admin' && (
+                    {role === 'admin' && selectedRequest.status === 'Purok Leader Endorsed' && (
                       <div className="space-y-3">
                         <div className="space-y-1">
                           <label className="text-slate-500 font-extrabold text-[10px] uppercase tracking-wider block font-bold">Bureau Verification Memo (Optional)</label>
@@ -921,33 +841,38 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                           />
                         </div>
 
-                        {selectedRequest.status === 'Pending Leader Review' && (
-                          <div className="bg-amber-50 p-3 rounded-xl border border-amber-100 flex gap-2 items-start text-[10px] text-amber-800 font-medium leading-relaxed">
-                            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                            <div>
-                              <span><strong>Notice:</strong> This request has not been endorsed by the local Purok Leader yet. Main admin may bypass and force issue document directly.</span>
-                            </div>
-                          </div>
-                        )}
-
                         <div className="flex gap-2">
                           <button
                             type="button"
-                            onClick={() => handleAdminApprove(selectedRequest.id)}
-                            className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-lg shadow-indigo-600/10 cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-1.5"
+                            disabled={actionLoading}
+                            onClick={() => handleAdminApprove(selectedRequest)}
+                            className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-lg shadow-indigo-600/10 cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
                           >
                             <ShieldCheck className="w-4 h-4" />
                             Issue Official Clearance
                           </button>
-                          
                           <button
                             type="button"
-                            onClick={() => setSelectedRequest(null)}
-                            className="px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-500 font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center"
+                            disabled={actionLoading}
+                            onClick={() => handleReject(selectedRequest, 'admin')}
+                            className="px-4 py-3 bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center disabled:opacity-50"
                           >
-                            Cancel
+                            Reject
                           </button>
                         </div>
+                      </div>
+                    )}
+
+                    {role === 'admin' && selectedRequest.status === 'Pending Leader Review' && (
+                      <div className="bg-amber-50 p-3 rounded-xl border border-amber-100 flex gap-2 items-start text-[10px] text-amber-800 font-medium leading-relaxed">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <span>This request must be endorsed by its assigned Purok Leader before Barangay Captain review.</span>
+                      </div>
+                    )}
+
+                    {(role === 'super_admin' || role === 'collector') && (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-[10px] font-bold text-slate-500">
+                        Read-only oversight. Workflow actions are limited to the assigned Purok Leader and Barangay Captain.
                       </div>
                     )}
 
@@ -984,7 +909,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                   Your Barangay Clearance / Sanitary Support form is ready!
                 </p>
                 <p className="text-xs text-slate-500 leading-relaxed font-medium">
-                  Signed and officially issued by Barangay Captain <strong>{certChairmanName}</strong>. You can view, download, or print it now.
+                  Signed and officially issued by Barangay Captain <strong>{approvedDocs[0].approvedBy}</strong>. You can view, download, or print it now.
                 </p>
               </div>
               <button 
@@ -1028,7 +953,13 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
           {/* Filtering tabs */}
           <div className="flex flex-col sm:flex-row gap-3 sm:items-center justify-between">
             <h2 className="text-lg font-black text-slate-800">
-              {role === 'household' ? 'Your Active Applications' : 'Global Received Submissions'}
+              {role === 'household'
+                ? 'Your Applications'
+                : role === 'leader'
+                  ? 'Assigned Purok Submissions'
+                  : role === 'admin'
+                    ? 'Barangay Submissions'
+                    : 'Global Endorsement Oversight'}
             </h2>
             
             <div className="flex p-0.5 bg-slate-100 rounded-xl max-w-fit overflow-x-auto">
@@ -1069,6 +1000,12 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
           {/* Endorsement list rendering */}
           <div className="space-y-4">
+            {recordsLoading && (
+              <div className="bg-white border border-slate-100 p-8 text-center rounded-[2rem] text-sm font-bold text-slate-400">
+                Loading endorsement registry...
+              </div>
+            )}
+
             {filteredEndorsements.map((item) => (
               <div 
                 key={item.id} 
@@ -1152,20 +1089,23 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       </button>
                     )}
 
-                    <button
-                      onClick={(e) => handleDelete(item.id, e)}
-                      className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
-                      title="Remove record"
-                    >
-                      <Trash2 className="w-4.5 h-4.5" />
-                    </button>
+                    {role === 'household' && item.status === 'Pending Leader Review' && (
+                      <button
+                        disabled={actionLoading}
+                        onClick={(e) => void handleDelete(item, e)}
+                        className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all disabled:opacity-50"
+                        title="Withdraw request"
+                      >
+                        <Trash2 className="w-4.5 h-4.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
               </div>
             ))}
 
-            {filteredEndorsements.length === 0 && (
+            {!recordsLoading && filteredEndorsements.length === 0 && (
               <div className="bg-slate-50 border-2 border-dashed border-slate-200 p-12 text-center rounded-[2.5rem]">
                 <FileText className="w-12 h-12 text-slate-300 mx-auto mb-2" />
                 <p className="font-extrabold text-slate-500 text-sm">No Clearance Records</p>
@@ -1222,10 +1162,18 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
                     <div className="space-y-4 flex-1 overflow-y-auto pr-1">
                       <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 space-y-3">
-                        <span className="text-[9px] uppercase tracking-wider text-slate-500 font-black">DOCUMENT TRACKING CODE</span>
+                        <span className="text-[9px] uppercase tracking-wider text-slate-500 font-black">Certificate / Request Number</span>
                         <div className="font-mono text-[9.5px] text-emerald-400 break-all bg-black/40 p-2.5 rounded-lg border border-emerald-950/40 font-bold select-all">
-                          SG-DOC-{activeCertificate.id}-{activeCertificate.householdName.substring(0, Math.min(3, activeCertificate.householdName.length)).toUpperCase()}-{activeCertificate.purok.replace(' ', '')}
+                          {activeCertificate.certificateNumber || activeCertificate.id}
                         </div>
+                        {activeCertificate.verificationCode && (
+                          <div className="space-y-1">
+                            <span className="text-[9px] uppercase tracking-wider text-slate-500 font-black">Public Verification Code</span>
+                            <div className="font-mono text-[9px] text-sky-300 break-all select-all">
+                              {activeCertificate.verificationCode}
+                            </div>
+                          </div>
+                        )}
                         <div className="flex items-center gap-1.5 text-[10px] text-slate-350 font-medium font-sans">
                           <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0 font-sans" />
                           <span>Secured Sangguniang database seal</span>
@@ -1237,7 +1185,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                         <ul className="text-slate-350 text-[11px] space-y-1.5 list-disc pl-4 leading-relaxed font-normal">
                           <li>You can print or download this endorsement by clicking the button below or pressing <kbd className="px-1 py-0.5 bg-slate-950 text-white rounded text-[9px] border border-slate-850 font-mono">Ctrl + P</kbd> on your computer.</li>
                           <li>Keep the approved copy for your barangay waste-compliance or clearance transaction.</li>
-                          <li>Verifiable at any time via municipal scanning terminals.</li>
+                          <li>Verify an approved copy through <code>/api/endorsements/verify/&lt;verification-code&gt;</code>.</li>
                         </ul>
                       </div>
 
@@ -1416,22 +1364,21 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                         <path id="brgy-curve-top" d="M 17,50 A 33,33 0 0,1 83,50" fill="none" />
                         <text className="text-[6.5px] font-sans font-black tracking-widest uppercase" fill="currentColor">
                           <textPath href="#brgy-curve-top" startOffset="50%" textAnchor="middle">
-                            BARANGAY {certBarangayName.toUpperCase()}
+                            BARANGAY {certificateBarangayName.toUpperCase()}
                           </textPath>
                         </text>
                         <path id="brgy-curve-bottom" d="M 83,50 A 33,33 0 0,1 17,50" fill="none" />
                         <text className="text-[5.5px] font-sans font-extrabold tracking-[0.16em] uppercase" fill="currentColor">
                           <textPath href="#brgy-curve-bottom" startOffset="50%" textAnchor="middle">
-                            • SAMAR PHILIPPINES •
+                            REPUBLIC OF THE PHILIPPINES
                           </textPath>
                         </text>
                       </svg>
 
                       <div className="text-center font-sans">
                         <p className="text-[11px] uppercase tracking-wide text-slate-500 font-medium">Republic of the Philippines</p>
-                        <p className="text-xs text-slate-600 font-semibold leading-tight">Province of Samar</p>
-                        <p className="text-xs text-slate-600 font-semibold leading-tight">Municipality of Basey</p>
-                        <p className="text-sm font-extrabold text-slate-900 uppercase tracking-wider mt-0.5">BARANGAY {certBarangayName.toUpperCase()}</p>
+                        <p className="text-xs text-slate-600 font-semibold leading-tight">Smart Garbage Monitoring System</p>
+                        <p className="text-sm font-extrabold text-slate-900 uppercase tracking-wider mt-0.5">BARANGAY {certificateBarangayName.toUpperCase()}</p>
                       </div>
 
                       {/* Spacer offset for symmetry if logo is displayed */}
@@ -1517,8 +1464,15 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                     )}
 
                     <p className="indent-8">
-                      Issued/recorded on <span className="font-sans font-bold">{activeCertificate.issuedAt || activeCertificate.date}</span> at Barangay {activeCertificate.barangay || certBarangayName}.
+                      Issued/recorded on <span className="font-sans font-bold">{activeCertificate.issuedAt || activeCertificate.date}</span> at Barangay {activeCertificate.barangay || certificateBarangayName}.
                     </p>
+
+                    {activeCertificate.certificateNumber && activeCertificate.verificationCode && (
+                      <p className="border-t border-slate-200 pt-3 text-[10px] font-sans text-slate-600">
+                        Certificate No. <strong>{activeCertificate.certificateNumber}</strong><br />
+                        Verification Code: <strong className="font-mono">{activeCertificate.verificationCode}</strong>
+                      </p>
+                    )}
                   </div>
 
                   {/* ENDORSER SIGNATURE CARD */}
@@ -1546,7 +1500,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                           <>
                             <span className="text-xs text-emerald-600 font-serif font-bold italic block leading-none">✓ Official Digitally Signed</span>
                             <strong className="text-xs md:text-sm text-slate-950 font-extrabold tracking-wide uppercase block border-b-2 border-slate-950 pb-0.5">
-                              HON. {(activeCertificate.approvedBy || certChairmanName).toUpperCase()}
+                              HON. {certificateApproverName.toUpperCase()}
                             </strong>
                             <span className="text-[10px] md:text-xs font-black uppercase tracking-wider text-slate-500 block font-sans">
                               Barangay Captain
@@ -1556,7 +1510,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                           <>
                             <span className="text-xs text-amber-600 font-serif font-medium italic block leading-none">⌛ Awaiting Admin Review</span>
                             <strong className="text-xs md:text-sm text-slate-400 font-bold tracking-wide uppercase block border-b-2 border-slate-200 pb-0.5">
-                              HON. {(activeCertificate.approvedBy || certChairmanName).toUpperCase()}
+                              HON. {certificateApproverName.toUpperCase()}
                             </strong>
                             <span className="text-[10px] md:text-xs font-black uppercase tracking-wider text-slate-300 block font-sans">
                               Barangay Captain

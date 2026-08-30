@@ -20,9 +20,15 @@ type DatabaseUser = {
   role: string;
   purok_id: number | null;
   barangay_id: number | null;
-  full_name: string;
   email: string;
   status: string;
+};
+
+type ComplaintScopeRecord = {
+  reported_by: number;
+  assigned_collector_id: number | null;
+  purok_id: number;
+  barangay_id: number | null;
 };
 
 function normalizeRole(role?: string): string {
@@ -41,6 +47,10 @@ function isAdmin(role?: string): boolean {
   const value = normalizeRole(role);
 
   return value === "admin" || value === "super_admin";
+}
+
+function isSuperAdmin(role?: string): boolean {
+  return normalizeRole(role) === "super_admin";
 }
 
 function isCollector(role?: string): boolean {
@@ -92,38 +102,59 @@ function normalizeStatus(
 }
 
 /**
- * Always load the current role and location from MySQL.
- *
- * This avoids stale JWT data after the Barangay Captain promotes
- * or reassigns an account.
+ * Authentication middleware has already reloaded this account from MySQL,
+ * so authorization uses its fresh role, tenant, and status values directly.
  */
-async function getCurrentDatabaseUser(
+function getCurrentDatabaseUser(
   req: AuthRequest,
-): Promise<DatabaseUser | null> {
+): DatabaseUser | null {
   const userId = parsePositiveInteger(
     req.user?.id,
   );
 
   if (!userId) return null;
 
-  const [rows]: any = await db.query(
-    `
-    SELECT
-      id,
-      role,
-      purok_id,
-      barangay_id,
-      full_name,
-      email,
-      status
-    FROM users
-    WHERE id = ?
-    LIMIT 1
-    `,
-    [userId],
-  );
+  return {
+    id: userId,
+    role: normalizeRole(req.user?.role),
+    purok_id: parsePositiveInteger(req.user?.purok_id),
+    barangay_id: parsePositiveInteger(req.user?.barangay_id),
+    email: String(req.user?.email || ""),
+    status: String(req.user?.status || ""),
+  };
+}
 
-  return rows[0] || null;
+function canAccessComplaint(
+  viewer: DatabaseUser,
+  complaint: ComplaintScopeRecord,
+): boolean {
+  const role = normalizeRole(viewer.role);
+
+  if (isSuperAdmin(role)) return true;
+
+  if (role === "admin") {
+    return (
+      viewer.barangay_id !== null &&
+      complaint.barangay_id !== null &&
+      Number(complaint.barangay_id) === viewer.barangay_id
+    );
+  }
+
+  if (isPurokLeader(role)) {
+    return (
+      viewer.purok_id !== null &&
+      Number(complaint.purok_id) === viewer.purok_id
+    );
+  }
+
+  if (isCollector(role)) {
+    return Number(complaint.assigned_collector_id) === viewer.id;
+  }
+
+  return (
+    isResident(role) &&
+    Number(complaint.reported_by) === viewer.id
+  );
 }
 
 router.get(
@@ -185,7 +216,24 @@ router.get(
         whereClause =
           "WHERE c.reported_by = ?";
         parameters.push(viewer.id);
-      } else if (!isAdmin(role)) {
+      } else if (role === "admin") {
+        const barangayId =
+          parsePositiveInteger(
+            viewer.barangay_id,
+          );
+
+        if (!barangayId) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Your Barangay Captain account has no assigned barangay.",
+          });
+        }
+
+        whereClause =
+          "WHERE p.barangay_id = ?";
+        parameters.push(barangayId);
+      } else if (!isSuperAdmin(role)) {
         return res.status(403).json({
           success: false,
           message:
@@ -392,6 +440,14 @@ router.post(
         });
       }
 
+      if (!isResident(viewer.role)) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Only residents can submit complaints.",
+        });
+      }
+
       const complaintType =
         String(
           req.body.complaint_type ||
@@ -413,12 +469,35 @@ router.post(
           "",
       ).trim();
 
+      if (complaintType.length > 120 || description.length > 5000) {
+        return res.status(400).json({
+          success: false,
+          message: "Complaint type or description is too long.",
+        });
+      }
+
+      if (phone.length > 30 || photoUrl.length > 255) {
+        return res.status(400).json({
+          success: false,
+          message: "Contact number or photo reference is too long.",
+        });
+      }
+
+      if (photoUrl && !/^(?:https?:\/\/|data:image\/)/i.test(photoUrl)) {
+        return res.status(400).json({
+          success: false,
+          message: "Photo reference must be an HTTPS URL or image data.",
+        });
+      }
+
       const purokId =
         parsePositiveInteger(
           viewer.purok_id,
-        ) ||
+        );
+
+      const barangayId =
         parsePositiveInteger(
-          req.body.purok_id,
+          viewer.barangay_id,
         );
 
       if (
@@ -432,11 +511,11 @@ router.post(
         });
       }
 
-      if (!purokId) {
+      if (!purokId || !barangayId) {
         return res.status(400).json({
           success: false,
           message:
-            "A valid purok is required for this complaint.",
+            "Complete your registered barangay and purok before submitting a complaint.",
         });
       }
 
@@ -445,12 +524,13 @@ router.post(
       const [purokRows]: any =
         await connection.query(
           `
-          SELECT id
+          SELECT id, barangay_id
           FROM puroks
           WHERE id = ?
+            AND barangay_id = ?
           LIMIT 1
           `,
-          [purokId],
+          [purokId, barangayId],
         );
 
       if (!purokRows[0]) {
@@ -459,7 +539,7 @@ router.post(
         return res.status(404).json({
           success: false,
           message:
-            "The selected purok was not found.",
+            "Your registered purok does not belong to your barangay.",
         });
       }
 
@@ -593,13 +673,17 @@ router.put(
           `
           SELECT
             c.id,
+            c.reported_by,
             c.purok_id,
+            c.assigned_collector_id,
+            c.status,
             p.barangay_id
           FROM complaints c
           LEFT JOIN puroks p
             ON p.id = c.purok_id
           WHERE c.id = ?
           LIMIT 1
+          FOR UPDATE
           `,
           [complaintId],
         );
@@ -614,6 +698,26 @@ router.put(
           success: false,
           message:
             "Complaint was not found.",
+        });
+      }
+
+      if (!canAccessComplaint(viewer, complaint)) {
+        await connection.rollback();
+
+        return res.status(404).json({
+          success: false,
+          message:
+            "Complaint was not found in your barangay.",
+        });
+      }
+
+      if (!["pending", "assigned"].includes(String(complaint.status))) {
+        await connection.rollback();
+
+        return res.status(409).json({
+          success: false,
+          message:
+            "Only a pending or not-yet-started complaint can be assigned.",
         });
       }
 
@@ -672,14 +776,10 @@ router.put(
        * from another barangay.
        */
       if (
-        collector.barangay_id &&
-        complaint.barangay_id &&
-        Number(
-          collector.barangay_id,
-        ) !==
-          Number(
-            complaint.barangay_id,
-          )
+        !complaint.barangay_id ||
+        !collector.barangay_id ||
+        Number(collector.barangay_id) !==
+          Number(complaint.barangay_id)
       ) {
         await connection.rollback();
 
@@ -702,8 +802,7 @@ router.put(
             completed_at = NULL,
             resolved_at = NULL
           WHERE id = ?
-            AND status NOT IN
-              ('resolved', 'cancelled')
+            AND status IN ('pending', 'assigned')
           `,
           [
             collectorId,
@@ -810,33 +909,65 @@ router.put(
       );
 
       if (
-        isCollector(role) &&
-        ![
-          "in_progress",
-          "completed",
-        ].includes(status)
+        !isCollector(role) ||
+        !["in_progress", "completed"].includes(status)
       ) {
         return res.status(403).json({
           success: false,
           message:
-            "Collectors may only start or complete assigned complaints.",
-        });
-      }
-
-      if (
-        !isCollector(role) &&
-        !isAdmin(role)
-      ) {
-        return res.status(403).json({
-          success: false,
-          message:
-            "You are not allowed to update complaint status.",
+            "Only the assigned collector can start or complete a complaint.",
         });
       }
 
       await connection.beginTransaction();
 
-      let query = `
+      const [complaintRows]: any = await connection.query(
+        `
+        SELECT
+          c.id,
+          c.reported_by,
+          c.purok_id,
+          c.assigned_collector_id,
+          c.status,
+          p.barangay_id
+        FROM complaints c
+        LEFT JOIN puroks p ON p.id = c.purok_id
+        WHERE c.id = ?
+        LIMIT 1
+        FOR UPDATE
+        `,
+        [complaintId],
+      );
+
+      const complaint = complaintRows[0];
+
+      if (!complaint || !canAccessComplaint(viewer, complaint)) {
+        await connection.rollback();
+
+        return res.status(404).json({
+          success: false,
+          message:
+            "Complaint was not found or is not assigned to your account.",
+        });
+      }
+
+      const currentStatus = String(complaint.status);
+      const legalTransition =
+        (currentStatus === "assigned" && status === "in_progress") ||
+        (currentStatus === "in_progress" && status === "completed");
+
+      if (!legalTransition) {
+        await connection.rollback();
+
+        return res.status(409).json({
+          success: false,
+          message:
+            "Complaint status must progress from assigned to in progress, then completed.",
+        });
+      }
+
+      const [result]: any = await connection.execute(
+        `
         UPDATE complaints
         SET
           status = ?,
@@ -857,32 +988,18 @@ router.put(
           END
 
         WHERE id = ?
-          AND status NOT IN
-            ('resolved', 'cancelled')
-      `;
-
-      const parameters:
-        Array<string | number> = [
+          AND assigned_collector_id = ?
+          AND status = ?
+        `,
+        [
           status,
           status,
           status,
           complaintId,
-        ];
-
-      if (isCollector(role)) {
-        query +=
-          " AND assigned_collector_id = ?";
-
-        parameters.push(
           viewer.id,
-        );
-      }
-
-      const [result]: any =
-        await connection.execute(
-          query,
-          parameters,
-        );
+          currentStatus,
+        ],
+      );
 
       if (
         result.affectedRows === 0
@@ -994,8 +1111,47 @@ router.put(
 
       await connection.beginTransaction();
 
-      const [result]: any =
-        await connection.execute(
+      const [complaintRows]: any = await connection.query(
+        `
+        SELECT
+          c.id,
+          c.reported_by,
+          c.purok_id,
+          c.assigned_collector_id,
+          c.status,
+          p.barangay_id
+        FROM complaints c
+        LEFT JOIN puroks p ON p.id = c.purok_id
+        WHERE c.id = ?
+        LIMIT 1
+        FOR UPDATE
+        `,
+        [complaintId],
+      );
+
+      const complaint = complaintRows[0];
+
+      if (!complaint || !canAccessComplaint(viewer, complaint)) {
+        await connection.rollback();
+
+        return res.status(404).json({
+          success: false,
+          message:
+            "Complaint was not found in your barangay.",
+        });
+      }
+
+      if (complaint.status !== "completed") {
+        await connection.rollback();
+
+        return res.status(409).json({
+          success: false,
+          message:
+            "Only a collector-completed complaint can be resolved.",
+        });
+      }
+
+      const [result]: any = await connection.execute(
           `
           UPDATE complaints
           SET
@@ -1003,8 +1159,7 @@ router.put(
             resolution_remark = ?,
             resolved_at = NOW()
           WHERE id = ?
-            AND status NOT IN
-              ('resolved', 'cancelled')
+            AND status = 'completed'
           `,
           [
             remarks,
@@ -1071,6 +1226,9 @@ router.post(
   "/:id/messages",
   requireAuth,
   async (req: AuthRequest, res) => {
+    const connection =
+      await db.getConnection();
+
     try {
       const viewer =
         await getCurrentDatabaseUser(req);
@@ -1096,16 +1254,28 @@ router.post(
         });
       }
 
+      if (message.length > 2000) {
+        return res.status(400).json({
+          success: false,
+          message: "Complaint messages cannot exceed 2,000 characters.",
+        });
+      }
+
+      await connection.beginTransaction();
+
       const [complaintRows]: any =
-        await db.query(
+        await connection.query(
           `
           SELECT
             reported_by,
             assigned_collector_id,
-            purok_id
-          FROM complaints
-          WHERE id = ?
+            c.purok_id,
+            p.barangay_id
+          FROM complaints c
+          LEFT JOIN puroks p ON p.id = c.purok_id
+          WHERE c.id = ?
           LIMIT 1
+          FOR UPDATE
           `,
           [complaintId],
         );
@@ -1114,6 +1284,8 @@ router.post(
         complaintRows[0];
 
       if (!complaint) {
+        await connection.rollback();
+
         return res.status(404).json({
           success: false,
           message:
@@ -1121,39 +1293,18 @@ router.post(
         });
       }
 
-      const role = normalizeRole(
-        viewer.role,
-      );
+      if (!canAccessComplaint(viewer, complaint)) {
+        await connection.rollback();
 
-      const allowed =
-        isAdmin(role) ||
-        Number(
-          complaint.reported_by,
-        ) === viewer.id ||
-        Number(
-          complaint
-            .assigned_collector_id,
-        ) === viewer.id ||
-        (isPurokLeader(role) &&
-          viewer.purok_id !==
-            null &&
-          Number(
-            complaint.purok_id,
-          ) ===
-            Number(
-              viewer.purok_id,
-            ));
-
-      if (!allowed) {
-        return res.status(403).json({
+        return res.status(404).json({
           success: false,
           message:
-            "You are not allowed to message this complaint.",
+            "Complaint not found.",
         });
       }
 
       const [result]: any =
-        await db.execute(
+        await connection.execute(
           `
           INSERT INTO complaint_messages
           (
@@ -1170,6 +1321,8 @@ router.post(
           ],
         );
 
+      await connection.commit();
+
       return res.status(201).json({
         success: true,
         message:
@@ -1178,6 +1331,8 @@ router.post(
           result.insertId,
       });
     } catch (error) {
+      await connection.rollback();
+
       console.error(
         "Send complaint message error:",
         error,
@@ -1188,6 +1343,8 @@ router.post(
         message:
           "Failed to send complaint message.",
       });
+    } finally {
+      connection.release();
     }
   },
 );
@@ -1196,6 +1353,9 @@ router.delete(
   "/:id",
   requireAuth,
   async (req: AuthRequest, res) => {
+    const connection =
+      await db.getConnection();
+
     try {
       const viewer =
         await getCurrentDatabaseUser(req);
@@ -1216,48 +1376,41 @@ router.delete(
         });
       }
 
-      const role = normalizeRole(
-        viewer.role,
-      );
+      const role = normalizeRole(viewer.role);
 
-      let query = `
-        UPDATE complaints
-        SET status = 'cancelled'
-        WHERE id = ?
-          AND status NOT IN
-            ('resolved', 'cancelled')
-      `;
-
-      const parameters: number[] = [
-        complaintId,
-      ];
-
-      if (!isAdmin(role)) {
-        if (!isResident(role)) {
-          return res.status(403).json({
-            success: false,
-            message:
-              "You are not allowed to cancel complaints.",
-          });
-        }
-
-        query +=
-          " AND reported_by = ? AND status = 'pending'";
-
-        parameters.push(
-          viewer.id,
-        );
+      if (!isResident(role) && !isAdmin(role)) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "You are not allowed to cancel complaints.",
+        });
       }
 
-      const [result]: any =
-        await db.execute(
-          query,
-          parameters,
-        );
+      await connection.beginTransaction();
 
-      if (
-        result.affectedRows === 0
-      ) {
+      const [complaintRows]: any = await connection.query(
+        `
+        SELECT
+          c.id,
+          c.reported_by,
+          c.purok_id,
+          c.assigned_collector_id,
+          c.status,
+          p.barangay_id
+        FROM complaints c
+        LEFT JOIN puroks p ON p.id = c.purok_id
+        WHERE c.id = ?
+        LIMIT 1
+        FOR UPDATE
+        `,
+        [complaintId],
+      );
+
+      const complaint = complaintRows[0];
+
+      if (!complaint || !canAccessComplaint(viewer, complaint)) {
+        await connection.rollback();
+
         return res.status(404).json({
           success: false,
           message:
@@ -1265,12 +1418,61 @@ router.delete(
         });
       }
 
+      const cancellable = isResident(role)
+        ? complaint.status === "pending"
+        : ["pending", "assigned"].includes(String(complaint.status));
+
+      if (!cancellable) {
+        await connection.rollback();
+
+        return res.status(409).json({
+          success: false,
+          message:
+            "Only a pending or not-yet-started complaint can be cancelled.",
+        });
+      }
+
+      const [result]: any = await connection.execute(
+        `
+        UPDATE complaints
+        SET status = 'cancelled'
+        WHERE id = ?
+          AND status = ?
+        `,
+        [complaintId, complaint.status],
+      );
+
+      if (
+        result.affectedRows === 0
+      ) {
+        await connection.rollback();
+
+        return res.status(404).json({
+          success: false,
+          message:
+            "Complaint was not found or cannot be cancelled.",
+        });
+      }
+
+      await connection.execute(
+        `
+        INSERT INTO complaint_messages
+          (complaint_id, sender_id, message)
+        VALUES (?, ?, ?)
+        `,
+        [complaintId, viewer.id, "Complaint cancelled."],
+      );
+
+      await connection.commit();
+
       return res.json({
         success: true,
         message:
           "Complaint cancelled successfully.",
       });
     } catch (error) {
+      await connection.rollback();
+
       console.error(
         "Cancel complaint error:",
         error,
@@ -1281,6 +1483,8 @@ router.delete(
         message:
           "Failed to cancel complaint.",
       });
+    } finally {
+      connection.release();
     }
   },
 );

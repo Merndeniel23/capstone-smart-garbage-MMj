@@ -190,11 +190,6 @@ export default function Sidebar({
       label: "Complaints",
     },
     {
-      id: "endorsements",
-      icon: Award,
-      label: "Endorsements",
-    },
-    {
       id: "payments",
       icon: CreditCard,
       label: "Payments",
@@ -232,6 +227,11 @@ export default function Sidebar({
       id: "collector-pickup-log",
       icon: Truck,
       label: "Pickup Log",
+    },
+    {
+      id: "schedule",
+      icon: Calendar,
+      label: "Collection Schedule",
     },
     {
       id: "notifications",
@@ -285,7 +285,7 @@ export default function Sidebar({
     {
       id: "schedule",
       icon: Calendar,
-      label: "Waste Logs",
+      label: "Collection Schedule",
     },
     {
       id: "notifications",
@@ -327,14 +327,14 @@ export default function Sidebar({
       label: "Complaints & Tickets",
     },
     {
-      id: "endorsements",
-      icon: Award,
-      label: "Endorsements",
-    },
-    {
       id: "payments",
       icon: CreditCard,
       label: "Ledger Audit",
+    },
+    {
+      id: "schedule",
+      icon: Calendar,
+      label: "Collection Schedule",
     },
     {
       id: "notifications",
@@ -391,6 +391,11 @@ export default function Sidebar({
       label: "Payment Verification",
     },
     {
+      id: "schedule",
+      icon: Calendar,
+      label: "Collection Schedules",
+    },
+    {
       id: "notifications",
       icon: Bell,
       label: "Municipal Alerts",
@@ -414,7 +419,13 @@ export default function Sidebar({
       localStorage.getItem(
         "sg_requires_location_setup",
       ) === "true" ||
+      sessionStorage.getItem(
+        "sg_requires_location_setup",
+      ) === "true" ||
       localStorage.getItem(
+        "sg_pending_approval",
+      ) === "true" ||
+      sessionStorage.getItem(
         "sg_pending_approval",
       ) === "true"
     );

@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -22,22 +23,51 @@ import {
   AnimatePresence,
   motion,
 } from "motion/react";
-import {
-  type UserAccount,
-  useAppState,
-} from "../context/AppStateContext";
+import { apiRequest } from "../services/api";
 
 type DirectoryStatus =
   | "active"
   | "pending"
   | "inactive";
 
-type DirectoryMember = UserAccount & {
+type DirectoryMember = {
   id: number;
+  name: string;
+  email: string;
+  phone: string;
+  communalZone: string;
+  address: string;
+  householdId: string;
   status: DirectoryStatus;
   barangay?: string;
   purok?: string;
   createdAt?: string;
+};
+
+type DatabaseUser = {
+  id: number | string;
+  full_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  role?: string | null;
+  status?: string | null;
+  barangay_id?: number | null;
+  barangay_name?: string | null;
+  purok_id?: number | null;
+  purok_name?: string | null;
+  created_at?: string | null;
+};
+
+type CurrentUser = {
+  id: number;
+  full_name: string;
+  email: string;
+  role: string;
+  barangay_id: number | null;
+  barangay_name: string | null;
+  purok_id: number | null;
+  purok_name: string | null;
 };
 
 function normalizePurok(
@@ -104,30 +134,9 @@ function statusClasses(
   return "bg-emerald-50 text-emerald-600";
 }
 
-function getToken() {
-  return (
-    localStorage.getItem("token") ||
-    localStorage.getItem("authToken") ||
-    sessionStorage.getItem("token") ||
-    sessionStorage.getItem("authToken") ||
-    ""
-  );
-}
-
 function mapDatabaseUser(
-  user: any,
+  user: DatabaseUser,
 ): DirectoryMember {
-  const roleMap: Record<
-    string,
-    UserAccount["role"]
-  > = {
-    resident: "household",
-    purok_leader: "leader",
-    collector: "collector",
-    admin: "admin",
-    super_admin: "super_admin",
-  };
-
   return {
     id: Number(user.id),
     name: String(
@@ -141,10 +150,6 @@ function mapDatabaseUser(
     ]
       .filter(Boolean)
       .join(", "),
-    password: "",
-    role:
-      roleMap[String(user.role)] ||
-      "household",
     address: String(user.address || ""),
     householdId:
       user.role === "resident"
@@ -166,18 +171,14 @@ function mapDatabaseUser(
 }
 
 export default function MembersList() {
-  const {
-    registeredUsers,
-    currentUser,
-    userRole,
-    deleteRegisteredUser,
-  } = useAppState();
+  const [currentUser, setCurrentUser] =
+    useState<CurrentUser | null>(null);
 
   const [databaseMembers, setDatabaseMembers] =
     useState<DirectoryMember[]>([]);
 
   const [loading, setLoading] =
-    useState(false);
+    useState(true);
 
   const [searchTerm, setSearchTerm] =
     useState("");
@@ -202,60 +203,62 @@ export default function MembersList() {
     } | null>(null);
 
   const canManageUsers =
-    userRole === "admin" ||
-    userRole === "super_admin";
+    currentUser?.role === "admin" ||
+    currentUser?.role === "super_admin";
 
-  const canLoadDatabaseMembers =
-    canManageUsers ||
-    userRole === "leader";
+  const isPurokLeader =
+    currentUser?.role === "purok_leader";
 
   const leaderPurok = useMemo(
     () =>
       normalizePurok(
-        currentUser?.purok ||
-          currentUser?.communalZone,
+        currentUser?.purok_name,
       ),
-    [
-      currentUser?.purok,
-      currentUser?.communalZone,
-    ],
+    [currentUser?.purok_name],
   );
 
   const loadDatabaseMembers =
-    async () => {
-      if (!canLoadDatabaseMembers) {
-        return;
-      }
-
+    useCallback(async () => {
       setLoading(true);
+      setCurrentUser(null);
       setActionMessage(null);
 
       try {
-        const endpoint =
-          userRole === "leader"
-            ? "/api/admin/purok-members"
-            : "/api/admin/users";
+        const profileData = await apiRequest<{
+          success: boolean;
+          user?: CurrentUser;
+        }>("/auth/me");
 
-        const response = await fetch(
-          endpoint,
-          {
-            headers: {
-              Authorization:
-                `Bearer ${getToken()}`,
-            },
-          },
-        );
+        const profile = profileData.user;
 
-        const data = await response
-          .json()
-          .catch(() => ({}));
-
-        if (!response.ok) {
+        if (!profile) {
           throw new Error(
-            data.message ||
-              "Unable to load users.",
+            "The signed-in account could not be loaded.",
           );
         }
+
+        const canViewDirectory =
+          profile.role === "admin" ||
+          profile.role === "super_admin" ||
+          profile.role === "purok_leader";
+
+        if (!canViewDirectory) {
+          throw new Error(
+            "Administrator or Purok Leader access is required.",
+          );
+        }
+
+        setCurrentUser(profile);
+
+        const endpoint =
+          profile.role === "purok_leader"
+            ? "/admin/purok-members"
+            : "/admin/users";
+
+        const data = await apiRequest<{
+          success: boolean;
+          users?: DatabaseUser[];
+        }>(endpoint);
 
         const rows = Array.isArray(
           data.users,
@@ -266,12 +269,14 @@ export default function MembersList() {
         setDatabaseMembers(
           rows
             .filter(
-              (user: any) =>
+              (user) =>
                 user.role === "resident",
             )
             .map(mapDatabaseUser),
         );
+        return true;
       } catch (error) {
+        setDatabaseMembers([]);
         setActionMessage({
           type: "error",
           text:
@@ -279,64 +284,21 @@ export default function MembersList() {
               ? error.message
               : "Unable to load users.",
         });
+        return false;
       } finally {
         setLoading(false);
       }
-    };
+    }, []);
 
   useEffect(() => {
     void loadDatabaseMembers();
-  }, [canLoadDatabaseMembers, userRole]);
-
-  const localMembers =
-    useMemo<DirectoryMember[]>(
-      () =>
-        registeredUsers
-          .filter(
-            (user) =>
-              user.role === "household",
-          )
-          .map((user, index) => ({
-            ...user,
-            id:
-              Number(user.id) ||
-              index + 1,
-            status:
-              user.status === "inactive"
-                ? "inactive"
-                : user.status === "pending"
-                  ? "pending"
-                  : "active",
-          })),
-      [registeredUsers],
-    );
-
-  const sourceMembers =
-    canLoadDatabaseMembers
-      ? databaseMembers
-      : localMembers;
+  }, [loadDatabaseMembers]);
 
   const members = useMemo(() => {
     const normalizedSearch =
       searchTerm.trim().toLowerCase();
 
-    return sourceMembers
-      .filter((member) => {
-        if (userRole !== "leader") {
-          return true;
-        }
-
-        if (!leaderPurok) {
-          return true;
-        }
-
-        return (
-          normalizePurok(
-            member.purok ||
-              member.communalZone,
-          ) === leaderPurok
-        );
-      })
+    return databaseMembers
       .filter((member) => {
         if (statusFilter === "all") {
           return true;
@@ -374,9 +336,7 @@ export default function MembersList() {
         a.name.localeCompare(b.name),
       );
   }, [
-    sourceMembers,
-    userRole,
-    leaderPurok,
+    databaseMembers,
     searchTerm,
     statusFilter,
   ]);
@@ -392,6 +352,11 @@ export default function MembersList() {
       member.status === "active",
   ).length;
 
+  const directoryUnavailable =
+    !loading &&
+    actionMessage?.type === "error" &&
+    databaseMembers.length === 0;
+
   const handleDeleteMember =
     async (
       member: DirectoryMember,
@@ -406,12 +371,7 @@ export default function MembersList() {
       }
 
       if (
-        currentUser?.email
-          .trim()
-          .toLowerCase() ===
-        member.email
-          .trim()
-          .toLowerCase()
+        currentUser?.id === member.id
       ) {
         setActionMessage({
           type: "error",
@@ -434,48 +394,25 @@ export default function MembersList() {
       setActionMessage(null);
 
       try {
-        const response = await fetch(
-          `/api/admin/users/${member.id}`,
-          {
-            method: "DELETE",
-            headers: {
-              Authorization:
-                `Bearer ${getToken()}`,
-            },
-          },
-        );
-
-        const data = await response
-          .json()
-          .catch(() => ({}));
-
-        if (!response.ok) {
-          throw new Error(
-            data.message ||
-              "Unable to delete the user.",
-          );
-        }
-
-        deleteRegisteredUser(
-          member.email,
-        );
-
-        setDatabaseMembers(
-          (previousMembers) =>
-            previousMembers.filter(
-              (item) =>
-                item.id !== member.id,
-            ),
-        );
+        const data = await apiRequest<{
+          success: boolean;
+          message?: string;
+        }>(`/admin/users/${member.id}`, {
+          method: "DELETE",
+        });
 
         setSelectedMemberId(null);
+        const refreshed =
+          await loadDatabaseMembers();
 
-        setActionMessage({
-          type: "success",
-          text:
-            data.message ||
-            "User deleted successfully.",
-        });
+        if (refreshed) {
+          setActionMessage({
+            type: "success",
+            text:
+              data.message ||
+              "User deleted successfully.",
+          });
+        }
       } catch (error) {
         console.error(
           "DELETE ERROR:",
@@ -557,7 +494,7 @@ export default function MembersList() {
             </select>
           </div>
 
-          {canManageUsers && (
+          {(canManageUsers || isPurokLeader) && (
             <button
               type="button"
               onClick={() =>
@@ -598,7 +535,9 @@ export default function MembersList() {
             Members shown
           </p>
           <p className="mt-2 text-3xl font-black text-slate-900">
-            {members.length}
+            {loading || directoryUnavailable
+              ? "—"
+              : members.length}
           </p>
         </div>
 
@@ -607,7 +546,9 @@ export default function MembersList() {
             Active accounts
           </p>
           <p className="mt-2 text-3xl font-black text-emerald-600">
-            {activeCount}
+            {loading || directoryUnavailable
+              ? "—"
+              : activeCount}
           </p>
         </div>
 
@@ -616,10 +557,16 @@ export default function MembersList() {
             Directory scope
           </p>
           <p className="mt-2 text-sm font-black text-slate-800">
-            {userRole === "leader"
+            {loading
+              ? "Loading scope..."
+              : isPurokLeader
               ? leaderPurok ||
                 "Assigned purok"
-              : "All households"}
+              : currentUser?.role ===
+                  "super_admin"
+                ? "All households"
+                : currentUser?.barangay_name ||
+                  "Assigned barangay"}
           </p>
         </div>
       </section>
@@ -634,6 +581,24 @@ export default function MembersList() {
                   Loading household accounts...
                 </p>
               </div>
+            </div>
+          ) : directoryUnavailable ? (
+            <div className="rounded-[2rem] border border-rose-200 bg-rose-50 p-10 text-center">
+              <ShieldAlert className="mx-auto h-10 w-10 text-rose-400" />
+              <h3 className="mt-4 font-black text-rose-700">
+                Directory unavailable
+              </h3>
+              <p className="mx-auto mt-2 max-w-md text-xs font-medium leading-relaxed text-rose-600">
+                Household records could not be loaded from the database.
+              </p>
+              <button
+                type="button"
+                onClick={() => void loadDatabaseMembers()}
+                className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-rose-600 px-5 py-3 text-xs font-black text-white transition hover:bg-rose-700"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </button>
             </div>
           ) : members.length > 0 ? (
             members.map((member) => {

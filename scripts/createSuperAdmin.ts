@@ -4,15 +4,39 @@ import crypto from "crypto";
 import { Resend } from "resend";
 import { db } from "../config/db.js";
 import {
-  requireAuth,
+  requireTemporaryPasswordAccount,
   type AuthRequest,
 } from "../middleware/auth.js";
+import { getJwtSecret, isStrongPassword } from "../config/security.js";
 
 const router = Router();
 
-const resend = new Resend(
-  process.env.RESEND_API_KEY,
-);
+function getResendClient() {
+  const apiKey = String(process.env.RESEND_API_KEY || "").trim();
+  return apiKey ? new Resend(apiKey) : null;
+}
+
+function getResendFromAddress() {
+  const configured = String(process.env.RESEND_FROM_EMAIL || "").trim();
+
+  if (
+    !configured ||
+    /YOUR-VERIFIED-SENDER|YOUR-DOMAIN|noreply@example\.com/i.test(configured)
+  ) {
+    return "Smart Garbage <onboarding@resend.dev>";
+  }
+
+  return configured;
+}
+
+function escapeHtml(value: unknown) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
 
 function normalizeEmail(value: unknown): string {
   return String(value || "")
@@ -26,6 +50,29 @@ function generateOtp(): string {
       100000,
       1000000,
     ),
+  );
+}
+
+function createOtpHash(email: string, otp: string): string {
+  const secret = getJwtSecret();
+
+  return crypto
+    .createHmac("sha256", secret)
+    .update(`${normalizeEmail(email)}:${otp}`)
+    .digest("hex");
+}
+
+function otpMatches(
+  email: string,
+  otp: string,
+  storedHash: unknown,
+): boolean {
+  const expected = Buffer.from(createOtpHash(email, otp), "hex");
+  const actual = Buffer.from(String(storedHash || ""), "hex");
+
+  return (
+    actual.length === expected.length &&
+    crypto.timingSafeEqual(actual, expected)
   );
 }
 
@@ -46,20 +93,8 @@ function generateRecoveryCode(): string {
 function validateNewPassword(
   password: string,
 ): string | null {
-  if (password.length < 8) {
-    return "Password must contain at least 8 characters.";
-  }
-
-  if (!/[A-Z]/.test(password)) {
-    return "Password must contain at least one uppercase letter.";
-  }
-
-  if (!/[a-z]/.test(password)) {
-    return "Password must contain at least one lowercase letter.";
-  }
-
-  if (!/\d/.test(password)) {
-    return "Password must contain at least one number.";
+  if (!isStrongPassword(password)) {
+    return "Password must contain 8-72 characters with uppercase, lowercase, and a number.";
   }
 
   return null;
@@ -144,6 +179,7 @@ router.post(
       }
 
       const otp = generateOtp();
+      const otpHash = createOtpHash(email, otp);
 
       const expiresAt = new Date(
         Date.now() +
@@ -163,29 +199,42 @@ router.post(
         INSERT INTO password_resets
         (
           email,
-          otp,
+          otp_hash,
+          attempt_count,
           expires_at
         )
-        VALUES (?, ?, ?)
+        VALUES (?, ?, 0, ?)
         `,
         [
           email,
-          otp,
+          otpHash,
           expiresAt,
         ],
       );
 
-      const { error } =
-        await resend.emails.send({
-          from:
-            "Smart Garbage <onboarding@resend.dev>",
+      const resendClient = getResendClient();
+
+      if (!resendClient) {
+        await db.execute(`DELETE FROM password_resets WHERE email = ?`, [email]);
+        return res.status(503).json({
+          success: false,
+          message: "Email service is not configured on the server.",
+        });
+      }
+
+      let emailError: unknown = null;
+
+      try {
+        const { error } =
+          await resendClient.emails.send({
+          from: getResendFromAddress(),
           to: recoveryEmail,
           subject:
             "Super Admin Password Recovery OTP",
           html: `
             <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto">
               <h2>Smart Garbage Super Admin Recovery</h2>
-              <p>Hello ${user.full_name},</p>
+              <p>Hello ${escapeHtml(user.full_name)},</p>
               <p>Your password recovery OTP is:</p>
               <div style="font-size:32px;font-weight:bold;letter-spacing:8px">
                 ${otp}
@@ -194,12 +243,16 @@ router.post(
               <p>If you did not request this recovery, contact the Municipal IT administrator immediately.</p>
             </div>
           `,
-        });
+          });
+        emailError = error;
+      } catch (sendError) {
+        emailError = sendError;
+      }
 
-      if (error) {
+      if (emailError) {
         console.error(
           "Super Admin OTP email error:",
-          error,
+          emailError,
         );
 
         await db.execute(
@@ -329,14 +382,16 @@ router.post(
           `
           SELECT
             id,
+            otp_hash,
+            attempt_count,
             expires_at
           FROM password_resets
           WHERE email = ?
-            AND otp = ?
+            AND consumed_at IS NULL
           ORDER BY id DESC
           LIMIT 1
           `,
-          [email, otp],
+          [email],
         );
 
       const resetRequest =
@@ -349,6 +404,35 @@ router.post(
           success: false,
           message:
             "Incorrect recovery OTP.",
+        });
+      }
+
+      if (
+        Number(resetRequest.attempt_count || 0) >= 5 ||
+        !otpMatches(email, otp, resetRequest.otp_hash)
+      ) {
+        const [attemptResult]: any = await connection.execute(
+          `
+          UPDATE password_resets
+          SET attempt_count = attempt_count + 1
+          WHERE id = ?
+            AND consumed_at IS NULL
+            AND attempt_count < 5
+          `,
+          [resetRequest.id],
+        );
+        await connection.commit();
+
+        if (Number(attemptResult.affectedRows) !== 1) {
+          return res.status(429).json({
+            success: false,
+            message: "Too many incorrect recovery OTP attempts. Request a new one.",
+          });
+        }
+
+        return res.status(400).json({
+          success: false,
+          message: "Incorrect or expired recovery OTP.",
         });
       }
 
@@ -380,6 +464,25 @@ router.post(
           12,
         );
 
+      const [consumeResult]: any = await connection.execute(
+        `
+        UPDATE password_resets
+        SET consumed_at = NOW()
+        WHERE id = ?
+          AND consumed_at IS NULL
+          AND expires_at > NOW()
+        `,
+        [resetRequest.id],
+      );
+
+      if (Number(consumeResult.affectedRows) !== 1) {
+        await connection.rollback();
+        return res.status(409).json({
+          success: false,
+          message: "This OTP has already been used or has expired.",
+        });
+      }
+
       await connection.execute(
         `
         UPDATE users
@@ -388,18 +491,7 @@ router.post(
           must_change_password = 0
         WHERE id = ?
         `,
-        [
-          passwordHash,
-          user.id,
-        ],
-      );
-
-      await connection.execute(
-        `
-        DELETE FROM password_resets
-        WHERE email = ?
-        `,
-        [email],
+        [passwordHash, user.id],
       );
 
       await connection.commit();
@@ -668,7 +760,7 @@ router.post(
  */
 router.put(
   "/change-temporary-password",
-  requireAuth,
+  requireTemporaryPasswordAccount,
   async (req: AuthRequest, res) => {
     try {
       const userId = Number(

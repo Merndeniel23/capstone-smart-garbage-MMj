@@ -4,6 +4,51 @@ import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
 
+type ScheduleViewer = {
+  id: number;
+  role: string;
+  barangay_id: number | null;
+};
+
+async function getScheduleViewer(
+  userId: number,
+): Promise<ScheduleViewer | null> {
+  const [rows] = await db.query<any[]>(
+    `
+    SELECT
+      u.id,
+      u.role,
+      COALESCE(u.barangay_id, p.barangay_id) AS barangay_id
+    FROM users u
+    LEFT JOIN puroks p
+      ON p.id = u.purok_id
+    WHERE u.id = ?
+      AND u.status = 'active'
+    LIMIT 1
+    `,
+    [userId],
+  );
+
+  return rows[0] || null;
+}
+
+function normalizeTime(
+  value: unknown,
+): string | null | undefined {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const time = String(value).trim();
+  const match = time.match(
+    /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/,
+  );
+
+  if (!match) return undefined;
+
+  return time.length === 5 ? `${time}:00` : time;
+}
+
 /**
  * CREATE TABLE AUTOMATICALLY
  */
@@ -65,8 +110,37 @@ router.use(async (_req, res, next) => {
 router.get(
   "/",
   requireAuth,
-  async (_req: AuthRequest, res) => {
+  async (req: AuthRequest, res) => {
     try {
+      const viewer = await getScheduleViewer(
+        Number(req.user!.id),
+      );
+
+      if (!viewer) {
+        return res.status(403).json({
+          success: false,
+          message: "An active account is required.",
+        });
+      }
+
+      const supportedRoles = [
+        "admin",
+        "super_admin",
+        "resident",
+        "collector",
+        "purok_leader",
+      ];
+
+      if (!supportedRoles.includes(viewer.role)) {
+        return res.status(403).json({
+          success: false,
+          message: "You do not have access to collection schedules.",
+        });
+      }
+
+      const isSuperAdmin =
+        viewer.role === "super_admin";
+
       const [rows] = await db.query(`
         SELECT
           schedule.id,
@@ -83,6 +157,9 @@ router.get(
         INNER JOIN barangays barangay
           ON barangay.id = schedule.barangay_id
 
+        WHERE schedule.is_active = 1
+          ${isSuperAdmin ? "" : "AND schedule.barangay_id = ?"}
+
         ORDER BY
           FIELD(
             schedule.day_of_week,
@@ -95,7 +172,7 @@ router.get(
             'Sunday'
           ),
           barangay.name ASC
-      `);
+      `, isSuperAdmin ? [] : [viewer.barangay_id]);
 
       return res.json({
         success: true,
@@ -150,14 +227,86 @@ router.post(
         "Sunday",
       ];
 
+      const viewer = await getScheduleViewer(
+        Number(req.user.id),
+      );
+
+      if (viewer?.role !== "admin") {
+        return res.status(403).json({
+          success: false,
+          message: "An active Barangay Captain account is required.",
+        });
+      }
+
+      if (!viewer.barangay_id) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Your captain account is not assigned to a barangay.",
+        });
+      }
+
+      const requestedBarangayId = Number(
+        barangay_id,
+      );
+      const normalizedStartTime = normalizeTime(
+        start_time,
+      );
+      const normalizedEndTime = normalizeTime(
+        end_time,
+      );
+      const normalizedNotes = String(
+        notes || "",
+      ).trim();
+
       if (
-        !barangay_id ||
+        !Number.isInteger(requestedBarangayId) ||
+        requestedBarangayId <= 0 ||
         !validDays.includes(day_of_week)
       ) {
         return res.status(400).json({
           success: false,
           message:
             "Barangay and collection day are required.",
+        });
+      }
+
+      if (
+        requestedBarangayId !==
+        Number(viewer.barangay_id)
+      ) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "You may only manage schedules for your assigned barangay.",
+        });
+      }
+
+      if (
+        normalizedStartTime === undefined ||
+        normalizedEndTime === undefined
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Collection times must use a valid 24-hour format.",
+        });
+      }
+
+      if (
+        normalizedStartTime &&
+        normalizedEndTime &&
+        normalizedEndTime <= normalizedStartTime
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "End time must be later than start time.",
+        });
+      }
+
+      if (normalizedNotes.length > 255) {
+        return res.status(400).json({
+          success: false,
+          message: "Schedule notes cannot exceed 255 characters.",
         });
       }
 
@@ -183,11 +332,11 @@ router.post(
           created_by = VALUES(created_by)
         `,
         [
-          barangay_id,
+          requestedBarangayId,
           day_of_week,
-          start_time || null,
-          end_time || null,
-          notes?.trim() || null,
+          normalizedStartTime,
+          normalizedEndTime,
+          normalizedNotes || null,
           req.user.id,
         ],
       );
@@ -243,13 +392,33 @@ router.delete(
         });
       }
 
+      const viewer = await getScheduleViewer(
+        Number(req.user.id),
+      );
+
+      if (viewer?.role !== "admin") {
+        return res.status(403).json({
+          success: false,
+          message: "An active Barangay Captain account is required.",
+        });
+      }
+
+      if (!viewer.barangay_id) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Your captain account is not assigned to a barangay.",
+        });
+      }
+
       const [result]: any =
         await db.query(
           `
           DELETE FROM barangay_collection_schedules
           WHERE id = ?
+            AND barangay_id = ?
           `,
-          [scheduleId],
+          [scheduleId, viewer.barangay_id],
         );
 
       if (result.affectedRows === 0) {

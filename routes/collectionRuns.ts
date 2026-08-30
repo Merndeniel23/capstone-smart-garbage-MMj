@@ -393,6 +393,7 @@ router.patch(
           SELECT
             id,
             collector_user_id,
+            barangay_id,
             collection_date,
             status
           FROM collection_runs
@@ -418,6 +419,19 @@ router.patch(
         return res.status(403).json({
           success: false,
           message: "This collection operation belongs to another collector.",
+        });
+      }
+
+      const currentBarangayId = parsePositiveInteger(req.user?.barangay_id);
+
+      if (
+        !currentBarangayId ||
+        Number(run.barangay_id) !== currentBarangayId
+      ) {
+        await connection.rollback();
+        return res.status(404).json({
+          success: false,
+          message: "Collection operation was not found in your current barangay.",
         });
       }
 
@@ -449,15 +463,59 @@ router.patch(
         });
       }
 
-      await connection.execute(
+      const [runResult]: any = await connection.execute(
         `
           UPDATE collection_runs
           SET
             status = 'completed',
             completed_at = NOW()
           WHERE id = ?
+            AND status = 'in_progress'
         `,
         [runId],
+      );
+
+      if (Number(runResult.affectedRows) !== 1) {
+        await connection.rollback();
+        return res.status(409).json({
+          success: false,
+          message: "The collection operation changed. Refresh and try again.",
+        });
+      }
+
+      const [requestResult]: any = await connection.execute(
+        `
+          UPDATE collection_requests cr
+          INNER JOIN garbage_bins gb ON gb.id = cr.bin_id
+          INNER JOIN puroks p ON p.id = gb.purok_id
+          SET
+            cr.status = 'completed',
+            cr.assigned_collector_id = COALESCE(
+              cr.assigned_collector_id,
+              ?
+            ),
+            cr.completed_at = NOW()
+          WHERE p.barangay_id = ?
+            AND cr.status IN ('pending', 'approved', 'assigned', 'in_progress')
+        `,
+        [collectorUserId, currentBarangayId],
+      );
+
+      const [binResult]: any = await connection.execute(
+        `
+          UPDATE garbage_bins gb
+          INNER JOIN puroks p ON p.id = gb.purok_id
+          SET
+            gb.current_status = 'empty',
+            gb.condition_status = CASE
+              WHEN gb.condition_status IN ('needs_repair', 'out_of_service')
+                THEN gb.condition_status
+              ELSE 'good'
+            END
+          WHERE p.barangay_id = ?
+            AND gb.is_active = 1
+        `,
+        [currentBarangayId],
       );
 
       await connection.commit();
@@ -466,6 +524,8 @@ router.patch(
         success: true,
         message: "Today's scheduled barangay collection was completed.",
         status: "completed",
+        completedRequests: Number(requestResult.affectedRows || 0),
+        resetBins: Number(binResult.affectedRows || 0),
       });
     } catch (error) {
       await connection.rollback();

@@ -51,6 +51,11 @@ export default function Registration() {
   const [locationsLoading, setLocationsLoading] = useState(false);
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
+  const [registrationVerificationEmail, setRegistrationVerificationEmail] = useState('');
+  const [registrationOtp, setRegistrationOtp] = useState('');
+  const [registrationVerificationStep, setRegistrationVerificationStep] = useState(false);
+  const [registrationVerificationLoading, setRegistrationVerificationLoading] = useState(false);
+  const [registrationResendCountdown, setRegistrationResendCountdown] = useState(0);
   
   const [error, setError] = useState('');
 const [successMessage, setSuccessMessage] = useState('');
@@ -143,6 +148,16 @@ const [resendCountdown, setResendCountdown] = useState(0);
     };
   }, [resendCountdown]);
 
+  useEffect(() => {
+    if (registrationResendCountdown <= 0) return;
+
+    const timer = window.setInterval(() => {
+      setRegistrationResendCountdown((current) => (current > 0 ? current - 1 : 0));
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [registrationResendCountdown]);
+
   const resetForgotPasswordState = () => {
     setShowForgotModal(false);
     setForgotStep('email');
@@ -160,6 +175,12 @@ const [resendCountdown, setResendCountdown] = useState(0);
   const validateEmail = (emailStr: string) => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr);
   };
+
+  const normalizePhone = (phone: string) =>
+    phone.trim().replace(/[\s()-]/g, '');
+
+  const validatePhilippinePhone = (phone: string) =>
+    /^(?:09\d{9}|\+639\d{9})$/.test(normalizePhone(phone));
 
  const completeLogin = (data: any, remember: boolean) => {
   const backendRole = String(data?.user?.role || "resident");
@@ -204,7 +225,6 @@ const [resendCountdown, setResendCountdown] = useState(0);
     communalZone: [data.user.purok_name, data.user.barangay_name]
       .filter(Boolean)
       .join(", "),
-    password: "",
     role: appRole,
     address: data.user.address || "",
     householdId:
@@ -219,49 +239,55 @@ const [resendCountdown, setResendCountdown] = useState(0);
         : `HH-${data.user.id}`,
   };
 
-  localStorage.setItem("token", data.token);
+  const storage = remember ? localStorage : sessionStorage;
+  const otherStorage = remember ? sessionStorage : localStorage;
+  const authKeys = [
+    "token",
+    "authToken",
+    "sg_current_user",
+    "sg_is_logged_in",
+    "sg_user_role",
+    "sg_current_screen",
+    "sg_requires_location_setup",
+    "sg_pending_approval",
+    "sg_temp_login_email",
+  ];
 
-  if (!remember) {
-    sessionStorage.setItem("token", data.token);
+  for (const key of authKeys) {
+    otherStorage.removeItem(key);
+    storage.removeItem(key);
   }
 
-  localStorage.setItem(
+  storage.setItem("token", data.token);
+  storage.setItem(
     "sg_current_user",
     JSON.stringify(appUser)
   );
 
-  localStorage.setItem("sg_is_logged_in", "true");
-  localStorage.setItem("sg_user_role", appRole);
-  localStorage.setItem("sg_current_screen", currentScreen);
+  storage.setItem("sg_is_logged_in", "true");
+  storage.setItem("sg_user_role", appRole);
+  storage.setItem("sg_current_screen", currentScreen);
 
   if (needsResidentSetup) {
-    localStorage.setItem(
+    storage.setItem(
       "sg_requires_location_setup",
       "true",
-    );
-  } else {
-    localStorage.removeItem(
-      "sg_requires_location_setup",
     );
   }
 
   if (needsResidentApproval) {
-    localStorage.setItem(
+    storage.setItem(
       "sg_pending_approval",
       "true",
-    );
-  } else {
-    localStorage.removeItem(
-      "sg_pending_approval",
     );
   }
 
   if (data.mustChangePassword === true) {
-    localStorage.setItem(
+    storage.setItem(
       "sg_current_screen",
       "change-initial-password"
     );
-    localStorage.setItem(
+    storage.setItem(
       "sg_temp_login_email",
       data.user.email
     );
@@ -333,8 +359,19 @@ const [resendCountdown, setResendCountdown] = useState(0);
       return;
     }
 
-    if (regPassword.length < 8) {
-      setError('Password must be at least 8 characters.');
+    if (!validatePhilippinePhone(regPhone)) {
+      setError('Enter a valid Philippine mobile number (09XXXXXXXXX or +639XXXXXXXXX).');
+      return;
+    }
+
+    if (
+      regPassword.length < 8 ||
+      regPassword.length > 72 ||
+      !/[A-Z]/.test(regPassword) ||
+      !/[a-z]/.test(regPassword) ||
+      !/\d/.test(regPassword)
+    ) {
+      setError('Password must be 8-72 characters with uppercase, lowercase, and a number.');
       return;
     }
 
@@ -378,7 +415,11 @@ const [resendCountdown, setResendCountdown] = useState(0);
         return;
       }
 
-      setSuccessMessage('Account registered successfully! You can now sign in.');
+      setRegistrationVerificationEmail(data.email || regEmail.trim().toLowerCase());
+      setRegistrationOtp('');
+      setRegistrationVerificationStep(true);
+      setRegistrationResendCountdown(60);
+      setSuccessMessage('Verification code sent. Check your email to activate the account.');
 
       setRegFullName('');
       setRegEmail('');
@@ -388,13 +429,81 @@ const [resendCountdown, setResendCountdown] = useState(0);
       setRegPassword('');
       setRegConfirmPassword('');
 
-      window.setTimeout(() => {
-        setActiveTab('login');
-        setSuccessMessage('');
-      }, 1200);
     } catch (error) {
       console.error('Registration error:', error);
       setError('Cannot connect to the server.');
+    }
+  };
+
+  const handleRegistrationVerification = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSuccessMessage('');
+
+    const email = registrationVerificationEmail.trim().toLowerCase();
+    const otp = registrationOtp.trim();
+
+    if (!/^\d{6}$/.test(otp)) {
+      setError('Enter the 6-digit verification code sent to your email.');
+      return;
+    }
+
+    setRegistrationVerificationLoading(true);
+
+    try {
+      const response = await fetch('/api/auth/verify-registration-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, otp }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setError(data.message || 'Email verification failed.');
+        return;
+      }
+
+      setSuccessMessage('Email verified. You can now sign in.');
+      setRegistrationVerificationStep(false);
+      setRegistrationVerificationEmail('');
+      setRegistrationOtp('');
+      setActiveTab('login');
+      setLoginEmail(email);
+    } catch (err) {
+      console.error('Registration email verification error:', err);
+      setError('Cannot connect to the server.');
+    } finally {
+      setRegistrationVerificationLoading(false);
+    }
+  };
+
+  const resendRegistrationVerification = async () => {
+    if (registrationResendCountdown > 0 || !registrationVerificationEmail) return;
+
+    setError('');
+    setSuccessMessage('');
+    setRegistrationVerificationLoading(true);
+
+    try {
+      const response = await fetch('/api/auth/resend-registration-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: registrationVerificationEmail }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setError(data.message || 'Unable to resend the verification code.');
+        return;
+      }
+
+      setRegistrationResendCountdown(60);
+      setSuccessMessage(data.message || 'A new verification code was sent.');
+    } catch (err) {
+      console.error('Resend registration email error:', err);
+      setError('Cannot connect to the server.');
+    } finally {
+      setRegistrationVerificationLoading(false);
     }
   };
 const sendForgotPasswordOtp = async () => {
@@ -493,9 +602,15 @@ const handleResetPasswordSubmit = async (
     return;
   }
 
-  if (newPassword.length < 8) {
+  if (
+    newPassword.length < 8 ||
+    newPassword.length > 72 ||
+    !/[A-Z]/.test(newPassword) ||
+    !/[a-z]/.test(newPassword) ||
+    !/\d/.test(newPassword)
+  ) {
     setError(
-      'New password must be at least 8 characters.',
+      'New password must be 8-72 characters with uppercase, lowercase, and a number.',
     );
     return;
   }
@@ -592,7 +707,7 @@ const handleResetPasswordSubmit = async (
           <div className="flex border-b border-stone-100 pb-5 mb-6">
             <button
               type="button"
-              onClick={() => { setActiveTab('login'); setError(''); setSuccessMessage(''); }}
+              onClick={() => { setActiveTab('login'); setRegistrationVerificationStep(false); setError(''); setSuccessMessage(''); }}
               className={`flex-1 text-center pb-2 text-xs uppercase font-extrabold tracking-wider transition-all relative ${
                 activeTab === 'login' ? 'text-emerald-700' : 'text-stone-400 hover:text-stone-600'
               }`}
@@ -656,6 +771,7 @@ const handleResetPasswordSubmit = async (
                   <input
                     type="text"
                     required
+                    maxLength={150}
                     placeholder="test@household.com or HH-2026-904"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
@@ -765,7 +881,7 @@ const handleResetPasswordSubmit = async (
           setSuccessMessage('Google login successful!');
 
           window.setTimeout(() => {
-            completeLogin(data, true);
+            completeLogin(data, rememberMe);
           }, 300);
         } catch (err) {
           console.error(err);
@@ -781,6 +897,58 @@ const handleResetPasswordSubmit = async (
             </form>
           ) : (
             /* REGISTRATION SCREEN */
+            registrationVerificationStep ? (
+              <form onSubmit={handleRegistrationVerification} className="space-y-4">
+                <div className="text-center space-y-2">
+                  <Mail className="w-10 h-10 text-emerald-700 mx-auto" />
+                  <h2 className="text-sm font-extrabold text-stone-800">Verify your email</h2>
+                  <p className="text-xs text-stone-500">
+                    Enter the 6-digit code sent to <strong>{registrationVerificationEmail}</strong>.
+                  </p>
+                </div>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  required
+                  value={registrationOtp}
+                  onChange={(e) => setRegistrationOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="Enter 6-digit code"
+                  className="w-full px-4 py-3 bg-[#FAFBF9] border border-stone-200 rounded-2xl text-center tracking-[0.4em] font-bold text-stone-800"
+                />
+                <button
+                  type="submit"
+                  disabled={registrationVerificationLoading}
+                  className="w-full py-3 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white font-extrabold uppercase text-[10px] tracking-widest rounded-2xl"
+                >
+                  {registrationVerificationLoading ? 'Verifying...' : 'Verify Email'}
+                </button>
+                <div className="flex items-center justify-between text-[11px]">
+                  <button
+                    type="button"
+                    disabled={registrationVerificationLoading || registrationResendCountdown > 0}
+                    onClick={resendRegistrationVerification}
+                    className="text-emerald-700 font-bold disabled:text-stone-400"
+                  >
+                    {registrationResendCountdown > 0 ? `Resend in ${registrationResendCountdown}s` : 'Resend code'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRegistrationVerificationStep(false);
+                      setRegistrationVerificationEmail('');
+                      setRegistrationOtp('');
+                      setError('');
+                      setSuccessMessage('');
+                    }}
+                    className="text-stone-500 font-bold hover:text-stone-700"
+                  >
+                    Start over
+                  </button>
+                </div>
+              </form>
+            ) : (
             <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold tracking-widest text-stone-500 block ml-1">
@@ -791,6 +959,7 @@ const handleResetPasswordSubmit = async (
                   <input
                     type="text"
                     required
+                    maxLength={150}
                     placeholder="e.g., Mark Rallos"
                     value={regFullName}
                     onChange={(e) => setRegFullName(e.target.value)}
@@ -808,6 +977,7 @@ const handleResetPasswordSubmit = async (
                   <input
                     type="email"
                     required
+                    maxLength={150}
                     placeholder="e.g., mark@household.com"
                     value={regEmail}
                     onChange={(e) => setRegEmail(e.target.value)}
@@ -823,11 +993,18 @@ const handleResetPasswordSubmit = async (
                 <div className="relative flex items-center">
                   <Phone className="absolute left-4 w-4 h-4 text-stone-400" />
                   <input
-                    type="text"
+                    type="tel"
+                    inputMode="numeric"
+                    autoComplete="tel"
                     required
+                    maxLength={17}
                     placeholder="e.g., +63 912 345 6789"
                     value={regPhone}
-                    onChange={(e) => setRegPhone(e.target.value)}
+                    onChange={(e) =>
+                      setRegPhone(
+                        e.target.value.replace(/[^0-9+\s()-]/g, ''),
+                      )
+                    }
                     className="w-full pl-11 pr-4 py-2.5 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
                   />
                 </div>
@@ -894,7 +1071,8 @@ const handleResetPasswordSubmit = async (
                     <input
                       type={showPassword ? 'text' : 'password'}
                       required
-                      placeholder="Password"
+                      maxLength={72}
+                      placeholder="8+ chars, upper/lower/number"
                       value={regPassword}
                       onChange={(e) => setRegPassword(e.target.value)}
                       className="w-full px-4 py-2.5 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
@@ -910,6 +1088,7 @@ const handleResetPasswordSubmit = async (
                     <input
                       type={showPassword ? 'text' : 'password'}
                       required
+                      maxLength={72}
                       placeholder="Confirm"
                       value={regConfirmPassword}
                       onChange={(e) => setRegConfirmPassword(e.target.value)}
@@ -936,6 +1115,7 @@ const handleResetPasswordSubmit = async (
                 Register & Join Network
               </button>
             </form>
+            )
           )}
 
           {/* TOGGLE BOTTOM LINK */}
@@ -945,7 +1125,7 @@ const handleResetPasswordSubmit = async (
                 Don't have an account?{' '}
                 <button
                   type="button"
-                  onClick={() => { setActiveTab('register'); setError(''); setSuccessMessage(''); }}
+                  onClick={() => { setActiveTab('register'); setRegistrationVerificationStep(false); setError(''); setSuccessMessage(''); }}
                   className="text-emerald-700 font-bold hover:underline"
                 >
                   Register here
@@ -956,7 +1136,7 @@ const handleResetPasswordSubmit = async (
                 Already have an account?{' '}
                 <button
                   type="button"
-                  onClick={() => { setActiveTab('login'); setError(''); setSuccessMessage(''); }}
+                  onClick={() => { setActiveTab('login'); setRegistrationVerificationStep(false); setError(''); setSuccessMessage(''); }}
                   className="text-emerald-700 font-bold hover:underline"
                 >
                   Sign In
@@ -1063,6 +1243,7 @@ const handleResetPasswordSubmit = async (
                   type={showPassword ? 'text' : 'password'}
                   required
                   minLength={8}
+                  maxLength={72}
                   placeholder="New password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
@@ -1073,6 +1254,7 @@ const handleResetPasswordSubmit = async (
                   type={showPassword ? 'text' : 'password'}
                   required
                   minLength={8}
+                  maxLength={72}
                   placeholder="Confirm new password"
                   value={confirmNewPassword}
                   onChange={(e) => setConfirmNewPassword(e.target.value)}

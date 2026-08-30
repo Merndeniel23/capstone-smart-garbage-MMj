@@ -1,15 +1,48 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Shield, Users, Activity, Map, CheckCircle, CreditCard, LoaderCircle, XCircle, Trash2, MessageSquare, UserRoundCheck, BarChart3, RefreshCw } from 'lucide-react';
+import { apiRequest } from '../services/api';
 
 interface PendingCollector {
   id: number;
   purok_id: number | null;
+  purok_name?: string | null;
   full_name: string;
   email: string;
   phone: string | null;
   address: string | null;
+  role: string;
   status: string;
   created_at: string;
+}
+
+interface EndorsementRecord {
+  id: number;
+  status:
+    | 'pending_leader_review'
+    | 'leader_endorsed'
+    | 'leader_rejected'
+    | 'approved'
+    | 'admin_rejected'
+    | 'withdrawn';
+  requester_name_snapshot: string;
+  purok_name_snapshot: string;
+}
+
+type PaymentStatus =
+  | 'pending_leader_verification'
+  | 'rejected_by_leader'
+  | 'pending_remittance'
+  | 'pending_admin_confirmation'
+  | 'discrepancy'
+  | 'completed';
+
+interface PaymentRecord {
+  id: number;
+  transaction_code: string;
+  resident_name: string;
+  purok_name: string;
+  amount: number | string;
+  status: PaymentStatus;
 }
 
 interface DashboardSummary {
@@ -69,34 +102,23 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
   });
   const [analyticsLoading, setAnalyticsLoading] = useState(true);
   const [analyticsError, setAnalyticsError] = useState('');
+  const [analyticsUnavailable, setAnalyticsUnavailable] = useState<string[]>([]);
+
+  const [endorsements] = useState<EndorsementRecord[]>([]);
+  const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [operationalLoading, setOperationalLoading] = useState(true);
+  const endorsementError = '';
+  const [paymentError, setPaymentError] = useState('');
 
   const loadDashboardSummary = useCallback(async () => {
-    const token =
-      localStorage.getItem('token') || sessionStorage.getItem('token') || '';
-
-    if (!token) {
-      setSummaryError('Admin session not found. Please sign in again.');
-      setSummaryLoading(false);
-      return;
-    }
-
     try {
       setSummaryLoading(true);
       setSummaryError('');
 
-      const response = await fetch('/api/admin/dashboard-summary', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(
-          data.message || 'Unable to load dashboard summary.',
-        );
-      }
+      const data = await apiRequest<{
+        success: boolean;
+        summary?: Partial<DashboardSummary>;
+      }>('/admin/dashboard-summary');
 
       setSummary({
         residents: Number(data?.summary?.residents || 0),
@@ -118,32 +140,24 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
   }, []);
 
   const loadAnalytics = useCallback(async () => {
-    const token =
-      localStorage.getItem('token') || sessionStorage.getItem('token') || '';
-
-    if (!token) {
-      setAnalyticsError('Admin session not found. Please sign in again.');
-      setAnalyticsLoading(false);
-      return;
-    }
-
     try {
       setAnalyticsLoading(true);
       setAnalyticsError('');
+      setAnalyticsUnavailable([]);
 
-      const response = await fetch('/api/admin/analytics', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Unable to load analytics.');
-      }
+      const data = await apiRequest<{
+        success: boolean;
+        analytics?: Partial<DashboardAnalytics>;
+        unavailableSources?: string[];
+      }>('/admin/analytics');
 
       const source = data?.analytics || {};
+
+      setAnalyticsUnavailable(
+        Array.isArray(data.unavailableSources)
+          ? data.unavailableSources
+          : [],
+      );
 
       setAnalytics({
         usersByRole: Array.isArray(source.usersByRole)
@@ -178,40 +192,67 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
   }, []);
 
   const loadPendingCollectors = useCallback(async () => {
-    const token =
-      localStorage.getItem('token') || sessionStorage.getItem('token') || '';
-
-    if (!token) {
-      setCollectorError('Admin session not found. Please sign in again.');
-      setCollectorLoading(false);
-      return;
-    }
-
     try {
       setCollectorLoading(true);
       setCollectorError('');
 
-      const response = await fetch('/api/auth/admin/pending-collectors', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setCollectorError(data.message || 'Unable to load pending collectors.');
-        return;
-      }
+      const data = await apiRequest<{
+        success: boolean;
+        users?: PendingCollector[];
+      }>('/admin/users');
 
       setPendingCollectors(
-        Array.isArray(data.collectors) ? data.collectors : [],
+        Array.isArray(data.users)
+          ? data.users.filter(
+              (user) =>
+                user.role === 'collector' &&
+                user.status === 'pending',
+            )
+          : [],
       );
     } catch (error) {
       console.error('Pending collector fetch error:', error);
-      setCollectorError('Cannot connect to the server.');
+      setCollectorError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to load pending collectors.',
+      );
     } finally {
       setCollectorLoading(false);
+    }
+  }, []);
+
+  const pendingAdminSign = useMemo(
+    () =>
+      endorsements.filter(
+        (endorsement) => endorsement.status === 'leader_endorsed',
+      ),
+    [endorsements],
+  );
+  const totalRequests = endorsements.length;
+
+  const loadOperationalQueues = useCallback(async () => {
+    setOperationalLoading(true);
+    setPaymentError('');
+
+    try {
+      const data = await apiRequest<{
+        success: boolean;
+        payments?: PaymentRecord[];
+      }>('/payments');
+
+      setPayments(
+        Array.isArray(data.payments) ? data.payments : [],
+      );
+    } catch (error) {
+      setPayments([]);
+      setPaymentError(
+        error instanceof Error
+          ? error.message
+          : 'Payment ledger is unavailable.',
+      );
+    } finally {
+      setOperationalLoading(false);
     }
   }, []);
 
@@ -220,66 +261,76 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
       loadDashboardSummary(),
       loadAnalytics(),
       loadPendingCollectors(),
+      loadOperationalQueues(),
     ]);
-  }, [loadDashboardSummary, loadAnalytics, loadPendingCollectors]);
+  }, [
+    loadDashboardSummary,
+    loadAnalytics,
+    loadPendingCollectors,
+    loadOperationalQueues,
+  ]);
 
   const reviewCollector = async (
     collectorId: number,
     action: 'approve' | 'reject',
   ) => {
-    const token =
-      localStorage.getItem('token') || sessionStorage.getItem('token') || '';
-
-    if (!token) {
-      setCollectorError('Admin session not found. Please sign in again.');
-      return;
-    }
-
     try {
       setReviewingId(collectorId);
       setCollectorError('');
       setCollectorMessage('');
 
-      const response = await fetch(
-        `/api/auth/admin/collectors/${collectorId}/verification`,
-        {
+      const data = await apiRequest<{
+        success: boolean;
+        message?: string;
+      }>(`/admin/users/${collectorId}/status`, {
           method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ action }),
-        },
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setCollectorError(data.message || 'Unable to review collector.');
-        return;
-      }
+          body: JSON.stringify({
+            status: action === 'approve' ? 'active' : 'inactive',
+          }),
+        });
 
       setPendingCollectors((current) =>
         current.filter((collector) => collector.id !== collectorId),
       );
       setCollectorMessage(data.message || 'Collector registration updated.');
+      void Promise.all([
+        loadDashboardSummary(),
+        loadAnalytics(),
+      ]);
     } catch (error) {
       console.error('Collector review error:', error);
-      setCollectorError('Cannot connect to the server.');
+      setCollectorError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to review collector.',
+      );
     } finally {
       setReviewingId(null);
     }
   };
-  // Real-time local storage pull for clearance records
-  const saved = typeof window !== 'undefined' ? localStorage.getItem('sg_endorsements') : null;
-  const endorsements = saved ? JSON.parse(saved) : [];
-  const pendingAdminSign = endorsements.filter((e: any) => e.status === 'Purok Leader Endorsed');
-  const totalRequests = endorsements.length;
 
-  // Payments verification tracking for ledger
-  const savedPay = typeof window !== 'undefined' ? localStorage.getItem('sg_payment_history') : null;
-  const payments = savedPay ? JSON.parse(savedPay) : [];
-  const pendingPayments = payments.filter((p: any) => p.status === 'Pending Verification');
+  const pendingPayments = useMemo(
+    () =>
+      payments.filter((payment) =>
+        [
+          'pending_admin_confirmation',
+          'discrepancy',
+        ].includes(payment.status),
+      ),
+    [payments],
+  );
+
+  const completedRevenue = useMemo(
+    () =>
+      payments
+        .filter((payment) => payment.status === 'completed')
+        .reduce(
+          (total, payment) =>
+            total + Number(payment.amount || 0),
+          0,
+        ),
+    [payments],
+  );
 
   const complaintsChart = useMemo(
     () =>
@@ -319,43 +370,43 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
   const systemMetrics = [
     {
       label: 'Residents',
-      value: summaryLoading ? '—' : String(summary.residents),
-      trend: 'Active',
+      value: summaryLoading || summaryError ? '—' : String(summary.residents),
+      trend: summaryError ? 'Unavailable' : 'Active',
       icon: Users,
       iconClass: 'bg-blue-50 text-blue-600',
-      trendClass: 'text-blue-600',
+      trendClass: summaryError ? 'text-slate-400' : 'text-blue-600',
     },
     {
       label: 'Collectors',
-      value: summaryLoading ? '—' : String(summary.collectors),
-      trend: 'Active',
+      value: summaryLoading || summaryError ? '—' : String(summary.collectors),
+      trend: summaryError ? 'Unavailable' : 'Active',
       icon: Activity,
       iconClass: 'bg-emerald-50 text-emerald-600',
-      trendClass: 'text-emerald-600',
+      trendClass: summaryError ? 'text-slate-400' : 'text-emerald-600',
     },
     {
       label: 'Purok Leaders',
-      value: summaryLoading ? '—' : String(summary.purokLeaders),
-      trend: 'Assigned',
+      value: summaryLoading || summaryError ? '—' : String(summary.purokLeaders),
+      trend: summaryError ? 'Unavailable' : 'Assigned',
       icon: UserRoundCheck,
       iconClass: 'bg-indigo-50 text-indigo-600',
-      trendClass: 'text-indigo-600',
+      trendClass: summaryError ? 'text-slate-400' : 'text-indigo-600',
     },
     {
       label: 'Garbage Bins',
-      value: summaryLoading ? '—' : String(summary.garbageBins),
-      trend: 'Registered',
+      value: summaryLoading || summaryError ? '—' : String(summary.garbageBins),
+      trend: summaryError ? 'Unavailable' : 'Registered',
       icon: Trash2,
       iconClass: 'bg-amber-50 text-amber-600',
-      trendClass: 'text-amber-600',
+      trendClass: summaryError ? 'text-slate-400' : 'text-amber-600',
     },
     {
       label: 'Pending Complaints',
-      value: summaryLoading ? '—' : String(summary.pendingComplaints),
-      trend: 'Needs Action',
+      value: summaryLoading || summaryError ? '—' : String(summary.pendingComplaints),
+      trend: summaryError ? 'Unavailable' : 'Needs Action',
       icon: MessageSquare,
       iconClass: 'bg-rose-50 text-rose-600',
-      trendClass: 'text-rose-600',
+      trendClass: summaryError ? 'text-slate-400' : 'text-rose-600',
     },
   ];
 
@@ -455,7 +506,11 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
                     title="Complaints per Month"
                     items={complaintsChart}
                     maxValue={maxAnalyticsValue}
-                    emptyMessage="No complaint records yet."
+                    emptyMessage={
+                      analyticsUnavailable.includes('complaintsPerMonth')
+                        ? 'Complaint analytics are currently unavailable.'
+                        : 'No complaint records yet.'
+                    }
                     barClass="bg-rose-400"
                   />
 
@@ -463,7 +518,11 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
                     title="User Registrations per Month"
                     items={registrationsChart}
                     maxValue={maxAnalyticsValue}
-                    emptyMessage="No registration records yet."
+                    emptyMessage={
+                      analyticsUnavailable.includes('registrationsPerMonth')
+                        ? 'Registration analytics are currently unavailable.'
+                        : 'No registration records yet.'
+                    }
                     barClass="bg-blue-500"
                   />
 
@@ -471,7 +530,11 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
                     title="Collection Requests per Month"
                     items={collectionChart}
                     maxValue={maxAnalyticsValue}
-                    emptyMessage="No collection records yet."
+                    emptyMessage={
+                      analyticsUnavailable.includes('collectionsPerMonth')
+                        ? 'Collection analytics are currently unavailable.'
+                        : 'No collection records yet.'
+                    }
                     barClass="bg-emerald-500"
                   />
                 </div>
@@ -482,6 +545,11 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
           <div className="grid gap-6 md:grid-cols-2">
             <AnalyticsBreakdown
               title="Users by Role"
+              emptyMessage={
+                analyticsUnavailable.includes('usersByRole')
+                  ? 'User-role analytics are currently unavailable.'
+                  : 'No user records yet.'
+              }
               items={analytics.usersByRole.map((item) => ({
                 label:
                   item.role === 'purok_leader'
@@ -497,6 +565,11 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
 
             <AnalyticsBreakdown
               title="Garbage Bins by Status"
+              emptyMessage={
+                analyticsUnavailable.includes('binsByStatus')
+                  ? 'Bin-status analytics are currently unavailable.'
+                  : 'No garbage-bin records yet.'
+              }
               items={analytics.binsByStatus.map((item) => ({
                 label: String(item.status || 'Unknown')
                   .replaceAll('_', ' ')
@@ -537,6 +610,7 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
         {/* Global Alerts Feed */}
         <div className="space-y-6">
            {/* CLEARANCE DESK INTERACTIVE CARD */}
+           {false && (
            <div className="bg-gradient-to-br from-[#059669] to-emerald-800 p-6 rounded-[2.5rem] text-white shadow-lg space-y-4">
               <div className="flex justify-between items-start">
                 <div className="p-2.5 bg-white/20 rounded-2xl">
@@ -553,23 +627,44 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
               
               <div className="grid grid-cols-2 gap-3 bg-black/15 p-3 rounded-2xl text-center">
                  <div>
-                    <span className="text-2xl font-black block leading-none">{pendingAdminSign.length}</span>
+                    <span className="text-2xl font-black block leading-none">
+                      {operationalLoading || endorsementError
+                        ? '—'
+                        : pendingAdminSign.length}
+                    </span>
                     <span className="text-[8px] font-black uppercase text-emerald-200 tracking-wider">Await Sign</span>
                  </div>
                  <div className="border-l border-white/10">
-                    <span className="text-2xl font-black block leading-none">{totalRequests}</span>
-                    <span className="text-[8px] font-black uppercase text-emerald-200 tracking-wider">Total Recv</span>
+                    <span className="text-2xl font-black block leading-none">
+                      {operationalLoading || endorsementError
+                        ? '—'
+                        : totalRequests}
+                    </span>
+                    <span className="text-[8px] font-black uppercase text-emerald-200 tracking-wider">Loaded Records</span>
                  </div>
               </div>
 
-              {pendingAdminSign.length > 0 && (
+              {operationalLoading && (
+                <div className="flex items-center gap-2 rounded-xl bg-white/10 px-3 py-2 text-[10px] font-bold text-emerald-100">
+                  <LoaderCircle className="h-3 w-3 animate-spin" />
+                  Loading clearance queue...
+                </div>
+              )}
+
+              {endorsementError && (
+                <div className="rounded-xl border border-white/15 bg-black/15 px-3 py-2 text-[10px] font-bold text-emerald-50">
+                  Clearance data unavailable: {endorsementError}
+                </div>
+              )}
+
+              {!operationalLoading && !endorsementError && pendingAdminSign.length > 0 && (
                 <div className="space-y-1.5 pt-1.5 border-t border-white/10">
                   <span className="text-[8px] font-black uppercase tracking-wider text-emerald-200 block">Queue Highlights</span>
                   <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
-                    {pendingAdminSign.map((req: any) => (
+                    {pendingAdminSign.map((req) => (
                       <div key={req.id} className="flex justify-between items-center text-[10px] bg-white/10 px-2.5 py-1.5 rounded-lg">
-                        <span className="font-extrabold truncate max-w-[120px]">{req.householdName}</span>
-                        <span className="font-mono text-[8px] bg-emerald-500/30 px-1 rounded-sm">{req.purok}</span>
+                        <span className="font-extrabold truncate max-w-[120px]">{req.requester_name_snapshot}</span>
+                        <span className="font-mono text-[8px] bg-emerald-500/30 px-1 rounded-sm">{req.purok_name_snapshot}</span>
                       </div>
                     ))}
                   </div>
@@ -580,9 +675,12 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
                 onClick={() => setCurrentScreen('endorsements')}
                 className="w-full py-3 bg-white text-emerald-990 hover:bg-emerald-50 active:scale-95 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-md flex items-center justify-center gap-2 text-emerald-900"
               >
-                <span>Browse Queue ({pendingAdminSign.length}) →</span>
+                <span>
+                  Browse Queue ({operationalLoading || endorsementError ? '—' : pendingAdminSign.length}) →
+                </span>
               </button>
            </div>
+           )}
 
            {/* ADMIN TREASURY JOURNAL AUDIT CARD */}
            <div className="bg-[#1E293B] p-6 rounded-[2.5rem] text-white shadow-lg space-y-4">
@@ -591,35 +689,57 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
                   <CreditCard className="w-5 h-5 text-emerald-400 font-extrabold" />
                 </div>
                 <span className="px-2.5 py-1 bg-white/10 text-white text-[9px] font-black uppercase tracking-wider rounded-lg">
-                  Global Auditor
+                  Barangay Auditor
                 </span>
               </div>
               <div className="space-y-1">
                  <h3 className="text-lg font-black tracking-tight leading-none text-white">Treasury Journal Desk</h3>
-                 <p className="text-[10px] text-slate-350">Approve municipal-wide digital environmental receipts</p>
+                 <p className="text-[10px] text-slate-300">Review barangay payment remittances from the official ledger</p>
               </div>
               
               <div className="grid grid-cols-2 gap-3 bg-black/20 p-3 rounded-2xl text-center">
                  <div>
-                    <span className="text-2xl font-black block leading-none text-amber-400">{pendingPayments.length}</span>
+                    <span className="text-2xl font-black block leading-none text-amber-400">
+                      {operationalLoading || paymentError
+                        ? '—'
+                        : pendingPayments.length}
+                    </span>
                     <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider">Awaiting Audit</span>
                  </div>
                  <div className="border-l border-white/10">
                     <span className="text-2xl font-black block leading-none text-emerald-400">
-                      ₱{payments.filter((p: any) => p.status === 'Paid').reduce((acc: number, curr: any) => acc + curr.amount, 0)}
+                      {operationalLoading || paymentError
+                        ? '—'
+                        : `₱${completedRevenue.toLocaleString('en-PH', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}`}
                     </span>
                     <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider">Total Revenue</span>
                  </div>
               </div>
 
-              {pendingPayments.length > 0 && (
+              {operationalLoading && (
+                <div className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-[10px] font-bold text-slate-300">
+                  <LoaderCircle className="h-3 w-3 animate-spin" />
+                  Loading payment ledger...
+                </div>
+              )}
+
+              {paymentError && (
+                <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[10px] font-bold text-slate-200">
+                  Payment data unavailable: {paymentError}
+                </div>
+              )}
+
+              {!operationalLoading && !paymentError && pendingPayments.length > 0 && (
                 <div className="space-y-1.5 pt-1.5 border-t border-white/5">
                   <span className="text-[8px] font-black uppercase tracking-wider text-slate-400 block">Pending Receipts</span>
                   <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
-                    {pendingPayments.map((p: any) => (
-                      <div key={p.id} className="flex justify-between items-center text-[10px] bg-white/5 px-2.5 py-1.5 rounded-lg border border-white/5">
-                        <span className="font-extrabold truncate max-w-[120px]">{p.householdName}</span>
-                        <span className="font-mono text-[8px] bg-amber-500/10 text-amber-300 px-1 rounded-sm">{p.purok}</span>
+                    {pendingPayments.map((payment) => (
+                      <div key={payment.id} className="flex justify-between items-center text-[10px] bg-white/5 px-2.5 py-1.5 rounded-lg border border-white/5">
+                        <span className="font-extrabold truncate max-w-[120px]">{payment.resident_name}</span>
+                        <span className="font-mono text-[8px] bg-amber-500/10 text-amber-300 px-1 rounded-sm">{payment.purok_name}</span>
                       </div>
                     ))}
                   </div>
@@ -630,7 +750,9 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
                 onClick={() => setCurrentScreen('payments')}
                 className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-md flex items-center justify-center gap-2 border-none text-white"
               >
-                <span>Audit Financial Ledger ({pendingPayments.length}) →</span>
+                <span>
+                  Audit Financial Ledger ({operationalLoading || paymentError ? '—' : pendingPayments.length}) →
+                </span>
               </button>
            </div>
 
@@ -642,6 +764,7 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
                   void loadPendingCollectors();
                   void loadDashboardSummary();
                   void loadAnalytics();
+                  void loadOperationalQueues();
                 }}
                 className="text-[10px] font-black uppercase tracking-wider text-emerald-600 hover:text-emerald-700"
               >
@@ -708,9 +831,10 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
                        </p>
                        <p>
                          Purok:{' '}
-                         {collector.purok_id
-                           ? `Purok ${collector.purok_id}`
-                           : 'Not assigned'}
+                         {collector.purok_name ||
+                           (collector.purok_id
+                             ? `Purok ${collector.purok_id}`
+                             : 'Not assigned')}
                        </p>
                        <p>Phone: {collector.phone || 'Not provided'}</p>
                      </div>
@@ -819,9 +943,11 @@ function AnalyticsBarChart({
 function AnalyticsBreakdown({
   title,
   items,
+  emptyMessage = 'No analytics records yet.',
 }: {
   title: string;
   items: Array<{ label: string; value: number }>;
+  emptyMessage?: string;
 }) {
   const total = items.reduce((sum, item) => sum + item.value, 0);
 
@@ -831,7 +957,7 @@ function AnalyticsBreakdown({
 
       {items.length === 0 ? (
         <p className="mt-4 text-xs font-bold text-slate-400">
-          No analytics records yet.
+          {emptyMessage}
         </p>
       ) : (
         <div className="mt-5 space-y-4">

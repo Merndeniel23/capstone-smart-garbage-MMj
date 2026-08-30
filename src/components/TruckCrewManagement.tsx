@@ -177,9 +177,30 @@ export default function TruckCrewManagement() {
 
   const registerTruckCrew = async (event: FormEvent) => {
     event.preventDefault();
-    setSaving(true);
     setError("");
     setNotice("");
+
+    if (collectorMode === "new") {
+      if (!/^\S+@\S+\.\S+$/.test(collectorEmail.trim())) {
+        setError("Enter a valid collector email address.");
+        return;
+      }
+
+      if (
+        temporaryPassword.length < 12 ||
+        !/[A-Z]/.test(temporaryPassword) ||
+        !/[a-z]/.test(temporaryPassword) ||
+        !/\d/.test(temporaryPassword) ||
+        !/[^A-Za-z0-9]/.test(temporaryPassword)
+      ) {
+        setError(
+          "Use a temporary password of at least 12 characters with uppercase, lowercase, number, and symbol.",
+        );
+        return;
+      }
+    }
+
+    setSaving(true);
 
     try {
       const payload = {

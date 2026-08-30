@@ -9,13 +9,15 @@ interface ChatMessage {
   timestamp: string;
 }
 
+const MAX_CHAT_MESSAGE_LENGTH = 2000;
+
 export default function ChatbotWidget() {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'greeting',
       role: 'assistant',
-      text: "Hello! I am the Smart Garbage Monitoring Assistant. 👋\n\nI can help with login, registration, profiles, manual bin inspections, collection requests, collector GPS tracking, complaints, notifications, payments, reports, and role-based dashboards.",
+      text: "Hello! I am the Smart Garbage Monitoring Assistant. 👋\n\nI can help with this system's login, registration, profiles, bin inspections, collection requests, complaints, notifications, payments, reports, and role-based dashboards. Pwede pud ka mangutana sa Cebuano.",
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
   ]);
@@ -57,12 +59,24 @@ export default function ChatbotWidget() {
   }, [messages, isLoading]);
 
   const handleSendMessage = async (textToSend: string) => {
-    if (!textToSend.trim() || isLoading) return;
+    const normalizedText = textToSend.trim();
+
+    if (!normalizedText || isLoading) return;
+
+    if (normalizedText.length > MAX_CHAT_MESSAGE_LENGTH) {
+      setMessages(prev => [...prev, {
+        id: `ai-err-${Date.now()}`,
+        role: 'assistant',
+        text: `Please keep your question to ${MAX_CHAT_MESSAGE_LENGTH} characters or less.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      }]);
+      return;
+    }
 
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
-      text: textToSend,
+      text: normalizedText,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
@@ -80,10 +94,17 @@ export default function ChatbotWidget() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${
+            localStorage.getItem('token') ||
+            localStorage.getItem('authToken') ||
+            sessionStorage.getItem('token') ||
+            sessionStorage.getItem('authToken') ||
+            ''
+          }`
         },
         body: JSON.stringify({
-          message: textToSend,
+          message: normalizedText,
           chatHistory: chatHistory
         })
       });
@@ -127,7 +148,7 @@ export default function ChatbotWidget() {
       {
         id: 'greeting',
         role: 'assistant',
-        text: "Welcome back! Ask me anything related to the Smart Garbage Monitoring System.",
+        text: "Welcome back! Ask about the Smart Garbage Monitoring System in English or Cebuano.",
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }
     ]);
@@ -219,7 +240,7 @@ export default function ChatbotWidget() {
                   <h3 className="text-xs font-black uppercase text-slate-100 tracking-wider">Smart Garbage Assistant</h3>
                   <div className="flex items-center gap-1 text-[9px] font-extrabold text-emerald-400 tracking-tight uppercase">
                     <Sparkles className="w-2.5 h-2.5 animate-pulse" />
-                    Official In-App Guide
+                    Role-Scoped In-App Guide
                   </div>
                 </div>
               </div>
@@ -340,6 +361,7 @@ export default function ChatbotWidget() {
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 placeholder={isLoading ? 'Please wait...' : 'Ask about the system...'}
+                maxLength={MAX_CHAT_MESSAGE_LENGTH}
                 className="flex-1 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder-slate-500 outline-none transition-colors"
                 disabled={isLoading}
               />

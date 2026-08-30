@@ -21,7 +21,9 @@ export default function ChangeInitialPassword() {
   const [successMessage, setSuccessMessage] = useState("");
 
   const getDashboardScreen = () => {
-    const role = localStorage.getItem("sg_user_role");
+    const role =
+      localStorage.getItem("sg_user_role") ||
+      sessionStorage.getItem("sg_user_role");
 
     if (role === "super_admin") return "super-admin-dashboard";
     if (role === "admin") return "admin-dashboard";
@@ -32,25 +34,24 @@ export default function ChangeInitialPassword() {
   };
 
   const handleBackToLogin = () => {
-    // Clear the API session.
-    localStorage.removeItem("token");
-    sessionStorage.removeItem("token");
+    const keys = [
+      "token",
+      "authToken",
+      "sg_current_user",
+      "sg_is_logged_in",
+      "sg_user_role",
+      "sg_current_screen",
+      "sg_temp_login_email",
+      "sg_requires_location_setup",
+      "sg_pending_approval",
+      "sg_user",
+      "user",
+    ];
 
-    // Clear the AppStateContext auth flags that restore a logged-in user
-    // after reload. If these remain, the app immediately redirects back
-    // to that user's dashboard.
-    localStorage.removeItem("sg_current_user");
-    localStorage.setItem("sg_is_logged_in", "false");
-    localStorage.removeItem("sg_user_role");
-    localStorage.setItem("sg_current_screen", "registration");
-    localStorage.removeItem("sg_temp_login_email");
-
-    // Legacy/session keys, if present.
-    localStorage.removeItem("sg_user");
-    localStorage.removeItem("user");
-    sessionStorage.removeItem("sg_current_user");
-    sessionStorage.removeItem("sg_user");
-    sessionStorage.removeItem("user");
+    for (const key of keys) {
+      localStorage.removeItem(key);
+      sessionStorage.removeItem(key);
+    }
 
     window.location.reload();
   };
@@ -66,8 +67,15 @@ export default function ChangeInitialPassword() {
       return;
     }
 
-    if (newPassword.length < 8) {
-      setError("New password must contain at least 8 characters.");
+    if (
+      newPassword.length < 8 ||
+      !/[A-Z]/.test(newPassword) ||
+      !/[a-z]/.test(newPassword) ||
+      !/\d/.test(newPassword)
+    ) {
+      setError(
+        "Use at least 8 characters with uppercase, lowercase, and a number.",
+      );
       return;
     }
 
@@ -94,9 +102,9 @@ export default function ChangeInitialPassword() {
 
     try {
       const response = await fetch(
-        "/api/auth/change-initial-password",
+        "/api/auth/change-temporary-password",
         {
-          method: "POST",
+          method: "PUT",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
@@ -118,9 +126,12 @@ export default function ChangeInitialPassword() {
       }
 
       const dashboardScreen = getDashboardScreen();
+      const storage = localStorage.getItem("token")
+        ? localStorage
+        : sessionStorage;
 
-      localStorage.setItem("sg_current_screen", dashboardScreen);
-      localStorage.removeItem("sg_temp_login_email");
+      storage.setItem("sg_current_screen", dashboardScreen);
+      storage.removeItem("sg_temp_login_email");
 
       setSuccessMessage(
         data.message ||

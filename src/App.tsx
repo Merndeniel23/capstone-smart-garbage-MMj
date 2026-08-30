@@ -31,6 +31,7 @@ import ManageGarbageBins from "./components/ManageGarbageBins";
 import ChangeInitialPassword from "./components/ChangeInitialPassword";
 import Reports from "./components/Reports";
 import TruckCrewManagement from "./components/TruckCrewManagement";
+import EmergencyAlertOverlay from "./components/EmergencyAlertOverlay";
 
 import {
   AppStateProvider,
@@ -66,6 +67,74 @@ export type Screen =
   | "change-initial-password"
   | "reports"
   | "truck-crew-management";
+
+const ROLE_HOME_SCREEN: Record<Role, Screen> = {
+  household: "dashboard",
+  collector: "collector-tasks",
+  leader: "leader-dashboard",
+  admin: "admin-dashboard",
+  super_admin: "super-admin-dashboard",
+};
+
+const ROLE_SCREENS: Record<Role, Screen[]> = {
+  household: [
+    "dashboard",
+    "schedule",
+    "complaints",
+    "payments",
+    "notifications",
+    "profile",
+    "endorsements",
+  ],
+  collector: [
+    "collector-tasks",
+    "collector-pickup-log",
+    "complaints",
+    "route-map",
+    "schedule",
+    "notifications",
+    "profile",
+  ],
+  leader: [
+    "leader-dashboard",
+    "garbage-bins",
+    "bin-inspections",
+    "members-list",
+    "complaints",
+    "endorsements",
+    "payments",
+    "schedule",
+    "notifications",
+    "profile",
+  ],
+  admin: [
+    "admin-dashboard",
+    "garbage-bins",
+    "bin-inspections",
+    "user-management",
+    "complaints",
+    "payments",
+    "route-map",
+    "schedule",
+    "notifications",
+    "reports",
+    "profile",
+  ],
+  super_admin: [
+    "super-admin-dashboard",
+    "user-management",
+    "members-list",
+    "garbage-bins",
+    "truck-crew-management",
+    "complaints",
+    "endorsements",
+    "payments",
+    "schedule",
+    "notifications",
+    "reports",
+    "profile",
+  ],
+};
 
 
 const COLLECTOR_LOCATION_FLAG =
@@ -326,11 +395,36 @@ export default function App() {
 function AppContent() {
   const {
     isLoggedIn,
+    isAuthLoading,
     userRole,
+    currentUser,
     currentScreen,
     setCurrentScreen,
     logoutUser,
   } = useAppState();
+
+  useEffect(() => {
+    if (!isLoggedIn || currentScreen === "change-initial-password") {
+      return;
+    }
+
+    const residentAccountRestricted =
+      userRole === "household" &&
+      (currentUser?.status === "pending" ||
+        !currentUser?.barangay ||
+        !currentUser?.purok ||
+        !currentUser?.address.trim() ||
+        !currentUser?.phone.trim());
+
+    if (residentAccountRestricted && currentScreen !== "profile") {
+      setCurrentScreen("profile");
+      return;
+    }
+
+    if (!ROLE_SCREENS[userRole].includes(currentScreen as Screen)) {
+      setCurrentScreen(ROLE_HOME_SCREEN[userRole]);
+    }
+  }, [currentScreen, currentUser, isLoggedIn, setCurrentScreen, userRole]);
 
   const handleLogout = () => {
     if (userRole === "collector") {
@@ -346,6 +440,19 @@ function AppContent() {
 
     logoutUser();
   };
+
+  if (isAuthLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <div className="text-center" role="status" aria-live="polite">
+          <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-emerald-100 border-t-emerald-600" />
+          <p className="mt-4 text-sm font-bold text-slate-600">
+            Restoring your secure session...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (!isLoggedIn) {
     return (
@@ -366,6 +473,7 @@ function AppContent() {
 
   return (
     <div className="flex min-h-screen flex-col bg-[#F8FAFC] font-sans text-slate-900 md:flex-row">
+      <EmergencyAlertOverlay />
       {userRole === "collector" && (
         <PersistentCollectorLocationTracker />
       )}

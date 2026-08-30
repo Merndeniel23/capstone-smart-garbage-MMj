@@ -923,23 +923,17 @@ router.get("/users", requireAuth, async (req: AuthRequest, res) => {
     if (!requireBarangayCaptain(req, res)) return;
 
     const viewerId = parsePositiveInteger(req.user?.id);
+    const viewerRole = String(req.user?.role || "").toLowerCase();
+    const barangayId = parsePositiveInteger(req.user?.barangay_id);
 
-    const [viewerRows]: any = await db.query(
-      `SELECT id, role, barangay_id FROM users WHERE id = ? LIMIT 1`,
-      [viewerId],
-    );
-
-    const viewer = viewerRows[0];
-
-    if (!viewer) {
+    if (!viewerId) {
       return res.status(401).json({
         success: false,
-        message: "Administrator account was not found.",
+        message: "Authentication required.",
       });
     }
 
-    const isSuperAdmin = viewer.role === "super_admin";
-    const barangayId = parsePositiveInteger(viewer.barangay_id);
+    const isSuperAdmin = viewerRole === "super_admin";
 
     if (!isSuperAdmin && !barangayId) {
       return res.status(400).json({
@@ -1149,10 +1143,27 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
       });
     }
 
+    const viewerRole = String(req.user?.role || "").toLowerCase();
+    const viewerBarangayId = parsePositiveInteger(req.user?.barangay_id);
+    const isSuperAdmin = viewerRole === "super_admin";
+
+    if (!isSuperAdmin && !viewerBarangayId) {
+      return res.status(403).json({
+        success: false,
+        message: "The Barangay Captain account has no assigned barangay.",
+      });
+    }
+
     await connection.beginTransaction();
 
     const [userRows]: any = await connection.query(
-      `SELECT id, full_name, role, status FROM users WHERE id = ? LIMIT 1`,
+      `
+      SELECT id, full_name, role, status, barangay_id, purok_id
+      FROM users
+      WHERE id = ?
+      LIMIT 1
+      FOR UPDATE
+      `,
       [userId],
     );
 
@@ -1163,10 +1174,21 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
       return res.status(404).json({ success: false, message: "User was not found." });
     }
 
-   if (
-  user.role === "admin" ||
-  user.role === "super_admin"
-) {
+    if (
+      !isSuperAdmin &&
+      Number(user.barangay_id) !== viewerBarangayId
+    ) {
+      await connection.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "User was not found in your barangay.",
+      });
+    }
+
+    if (
+      user.role === "admin" ||
+      user.role === "super_admin"
+    ) {
       await connection.rollback();
       return res.status(403).json({
         success: false,
@@ -1185,6 +1207,15 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
           message: "Select an assigned barangay for the garbage collector.",
         });
       }
+
+      if (!isSuperAdmin && barangayId !== viewerBarangayId) {
+        await connection.rollback();
+        return res.status(403).json({
+          success: false,
+          message: "Barangay Captains cannot move accounts to another barangay.",
+        });
+      }
+
       finalPurokId = null;
     }
 
@@ -1214,6 +1245,14 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
 
       finalBarangayId = Number(purok.barangay_id);
       finalPurokId = Number(purok.id);
+
+      if (!isSuperAdmin && finalBarangayId !== viewerBarangayId) {
+        await connection.rollback();
+        return res.status(403).json({
+          success: false,
+          message: "The selected purok is outside your barangay.",
+        });
+      }
     }
 
     if (finalBarangayId) {
@@ -1288,21 +1327,9 @@ router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => 
       });
     }
 
-    const [viewerRows]: any = await db.query(
-      `SELECT id, role, barangay_id FROM users WHERE id = ? LIMIT 1`,
-      [req.user?.id],
-    );
-
-    const viewer = viewerRows[0];
-    const isSuperAdmin = viewer?.role === "super_admin";
-    const barangayId = parsePositiveInteger(viewer?.barangay_id);
-
-    if (!viewer) {
-      return res.status(401).json({
-        success: false,
-        message: "Administrator account was not found.",
-      });
-    }
+    const viewerRole = String(req.user?.role || "").toLowerCase();
+    const isSuperAdmin = viewerRole === "super_admin";
+    const barangayId = parsePositiveInteger(req.user?.barangay_id);
 
     if (!isSuperAdmin && !barangayId) {
       return res.status(403).json({
@@ -1349,6 +1376,8 @@ router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => 
 });
 
 router.post("/barangay-captains", requireAuth, async (req: AuthRequest, res) => {
+  const connection = await db.getConnection();
+
   try {
     if (req.user?.role !== "super_admin") {
       return res.status(403).json({
@@ -1357,17 +1386,15 @@ router.post("/barangay-captains", requireAuth, async (req: AuthRequest, res) => 
       });
     }
 
-    const {
-      fullName,
-      email,
-      recoveryEmail,
-      phone,
-      barangayId,
-      password,
-      temporaryPassword,
-    } = req.body;
-
-    const plainPassword = password || temporaryPassword;
+    const fullName = String(req.body.fullName || "").trim();
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const recoveryEmail =
+      String(req.body.recoveryEmail || "").trim().toLowerCase() || null;
+    const phone = String(req.body.phone || "").trim() || null;
+    const barangayId = parsePositiveInteger(req.body.barangayId);
+    const plainPassword = String(
+      req.body.temporaryPassword || req.body.password || "",
+    );
 
     if (!fullName || !email || !barangayId || !plainPassword) {
       return res.status(400).json({
@@ -1376,33 +1403,89 @@ router.post("/barangay-captains", requireAuth, async (req: AuthRequest, res) => 
       });
     }
 
-    const [existing]: any = await db.query(
-      "SELECT id FROM users WHERE email=? LIMIT 1",
-      [email]
+    const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (
+      fullName.length > 150 ||
+      email.length > 150 ||
+      !validEmail.test(email) ||
+      (recoveryEmail &&
+        (recoveryEmail.length > 150 || !validEmail.test(recoveryEmail))) ||
+      (phone && !/^\+?\d{7,15}$/.test(phone))
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Enter valid captain identity and contact information.",
+      });
+    }
+
+    if (
+      plainPassword.length < 12 ||
+      !/[A-Z]/.test(plainPassword) ||
+      !/[a-z]/.test(plainPassword) ||
+      !/\d/.test(plainPassword) ||
+      !/[^A-Za-z0-9]/.test(plainPassword)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Temporary password must be at least 12 characters and include uppercase, lowercase, number, and symbol.",
+      });
+    }
+
+    const hash = await bcrypt.hash(plainPassword, 12);
+
+    await connection.beginTransaction();
+
+    // Lock the barangay row so two concurrent requests cannot create two
+    // captains for the same barangay.
+    const [barangayRows]: any = await connection.query(
+      `
+      SELECT id
+      FROM barangays
+      WHERE id = ?
+        AND is_active = 1
+      LIMIT 1
+      FOR UPDATE
+      `,
+      [barangayId],
+    );
+
+    if (!barangayRows.length) {
+      await connection.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "The selected barangay was not found or is inactive.",
+      });
+    }
+
+    const [existing]: any = await connection.query(
+      "SELECT id FROM users WHERE email = ? LIMIT 1 FOR UPDATE",
+      [email],
     );
 
     if (existing.length) {
-      return res.status(400).json({
+      await connection.rollback();
+      return res.status(409).json({
         success: false,
         message: "Email already exists.",
       });
     }
 
-    const [captain]: any = await db.query(
-      "SELECT id FROM users WHERE role='admin' AND barangay_id=? LIMIT 1",
-      [barangayId]
+    const [captain]: any = await connection.query(
+      "SELECT id FROM users WHERE role = 'admin' AND barangay_id = ? LIMIT 1 FOR UPDATE",
+      [barangayId],
     );
 
     if (captain.length) {
-      return res.status(400).json({
+      await connection.rollback();
+      return res.status(409).json({
         success: false,
         message: "This barangay already has a Barangay Captain.",
       });
     }
 
-    const hash = await bcrypt.hash(plainPassword, 10);
-
-    await db.execute(
+    await connection.execute(
       `INSERT INTO users
       (full_name,email,phone,password_hash,recovery_email,role,barangay_id,status,must_change_password)
       VALUES (?,?,?,?,?,'admin',?,'active',1)`,
@@ -1412,20 +1495,33 @@ router.post("/barangay-captains", requireAuth, async (req: AuthRequest, res) => 
         phone || null,
         hash,
         recoveryEmail || null,
-        Number(barangayId),
-      ]
+        barangayId,
+      ],
     );
 
-    return res.json({
+    await connection.commit();
+
+    return res.status(201).json({
       success: true,
       message: "Barangay Captain account created successfully.",
     });
-  } catch (error) {
+  } catch (error: any) {
+    await connection.rollback();
     console.error("Create Barangay Captain error:", error);
+
+    if (error?.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({
+        success: false,
+        message: "The captain email or barangay assignment already exists.",
+      });
+    }
+
     return res.status(500).json({
       success: false,
       message: "Unable to create Barangay Captain.",
     });
+  } finally {
+    connection.release();
   }
 });
 router.delete(
@@ -1435,9 +1531,9 @@ router.delete(
     try {
       if (!requireBarangayCaptain(req, res)) return;
 
-      const userId = Number(req.params.id);
+      const userId = parsePositiveInteger(req.params.id);
 
-      if (!Number.isInteger(userId)) {
+      if (!userId) {
         return res.status(400).json({
           success: false,
           message: "Invalid user ID.",
@@ -1453,7 +1549,7 @@ router.delete(
 
       const [rows]: any = await db.query(
         `
-        SELECT id, role, full_name
+        SELECT id, role, full_name, barangay_id
         FROM users
         WHERE id = ?
         LIMIT 1
@@ -1468,6 +1564,28 @@ router.delete(
         });
       }
 
+      const isSuperAdmin = req.user?.role === "super_admin";
+      const viewerBarangayId = parsePositiveInteger(
+        req.user?.barangay_id,
+      );
+
+      if (!isSuperAdmin && !viewerBarangayId) {
+        return res.status(403).json({
+          success: false,
+          message: "The Barangay Captain account has no assigned barangay.",
+        });
+      }
+
+      if (
+        !isSuperAdmin &&
+        Number(rows[0].barangay_id) !== viewerBarangayId
+      ) {
+        return res.status(404).json({
+          success: false,
+          message: "User was not found in your barangay.",
+        });
+      }
+
       if (
         rows[0].role === "admin" ||
         rows[0].role === "super_admin"
@@ -1478,13 +1596,27 @@ router.delete(
         });
       }
 
-      await db.execute(
+      const scopeSql = isSuperAdmin ? "" : "AND barangay_id = ?";
+      const parameters = isSuperAdmin
+        ? [userId]
+        : [userId, viewerBarangayId];
+
+      const [result]: any = await db.execute(
         `
         DELETE FROM users
         WHERE id = ?
+          AND role NOT IN ('admin', 'super_admin')
+          ${scopeSql}
         `,
-        [userId],
+        parameters,
       );
+
+      if (result.affectedRows === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "User was not found in your barangay or cannot be deleted.",
+        });
+      }
 
       return res.json({
         success: true,
@@ -1683,12 +1815,37 @@ router.post("/truck-crews", requireAuth, async (req: AuthRequest, res) => {
 
     if (
       !existingCollectorId &&
-      temporaryPassword.length < 8
+      (
+        temporaryPassword.length < 12 ||
+        !/[A-Z]/.test(temporaryPassword) ||
+        !/[a-z]/.test(temporaryPassword) ||
+        !/\d/.test(temporaryPassword) ||
+        !/[^A-Za-z0-9]/.test(temporaryPassword)
+      )
     ) {
       return res.status(400).json({
         success: false,
         message:
-          "Temporary password must contain at least 8 characters.",
+          "Temporary password must be at least 12 characters and include uppercase, lowercase, number, and symbol.",
+      });
+    }
+
+    if (
+      truckCode.length > 40 ||
+      plateNumber.length > 30 ||
+      (vehicleDescription && vehicleDescription.length > 255) ||
+      crewMembers.length > 20 ||
+      (!existingCollectorId &&
+        (
+          collectorName.length > 150 ||
+          collectorEmail.length > 150 ||
+          !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(collectorEmail) ||
+          (collectorPhone && !/^\+?\d{7,15}$/.test(collectorPhone))
+        ))
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Enter valid truck, collector, and crew information.",
       });
     }
 
@@ -1873,7 +2030,7 @@ router.post("/truck-crews", requireAuth, async (req: AuthRequest, res) => {
 
       const passwordHash = await bcrypt.hash(
         temporaryPassword,
-        10,
+        12,
       );
 
       const [collectorResult]: any =

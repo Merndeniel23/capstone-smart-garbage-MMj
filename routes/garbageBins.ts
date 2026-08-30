@@ -36,6 +36,16 @@ function getAssignedPurokId(
   return purokId;
 }
 
+function getAssignedBarangayId(
+  req: AuthRequest,
+): number | null {
+  const barangayId = Number(req.user?.barangay_id);
+
+  return Number.isInteger(barangayId) && barangayId > 0
+    ? barangayId
+    : null;
+}
+
 function validateCoordinates(
   latitudeValue: unknown,
   longitudeValue: unknown,
@@ -69,8 +79,11 @@ function validateCoordinates(
  * Purok Leader:
  * - sees only bins in the leader's assigned purok
  *
- * Admin and Collector:
- * - may view all garbage bins
+ * Barangay Captain, Collector, and Resident:
+ * - see only bins in their assigned barangay
+ *
+ * Super Administrator:
+ * - may view all barangays
  */
 router.get(
   "/",
@@ -122,11 +135,9 @@ router.get(
 
       const parameters: number[] = [];
 
-      if (
-        isPurokLeader(
-          req.user?.role,
-        )
-      ) {
+      const role = req.user?.role;
+
+      if (isPurokLeader(role)) {
         const purokId =
           getAssignedPurokId(req);
 
@@ -143,28 +154,33 @@ router.get(
         `;
 
         parameters.push(purokId);
-      } else if (req.user?.role === "collector") {
-        const barangayId = Number(
-          req.user?.barangay_id,
-        );
+      } else if (
+        role === "collector" ||
+        role === "admin" ||
+        role === "resident" ||
+        role === "household"
+      ) {
+        const barangayId = getAssignedBarangayId(req);
 
-        if (
-          !Number.isInteger(barangayId) ||
-          barangayId <= 0
-        ) {
+        if (!barangayId) {
           return res.status(400).json({
             success: false,
             message:
-              "Your Garbage Collector account has no assigned barangay.",
+              "Your account has no assigned barangay.",
           });
         }
 
         query += `
           WHERE b.id = ?
-            AND gb.is_active = 1
+            ${role === "admin" ? "" : "AND gb.is_active = 1"}
         `;
 
         parameters.push(barangayId);
+      } else if (role !== "super_admin") {
+        return res.status(403).json({
+          success: false,
+          message: "You do not have permission to view garbage bins.",
+        });
       }
 
       query += `

@@ -42,10 +42,10 @@ interface Inspection {
   inspected_at: string;
 }
 
-const API_BASE = "http://localhost:3001/api";
+const API_BASE = "/api";
 
 function getToken() {
-  return localStorage.getItem("token") || "";
+  return localStorage.getItem("token") || sessionStorage.getItem("token") || "";
 }
 
 async function apiRequest(endpoint: string, options: RequestInit = {}) {

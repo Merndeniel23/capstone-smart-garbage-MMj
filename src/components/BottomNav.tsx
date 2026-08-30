@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { ClipboardCheck, LayoutDashboard, Calendar, User, Bell, Map, ClipboardList, Shield, Users, Award, CreditCard, MessageSquare } from 'lucide-react';
+import { ClipboardCheck, LayoutDashboard, Calendar, User, Bell, Map, ClipboardList, Shield, Users, Award, CreditCard, MessageSquare, FileText, Truck, MapPinned, UserCog } from 'lucide-react';
 
 interface BottomNavProps {
   activeTab: string;
   onTabChange: (tab: any) => void;
-  role: 'household' | 'collector' | 'leader' | 'admin';
+  role: 'household' | 'collector' | 'leader' | 'admin' | 'super_admin';
 }
 
 export default function BottomNav({ activeTab, onTabChange, role }: BottomNavProps) {
@@ -101,6 +101,7 @@ export default function BottomNav({ activeTab, onTabChange, role }: BottomNavPro
     { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
     { id: 'schedule', icon: Calendar, label: 'Schedule' },
     { id: 'complaints', icon: MessageSquare, label: 'Complaints' },
+    { id: 'endorsements', icon: Award, label: 'Endorsements' },
     { id: 'payments', icon: CreditCard, label: 'Payments' },
     { id: 'notifications', icon: Bell, label: 'Alerts', count: unseenCount },
     { id: 'profile', icon: User, label: 'Profile' },
@@ -109,47 +110,70 @@ export default function BottomNav({ activeTab, onTabChange, role }: BottomNavPro
   const collectorTabs = [
     { id: 'collector-tasks', icon: ClipboardList, label: 'Tasks' },
     { id: 'route-map', icon: Map, label: 'Route Map' },
-    { id: 'schedule', icon: Calendar, label: 'Pickup Log' },
+    { id: 'complaints', icon: MessageSquare, label: 'Complaints' },
+    { id: 'collector-pickup-log', icon: Truck, label: 'Pickup Log' },
+    { id: 'schedule', icon: Calendar, label: 'Schedule' },
     { id: 'notifications', icon: Bell, label: 'Alerts', count: unseenCount },
     { id: 'profile', icon: User, label: 'Profile' },
   ];
 
   const leaderTabs = [
     { id: 'leader-dashboard', icon: LayoutDashboard, label: 'Leader HUD' },
+    { id: 'garbage-bins', icon: MapPinned, label: 'Garbage Bins' },
     { id: 'bin-inspections', icon: ClipboardCheck, label: 'Inspect Bins' },
     { id: 'members-list', icon: Users, label: 'Purok Members' },
     { id: 'endorsements', icon: Award, label: 'Endorsements' },
     { id: 'payments', icon: CreditCard, label: 'Verify Payments' },
     { id: 'complaints', icon: MessageSquare, label: 'Complaints' },
-    { id: 'schedule', icon: Calendar, label: 'Waste Logs' },
+    { id: 'schedule', icon: Calendar, label: 'Schedule' },
     { id: 'notifications', icon: Bell, label: 'System Alerts', count: unseenCount },
     { id: 'profile', icon: User, label: 'Profile' },
   ];
 
   const adminTabs = [
     { id: 'admin-dashboard', icon: Shield, label: 'Admin Panel' },
+    { id: 'garbage-bins', icon: MapPinned, label: 'Garbage Bins' },
     { id: 'bin-inspections', icon: ClipboardCheck, label: 'Inspections' },
     { id: 'user-management', icon: Users, label: 'Manage Users' },
-    { id: 'endorsements', icon: Award, label: 'Endorsements' },
     { id: 'payments', icon: CreditCard, label: 'Ledger Audit' },
     { id: 'complaints', icon: MessageSquare, label: 'Complaints' },
     { id: 'route-map', icon: Map, label: 'Global Map' },
+    { id: 'schedule', icon: Calendar, label: 'Schedule' },
     { id: 'notifications', icon: Bell, label: 'Global Alerts', count: unseenCount },
+    { id: 'reports', icon: FileText, label: 'Reports' },
     { id: 'profile', icon: User, label: 'Control Center' },
+  ];
+
+  const superAdminTabs = [
+    { id: 'super-admin-dashboard', icon: LayoutDashboard, label: 'Municipal' },
+    { id: 'user-management', icon: UserCog, label: 'Captains' },
+    { id: 'members-list', icon: Users, label: 'Directory' },
+    { id: 'garbage-bins', icon: MapPinned, label: 'Bins' },
+    { id: 'truck-crew-management', icon: Truck, label: 'Truck & Crew' },
+    { id: 'complaints', icon: MessageSquare, label: 'Complaints' },
+    { id: 'payments', icon: CreditCard, label: 'Payments' },
+    { id: 'schedule', icon: Calendar, label: 'Schedules' },
+    { id: 'notifications', icon: Bell, label: 'Alerts', count: unseenCount },
+    { id: 'reports', icon: FileText, label: 'Reports' },
+    { id: 'profile', icon: User, label: 'Security' },
   ];
 
   const residentAccessRestricted =
     role === 'household' &&
     (
       localStorage.getItem('sg_requires_location_setup') === 'true' ||
-      localStorage.getItem('sg_pending_approval') === 'true'
+      sessionStorage.getItem('sg_requires_location_setup') === 'true' ||
+      localStorage.getItem('sg_pending_approval') === 'true' ||
+      sessionStorage.getItem('sg_pending_approval') === 'true'
     );
 
   const restrictedHouseholdTabs =
     householdTabs.filter((tab) => tab.id === 'profile');
 
   const tabs =
-    role === 'collector'
+    role === 'super_admin'
+      ? superAdminTabs
+      : role === 'collector'
       ? collectorTabs
       : role === 'leader'
         ? leaderTabs

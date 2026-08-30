@@ -51,22 +51,39 @@ interface Purok {
 
 type ManagedRole = "resident" | "collector" | "purok_leader";
 
-const API_BASE = "http://localhost:3001/api";
+const API_BASE = "/api";
 
 function generateTemporaryPassword() {
-  const alphabet =
-    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$";
-  const bytes = new Uint32Array(12);
-  crypto.getRandomValues(bytes);
+  const groups = [
+    "ABCDEFGHJKLMNPQRSTUVWXYZ",
+    "abcdefghijkmnopqrstuvwxyz",
+    "23456789",
+    "!@#$%&*",
+  ];
+  const alphabet = groups.join("");
+  const randomIndex = (length: number) => {
+    const value = new Uint32Array(1);
+    crypto.getRandomValues(value);
+    return value[0] % length;
+  };
+  const characters = groups.map(
+    (group) => group[randomIndex(group.length)],
+  );
 
-  return Array.from(
-    bytes,
-    (value) => alphabet[value % alphabet.length],
-  ).join("");
+  while (characters.length < 14) {
+    characters.push(alphabet[randomIndex(alphabet.length)]);
+  }
+
+  for (let index = characters.length - 1; index > 0; index -= 1) {
+    const target = randomIndex(index + 1);
+    [characters[index], characters[target]] = [characters[target], characters[index]];
+  }
+
+  return characters.join("");
 }
 
 function getToken() {
-  return localStorage.getItem("token") || "";
+  return localStorage.getItem("token") || sessionStorage.getItem("token") || "";
 }
 
 async function apiRequest(
@@ -150,7 +167,9 @@ export default function UserManagement() {
   const [selectedBarangayId, setSelectedBarangayId] = useState("");
   const [selectedPurokId, setSelectedPurokId] = useState("");
 
-  const currentRole = localStorage.getItem("sg_user_role");
+  const currentRole =
+    localStorage.getItem("sg_user_role") ||
+    sessionStorage.getItem("sg_user_role");
   const isSuperAdmin = currentRole === "super_admin";
 
   const [showCaptainModal, setShowCaptainModal] = useState(false);
@@ -438,6 +457,19 @@ export default function UserManagement() {
 
     if (recoveryEmail && !/^\S+@\S+\.\S+$/.test(recoveryEmail)) {
       setError("Enter a valid recovery email.");
+      return;
+    }
+
+    if (
+      temporaryPassword.length < 12 ||
+      !/[A-Z]/.test(temporaryPassword) ||
+      !/[a-z]/.test(temporaryPassword) ||
+      !/\d/.test(temporaryPassword) ||
+      !/[^A-Za-z0-9]/.test(temporaryPassword)
+    ) {
+      setError(
+        "Use a temporary password of at least 12 characters with uppercase, lowercase, number, and symbol.",
+      );
       return;
     }
 

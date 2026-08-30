@@ -1,7 +1,6 @@
 import {
   AlertTriangle,
   Building2,
-  CheckCircle2,
   KeyRound,
   Loader2,
   MapPin,
@@ -146,9 +145,6 @@ export default function SuperAdminDashboard({
   const [error, setError] =
     useState("");
 
-  const [notice, setNotice] =
-    useState("");
-
   const [activities,setActivities]=useState<ActivityItem[]>([]);
   const [activityError,setActivityError]=useState("");
 
@@ -175,11 +171,6 @@ export default function SuperAdminDashboard({
 
       setCurrentUser(profile);
 
-      /*
-       * These requests are optional while the dedicated
-       * Super Admin backend routes are still being completed.
-       * The dashboard remains usable even if one request fails.
-       */
       const results =
         await Promise.allSettled([
           apiRequest("/admin/users"),
@@ -288,19 +279,6 @@ export default function SuperAdminDashboard({
       [users],
     );
 
-  const showComingSoon = (
-    feature: string,
-  ) => {
-    setNotice(
-      `${feature} UI is ready. Its dedicated Super Admin backend route is the next step.`,
-    );
-
-    window.setTimeout(
-      () => setNotice(""),
-      4500,
-    );
-  };
-
   if (loading) {
     return (
       <div className="flex min-h-[500px] items-center justify-center">
@@ -346,15 +324,6 @@ export default function SuperAdminDashboard({
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
           <p className="text-sm font-bold">
             {error}
-          </p>
-        </div>
-      )}
-
-      {notice && (
-        <div className="flex items-start gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-blue-700">
-          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
-          <p className="text-sm font-bold">
-            {notice}
           </p>
         </div>
       )}
@@ -450,11 +419,7 @@ export default function SuperAdminDashboard({
 
             <button
               type="button"
-              onClick={() =>
-                showComingSoon(
-                  "Create Barangay Captain",
-                )
-              }
+              onClick={() => setCurrentScreen("user-management")}
               className="rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-black uppercase tracking-wide text-white"
             >
               Create Captain
@@ -472,7 +437,7 @@ export default function SuperAdminDashboard({
                 </p>
 
                 <p className="mt-1 text-xs text-slate-500">
-                  Captain records will appear after the dedicated Super Admin API is connected.
+                  Create the first secured captain account from User Management.
                 </p>
               </div>
             ) : (
@@ -516,11 +481,7 @@ export default function SuperAdminDashboard({
 
                         <button
                           type="button"
-                          onClick={() =>
-                            showComingSoon(
-                              `Manage ${captain.full_name}`,
-                            )
-                          }
+                          onClick={() => setCurrentScreen("user-management")}
                           className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase text-slate-700"
                         >
                           Manage
@@ -542,25 +503,17 @@ export default function SuperAdminDashboard({
 
             <div className="mt-4 space-y-3">
               <ActionButton
-                label="Manage Barangays"
-                description="Activate and review barangays"
+                label="Barangays & Captains"
+                description="Review locations and captain assignments"
                 icon={Building2}
-                onClick={() =>
-                  showComingSoon(
-                    "Manage Barangays",
-                  )
-                }
+                onClick={() => setCurrentScreen("user-management")}
               />
 
               <ActionButton
                 label="Create Barangay Captain"
                 description="Issue a secured captain account"
                 icon={UserCog}
-                onClick={() =>
-                  showComingSoon(
-                    "Create Barangay Captain",
-                  )
-                }
+                onClick={() => setCurrentScreen("user-management")}
               />
 
               <ActionButton
@@ -575,14 +528,10 @@ export default function SuperAdminDashboard({
               />
 
               <ActionButton
-                label="Password Recovery Center"
-                description="Manage municipal account recovery"
+                label="Account Security"
+                description="Review your profile and recovery email"
                 icon={KeyRound}
-                onClick={() =>
-                  showComingSoon(
-                    "Recovery Center",
-                  )
-                }
+                onClick={() => setCurrentScreen("profile")}
               />
 
               <ActionButton

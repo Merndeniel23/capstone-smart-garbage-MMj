@@ -23,8 +23,50 @@ function needsCollection(status: string): boolean {
 router.get(
   "/",
   requireAuth,
-  async (_req: AuthRequest, res) => {
+  async (req: AuthRequest, res) => {
     try {
+      const role = String(req.user?.role || "").toLowerCase();
+
+      if (!["purok_leader", "leader", "admin", "super_admin"].includes(role)) {
+        return res.status(403).json({
+          success: false,
+          message: "You do not have permission to view inspection records.",
+        });
+      }
+
+      const conditions: string[] = [];
+      const values: Array<number> = [];
+
+      if (role === "purok_leader" || role === "leader") {
+        const purokId = Number(req.user?.purok_id);
+
+        if (!Number.isInteger(purokId) || purokId <= 0) {
+          return res.status(400).json({
+            success: false,
+            message: "Your Purok Leader account has no assigned purok.",
+          });
+        }
+
+        conditions.push("gb.purok_id = ?");
+        values.push(purokId);
+      } else if (role === "admin") {
+        const barangayId = Number(req.user?.barangay_id);
+
+        if (!Number.isInteger(barangayId) || barangayId <= 0) {
+          return res.status(400).json({
+            success: false,
+            message: "Your Barangay Captain account has no assigned barangay.",
+          });
+        }
+
+        conditions.push("p.barangay_id = ?");
+        values.push(barangayId);
+      }
+
+      const whereClause = conditions.length
+        ? `WHERE ${conditions.join(" AND ")}`
+        : "";
+
       const [rows] = await db.query(`
         SELECT
           bi.id,
@@ -45,8 +87,12 @@ router.get(
           ON bi.bin_id = gb.id
         LEFT JOIN users u
           ON bi.purok_leader_id = u.id
+        LEFT JOIN puroks p
+          ON gb.purok_id = p.id
+        ${whereClause}
         ORDER BY bi.inspected_at DESC
-      `);
+        LIMIT 500
+      `, values);
 
       return res.json(rows);
     } catch (error) {
@@ -76,6 +122,13 @@ router.post(
       const photoPath = req.body.photo_path || null;
       const leaderId = req.user?.id;
 
+      if (!["purok_leader", "leader"].includes(String(req.user?.role || "").toLowerCase())) {
+        return res.status(403).json({
+          success: false,
+          message: "Only an assigned Purok Leader can submit bin inspections.",
+        });
+      }
+
       if (!Number.isInteger(binId) || binId <= 0) {
         return res.status(400).json({
           success: false,
@@ -90,12 +143,64 @@ router.post(
         });
       }
 
+      if (remarks.length > 2000) {
+        return res.status(400).json({
+          success: false,
+          message: "Inspection remarks cannot exceed 2,000 characters.",
+        });
+      }
+
+      if (
+        photoPath !== null &&
+        (typeof photoPath !== "string" ||
+          photoPath.length > 255 ||
+          !/^(?:https?:\/\/|data:image\/)/i.test(photoPath))
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Inspection photo must be an HTTPS URL or image data.",
+        });
+      }
+
+      const allowedStatuses = [
+        "empty",
+        "half_full",
+        "full",
+        "overflowing",
+        "damaged",
+      ];
+
+      if (!allowedStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: "Select a valid inspection status.",
+        });
+      }
+
+      if (
+        !Number.isInteger(estimatedFillLevel) ||
+        estimatedFillLevel < 0 ||
+        estimatedFillLevel > 100
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Estimated fill level must be from 0 to 100.",
+        });
+      }
+
       const [binRows] = await connection.query<any[]>(
         `
-        SELECT id, purok_id, bin_code, location_name
-        FROM garbage_bins
-        WHERE id = ?
-          AND is_active = 1
+        SELECT
+          gb.id,
+          gb.purok_id,
+          p.barangay_id,
+          gb.bin_code,
+          gb.location_name
+        FROM garbage_bins gb
+        INNER JOIN puroks p
+          ON p.id = gb.purok_id
+        WHERE gb.id = ?
+          AND gb.is_active = 1
         LIMIT 1
         `,
         [binId],
@@ -184,7 +289,7 @@ router.post(
               ? "urgent"
               : "high";
 
-          await connection.execute(
+          const [requestResult]: any = await connection.execute(
             `
             INSERT INTO collection_requests (
               bin_id,
@@ -202,15 +307,52 @@ router.post(
               inspectionResult.insertId,
               leaderId,
               priority,
-              remarks ||
+              (
+                remarks ||
                 `Automatic request: ${status.replaceAll(
                   "_",
                   " ",
-                )} garbage bin.`,
+                )} garbage bin.`
+              ).slice(0, 255),
             ],
           );
 
           collectionRequestCreated = true;
+
+          await connection.execute(
+            `
+            INSERT INTO notifications (
+              recipient_role,
+              barangay_id,
+              notification_type,
+              priority,
+              title,
+              message,
+              related_entity_type,
+              related_entity_id,
+              created_by
+            )
+            VALUES (
+              'collector',
+              ?,
+              'collection',
+              ?,
+              ?,
+              ?,
+              'collection_request',
+              ?,
+              ?
+            )
+            `,
+            [
+              bin.barangay_id,
+              priority === "urgent" ? "emergency" : "schedule",
+              `${bin.bin_code} requires collection`,
+              `${bin.location_name} was inspected as ${status.replaceAll("_", " ")}.`,
+              requestResult.insertId,
+              leaderId,
+            ],
+          );
         }
       }
 

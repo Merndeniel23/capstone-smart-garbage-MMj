@@ -345,6 +345,8 @@ function makeCollectorMarkerIcon(
 export default function MapView({
   viewOnly = false,
 }: MapViewProps) {
+  const canManageCollectionTasks =
+    !viewOnly && getStoredRole() === "collector";
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markerLayerRef = useRef<L.LayerGroup | null>(null);
@@ -1129,7 +1131,7 @@ export default function MapView({
   };
 
   const createTask = async (bin: BinWithRequest) => {
-    if (viewOnly) return;
+    if (!canManageCollectionTasks) return;
 
     if (
       getStoredRole() === "collector" &&
@@ -1185,7 +1187,7 @@ export default function MapView({
     bin: BinWithRequest,
     status: "assigned" | "in_progress" | "completed",
   ) => {
-    if (viewOnly || !bin.request) return;
+    if (!canManageCollectionTasks || !bin.request) return;
 
     setUpdatingId(bin.id);
     setErrorMessage("");
@@ -1379,7 +1381,7 @@ export default function MapView({
             <BinDetails
               bin={selectedBin}
               busy={updatingId === selectedBin.id}
-              viewOnly={viewOnly}
+              viewOnly={!canManageCollectionTasks}
               onCreateTask={() => createTask(selectedBin)}
               onUpdateStatus={(status) =>
                 updateStatus(selectedBin, status)
