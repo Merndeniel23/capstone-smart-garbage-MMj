@@ -157,6 +157,112 @@ function canAccessComplaint(
   );
 }
 
+type ComplaintNotificationRecipient =
+  | { userId: number }
+  | { role: "admin" | "super_admin"; barangayId?: number | null };
+
+async function insertComplaintNotification(
+  executor: any,
+  input: {
+    recipient: ComplaintNotificationRecipient;
+    notificationType: "new_complaint" | "complaint_message" | "complaint_update";
+    title: string;
+    message: string;
+    complaintId: number;
+    createdBy: number;
+  },
+) {
+  const recipientUserId =
+    "userId" in input.recipient
+      ? input.recipient.userId
+      : null;
+  const recipientRole =
+    "role" in input.recipient
+      ? input.recipient.role
+      : null;
+  const barangayId =
+    "barangayId" in input.recipient
+      ? input.recipient.barangayId || null
+      : null;
+
+  await executor.execute(
+    `
+    INSERT INTO notifications
+    (
+      recipient_user_id,
+      recipient_role,
+      barangay_id,
+      purok_id,
+      notification_type,
+      priority,
+      title,
+      message,
+      related_entity_type,
+      related_entity_id,
+      created_by
+    )
+    VALUES (?, ?, ?, NULL, ?, 'notice', ?, ?, 'complaint', ?, ?)
+    `,
+    [
+      recipientUserId,
+      recipientRole,
+      barangayId,
+      input.notificationType,
+      input.title,
+      input.message,
+      input.complaintId,
+      input.createdBy,
+    ],
+  );
+}
+
+async function notifyComplaintParticipants(
+  executor: any,
+  input: {
+    complaintId: number;
+    reporterId: number;
+    assignedCollectorId?: number | null;
+    barangayId?: number | null;
+    sender: DatabaseUser;
+    notificationType: "new_complaint" | "complaint_message" | "complaint_update";
+    title: string;
+    message: string;
+  },
+) {
+  const recipients: ComplaintNotificationRecipient[] = [];
+
+  if (input.sender.id !== input.reporterId) {
+    recipients.push({ userId: input.reporterId });
+  }
+
+  if (
+    input.assignedCollectorId &&
+    input.sender.id !== Number(input.assignedCollectorId)
+  ) {
+    recipients.push({ userId: Number(input.assignedCollectorId) });
+  }
+
+  // Admins need to see messages from residents and collectors. Super Admin
+  // receives a separate global notification because it has no barangay scope.
+  if (!isAdmin(input.sender.role)) {
+    if (input.barangayId) {
+      recipients.push({ role: "admin", barangayId: input.barangayId });
+    }
+    recipients.push({ role: "super_admin" });
+  }
+
+  for (const recipient of recipients) {
+    await insertComplaintNotification(executor, {
+      recipient,
+      notificationType: input.notificationType,
+      title: input.title,
+      message: input.message,
+      complaintId: input.complaintId,
+      createdBy: input.sender.id,
+    });
+  }
+}
+
 router.get(
   "/",
   requireAuth,
@@ -577,6 +683,16 @@ router.post(
           ],
         );
 
+      await notifyComplaintParticipants(connection, {
+        complaintId: Number(result.insertId),
+        reporterId: viewer.id,
+        barangayId,
+        sender: viewer,
+        notificationType: "new_complaint",
+        title: "New resident complaint",
+        message: `A resident submitted a ${complaintType} complaint. Review and assign it in Complaints & Tickets.`,
+      });
+
       await connection.execute(
         `
         INSERT INTO complaint_messages
@@ -839,6 +955,17 @@ router.put(
         ],
       );
 
+      await notifyComplaintParticipants(connection, {
+        complaintId,
+        reporterId: Number(complaint.reported_by),
+        assignedCollectorId: Number(collector.id),
+        barangayId: parsePositiveInteger(complaint.barangay_id),
+        sender: viewer,
+        notificationType: "complaint_update",
+        title: "Complaint assignment updated",
+        message: `Complaint CMP-${complaintId} was assigned to ${collector.full_name}.`,
+      });
+
       await connection.commit();
 
       return res.json({
@@ -1033,6 +1160,17 @@ router.put(
         ],
       );
 
+      await notifyComplaintParticipants(connection, {
+        complaintId,
+        reporterId: Number(complaint.reported_by),
+        assignedCollectorId: Number(complaint.assigned_collector_id),
+        barangayId: parsePositiveInteger(complaint.barangay_id),
+        sender: viewer,
+        notificationType: "complaint_update",
+        title: "Complaint status updated",
+        message: `Complaint CMP-${complaintId} status changed to ${status.replaceAll("_", " ")}.`,
+      });
+
       await connection.commit();
 
       return res.json({
@@ -1196,6 +1334,17 @@ router.put(
         ],
       );
 
+      await notifyComplaintParticipants(connection, {
+        complaintId,
+        reporterId: Number(complaint.reported_by),
+        assignedCollectorId: Number(complaint.assigned_collector_id),
+        barangayId: parsePositiveInteger(complaint.barangay_id),
+        sender: viewer,
+        notificationType: "complaint_update",
+        title: "Complaint resolved",
+        message: `Complaint CMP-${complaintId} has been resolved.`,
+      });
+
       await connection.commit();
 
       return res.json({
@@ -1320,6 +1469,17 @@ router.post(
             message,
           ],
         );
+
+      await notifyComplaintParticipants(connection, {
+        complaintId,
+        reporterId: Number(complaint.reported_by),
+        assignedCollectorId: Number(complaint.assigned_collector_id),
+        barangayId: parsePositiveInteger(complaint.barangay_id),
+        sender: viewer,
+        notificationType: "complaint_message",
+        title: "New complaint message",
+        message: `There is a new message on complaint CMP-${complaintId}.`,
+      });
 
       await connection.commit();
 
@@ -1462,6 +1622,17 @@ router.delete(
         `,
         [complaintId, viewer.id, "Complaint cancelled."],
       );
+
+      await notifyComplaintParticipants(connection, {
+        complaintId,
+        reporterId: Number(complaint.reported_by),
+        assignedCollectorId: Number(complaint.assigned_collector_id),
+        barangayId: parsePositiveInteger(complaint.barangay_id),
+        sender: viewer,
+        notificationType: "complaint_update",
+        title: "Complaint cancelled",
+        message: `Complaint CMP-${complaintId} was cancelled.`,
+      });
 
       await connection.commit();
 

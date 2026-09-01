@@ -147,6 +147,111 @@ async function sendRegistrationVerificationEmail(
   }
 }
 
+async function notifyBarangayAdminOfApprovalRequest(user: {
+  id: number;
+  full_name: string;
+  barangay_id: number;
+}) {
+  await db.execute(
+    `
+    INSERT INTO notifications
+    (
+      recipient_user_id,
+      recipient_role,
+      barangay_id,
+      purok_id,
+      notification_type,
+      priority,
+      title,
+      message,
+      related_entity_type,
+      related_entity_id,
+      created_by
+    )
+    SELECT
+      NULL,
+      'admin',
+      ?,
+      NULL,
+      'account_approval_request',
+      'notice',
+      'Account approval requested',
+      ?,
+      'user_account',
+      ?,
+      ?
+    WHERE NOT EXISTS
+    (
+      SELECT 1
+      FROM notifications
+      WHERE notification_type = 'account_approval_request'
+        AND related_entity_type = 'user_account'
+        AND related_entity_id = ?
+        AND recipient_role = 'admin'
+        AND barangay_id = ?
+      LIMIT 1
+    )
+    `,
+    [
+      user.barangay_id,
+      `${user.full_name} submitted a resident account for approval. Review it in Manage Users.`,
+      user.id,
+      user.id,
+      user.id,
+      user.barangay_id,
+    ],
+  );
+
+  // Municipal administrators have a global view, so keep this notification
+  // unscoped by barangay while still targeting only super-admin accounts.
+  await db.execute(
+    `
+    INSERT INTO notifications
+    (
+      recipient_user_id,
+      recipient_role,
+      barangay_id,
+      purok_id,
+      notification_type,
+      priority,
+      title,
+      message,
+      related_entity_type,
+      related_entity_id,
+      created_by
+    )
+    SELECT
+      NULL,
+      'super_admin',
+      NULL,
+      NULL,
+      'account_approval_request',
+      'notice',
+      'Account approval requested',
+      ?,
+      'user_account',
+      ?,
+      ?
+    WHERE NOT EXISTS
+    (
+      SELECT 1
+      FROM notifications
+      WHERE notification_type = 'account_approval_request'
+        AND related_entity_type = 'user_account'
+        AND related_entity_id = ?
+        AND recipient_role = 'super_admin'
+      LIMIT 1
+    )
+    `,
+    [
+      `${user.full_name} submitted a resident account for approval. Review it in Manage Users.`,
+      user.id,
+      user.id,
+      user.id,
+    ],
+  );
+}
+
 async function findPasswordResetUser(
   identifier: string,
 ) {
@@ -826,6 +931,7 @@ router.post(
             u.purok_id,
             u.full_name,
             u.email,
+            u.email_verified_at,
             u.role,
             u.status,
             u.phone,
@@ -848,6 +954,18 @@ router.post(
         existingRows[0];
 
       if (user) {
+        await db.execute(
+          `
+          UPDATE users
+          SET email_verified_at = COALESCE(email_verified_at, NOW())
+          WHERE id = ?
+          `,
+          [user.id],
+        );
+
+        user.email_verified_at =
+          user.email_verified_at || new Date();
+
         const isIncompleteResidentSetup =
           user.role === "resident" &&
           (
@@ -868,6 +986,19 @@ router.post(
           user.status === "pending" &&
           !isIncompleteResidentSetup
         ) {
+          try {
+            await notifyBarangayAdminOfApprovalRequest({
+              id: Number(user.id),
+              full_name: String(user.full_name),
+              barangay_id: Number(user.barangay_id),
+            });
+          } catch (notificationError) {
+            console.error(
+              "Account approval notification error:",
+              notificationError,
+            );
+          }
+
           return res.status(403).json({
             message:
               "Your resident profile is waiting for Barangay Captain approval.",
@@ -911,6 +1042,7 @@ router.post(
                 purok_id,
                 full_name,
                 email,
+                email_verified_at,
                 password_hash,
                 role,
                 status
@@ -921,6 +1053,7 @@ router.post(
                 NULL,
                 ?,
                 ?,
+                NOW(),
                 ?,
                 'resident',
                 'pending'
@@ -942,6 +1075,7 @@ router.post(
                 purok_id,
                 full_name,
                 email,
+                email_verified_at,
                 role,
                 status,
                 phone,
@@ -976,6 +1110,7 @@ router.post(
                 purok_id,
                 full_name,
                 email,
+                email_verified_at,
                 role,
                 status,
                 phone,
@@ -1341,7 +1476,12 @@ router.put(
           purok_id = ?,
           address = ?,
           duty_latitude = ?,
-          duty_longitude = ?
+          duty_longitude = ?,
+          email_verified_at = CASE
+            WHEN role = 'resident' AND status = 'pending'
+              THEN COALESCE(email_verified_at, NOW())
+            ELSE email_verified_at
+          END
         WHERE id = ?
         `,
         [
@@ -1367,6 +1507,7 @@ router.put(
             p.name AS purok_name,
             u.full_name,
             u.email,
+            u.email_verified_at,
             u.role,
             u.phone,
             u.address,
@@ -1390,10 +1531,26 @@ router.put(
       const pendingResidentApproval =
         updatedUser?.role === "resident" &&
         updatedUser?.status === "pending" &&
+        updatedUser?.email_verified_at &&
         updatedUser?.barangay_id &&
         updatedUser?.purok_id &&
         String(updatedUser?.address || "").trim() &&
         String(updatedUser?.phone || "").trim();
+
+      if (pendingResidentApproval) {
+        try {
+          await notifyBarangayAdminOfApprovalRequest({
+            id: Number(updatedUser.id),
+            full_name: String(updatedUser.full_name),
+            barangay_id: Number(updatedUser.barangay_id),
+          });
+        } catch (notificationError) {
+          console.error(
+            "Account approval notification error:",
+            notificationError,
+          );
+        }
+      }
 
       return res.json({
         message: pendingResidentApproval

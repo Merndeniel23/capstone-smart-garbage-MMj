@@ -13,6 +13,7 @@ import {
   Truck,
   User,
 } from "lucide-react";
+import { notifyAdminActionCountsChanged } from "../hooks/useAdminActionCounts";
 import {
   useEffect,
   useMemo,
@@ -756,6 +757,7 @@ export default function CollectorDashboard({
       );
 
       await loadData();
+      notifyAdminActionCountsChanged();
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -798,6 +800,7 @@ export default function CollectorDashboard({
       );
 
       await loadData();
+      notifyAdminActionCountsChanged();
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -840,6 +843,7 @@ export default function CollectorDashboard({
         );
 
         await loadData();
+        notifyAdminActionCountsChanged();
       } catch (error) {
         setErrorMessage(
           error instanceof Error

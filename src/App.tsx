@@ -37,6 +37,7 @@ import {
   AppStateProvider,
   useAppState,
 } from "./context/AppStateContext";
+import { useAdminActionCounts } from "./hooks/useAdminActionCounts";
 
 export type Role =
   | "household"
@@ -113,6 +114,7 @@ const ROLE_SCREENS: Record<Role, Screen[]> = {
     "bin-inspections",
     "user-management",
     "complaints",
+    "endorsements",
     "payments",
     "route-map",
     "schedule",
@@ -403,6 +405,11 @@ function AppContent() {
     logoutUser,
   } = useAppState();
 
+  const adminActionCounts = useAdminActionCounts(
+    userRole,
+    currentUser?.id,
+  );
+
   useEffect(() => {
     if (!isLoggedIn || currentScreen === "change-initial-password") {
       return;
@@ -482,6 +489,7 @@ function AppContent() {
         onTabChange={(tab: any) => setCurrentScreen(tab)}
         onLogout={handleLogout}
         role={userRole}
+        adminActionCounts={adminActionCounts}
       />
 
       <div className="flex min-h-0 flex-1 flex-col bg-[#F1F5F9]/30">
@@ -524,6 +532,7 @@ function AppContent() {
               {currentScreen === "admin-dashboard" && (
                 <AdminDashboard
                   setCurrentScreen={setCurrentScreen as any}
+                  adminActionCounts={adminActionCounts}
                 />
               )}
 
@@ -569,6 +578,7 @@ function AppContent() {
           activeTab={currentScreen as any}
           onTabChange={(tab: any) => setCurrentScreen(tab)}
           role={userRole as any}
+          adminActionCounts={adminActionCounts}
         />
       </div>
 

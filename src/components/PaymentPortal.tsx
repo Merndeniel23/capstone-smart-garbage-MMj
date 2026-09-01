@@ -19,6 +19,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { notifyAdminActionCountsChanged } from "../hooks/useAdminActionCounts";
 
 interface PaymentPortalProps {
   role?:
@@ -431,6 +432,7 @@ export default function PaymentPortal({
       setShowPaymentForm(false);
       resetForm();
       await loadPayments();
+      notifyAdminActionCountsChanged();
     } catch (error) {
       setMessage({
         type: "error",
@@ -471,6 +473,7 @@ export default function PaymentPortal({
 
       setReviewRemarks("");
       await loadPayments();
+      notifyAdminActionCountsChanged();
     } catch (error) {
       setMessage({
         type: "error",
@@ -511,6 +514,7 @@ export default function PaymentPortal({
       setRemittanceReference("");
       setRemittanceProof("");
       await loadPayments();
+      notifyAdminActionCountsChanged();
     } catch (error) {
       setMessage({
         type: "error",
@@ -558,6 +562,7 @@ export default function PaymentPortal({
       setReviewRemarks("");
       setDiscrepancyAmount("");
       await loadPayments();
+      notifyAdminActionCountsChanged();
     } catch (error) {
       setMessage({
         type: "error",

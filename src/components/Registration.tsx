@@ -772,7 +772,7 @@ const handleResetPasswordSubmit = async (
                     type="text"
                     required
                     maxLength={150}
-                    placeholder="test@household.com or HH-2026-904"
+                    placeholder="enter email or household ID"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
                     className="w-full pl-11 pr-4 py-3 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
@@ -960,7 +960,7 @@ const handleResetPasswordSubmit = async (
                     type="text"
                     required
                     maxLength={150}
-                    placeholder="e.g., Mark Rallos"
+                    placeholder="Enter full name"
                     value={regFullName}
                     onChange={(e) => setRegFullName(e.target.value)}
                     className="w-full pl-11 pr-4 py-2.5 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
@@ -978,7 +978,7 @@ const handleResetPasswordSubmit = async (
                     type="email"
                     required
                     maxLength={150}
-                    placeholder="e.g., mark@household.com"
+                    placeholder="Enter email address"
                     value={regEmail}
                     onChange={(e) => setRegEmail(e.target.value)}
                     className="w-full pl-11 pr-4 py-2.5 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
@@ -998,7 +998,7 @@ const handleResetPasswordSubmit = async (
                     autoComplete="tel"
                     required
                     maxLength={17}
-                    placeholder="e.g., +63 912 345 6789"
+                    placeholder="Enter phone number "
                     value={regPhone}
                     onChange={(e) =>
                       setRegPhone(
@@ -1150,7 +1150,7 @@ const handleResetPasswordSubmit = async (
 
         {/* FOOTER */}
         <p className="text-[9px] font-extrabold tracking-widest text-stone-400 uppercase text-center">
-          Barangay Environmental Sinks System • Powered by EcoTrack
+          Barangay Environmental Sinks System • MMJ group • 2026 • All Rights Reserved
         </p>
       </div>
 

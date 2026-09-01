@@ -16,6 +16,10 @@ import {
   UserCog,
   X,
 } from "lucide-react";
+import {
+  markAdminActionNotificationsRead,
+  notifyAdminActionCountsChanged,
+} from "../hooks/useAdminActionCounts";
 
 interface ManagedUser {
   id: number;
@@ -30,6 +34,8 @@ interface ManagedUser {
   | "collector"
   | "purok_leader";
   status: "active" | "inactive" | "pending" | string;
+  email_verified: number | boolean;
+  approval_ready: number | boolean;
   barangay_id: number | null;
   barangay_name: string | null;
   purok_id: number | null;
@@ -145,6 +151,25 @@ function roleLabel(role: ManagedUser["role"]) {
   }
 }
 
+function isPendingApproval(user: ManagedUser) {
+  return (
+    user.status === "pending" &&
+    Boolean(Number(user.approval_ready))
+  );
+}
+
+function canAdminModifyAccount(user: ManagedUser) {
+  if (user.role !== "resident" || user.status === "active") {
+    return true;
+  }
+
+  if (user.status === "pending") {
+    return isPendingApproval(user);
+  }
+
+  return Boolean(Number(user.email_verified));
+}
+
 export default function UserManagement() {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [barangays, setBarangays] = useState<Barangay[]>([]);
@@ -243,6 +268,7 @@ export default function UserManagement() {
   };
 
   useEffect(() => {
+    void markAdminActionNotificationsRead("accounts");
     void loadData();
 
     const timer = window.setInterval(
@@ -274,7 +300,7 @@ export default function UserManagement() {
 
       const matchesTab =
         activeTab === "all" ||
-        (activeTab === "pending" && user.status === "pending") ||
+        (activeTab === "pending" && isPendingApproval(user)) ||
         (activeTab === "residents" && user.role === "resident") ||
         (activeTab === "collectors" && user.role === "collector") ||
         (activeTab === "leaders" && user.role === "purok_leader");
@@ -282,8 +308,8 @@ export default function UserManagement() {
       return matchesSearch && matchesTab;
     }).sort((a, b) => {
       const pendingDifference =
-        Number(b.status === "pending") -
-        Number(a.status === "pending");
+        Number(isPendingApproval(b)) -
+        Number(isPendingApproval(a));
 
       if (pendingDifference !== 0) {
         return pendingDifference;
@@ -299,7 +325,7 @@ export default function UserManagement() {
   const pendingCount = useMemo(
     () =>
       users.filter(
-        (user) => user.status === "pending",
+        (user) => isPendingApproval(user),
       ).length,
     [users],
   );
@@ -313,6 +339,13 @@ export default function UserManagement() {
   }, [puroks, selectedBarangayId]);
 
   const openRoleModal = (user: ManagedUser) => {
+    if (!canAdminModifyAccount(user)) {
+      setError(
+        "This resident must verify their email and complete any required profile details before admin activation.",
+      );
+      return;
+    }
+
     if (user.role === "admin" || user.role === "super_admin") return;
 
     const editableRole: ManagedRole =
@@ -378,6 +411,7 @@ export default function UserManagement() {
 
       setSuccessMessage(data.message || "Role updated successfully.");
       await loadData();
+      notifyAdminActionCountsChanged();
 
       window.setTimeout(() => {
         closeRoleModal();
@@ -393,6 +427,13 @@ export default function UserManagement() {
   const toggleStatus = async (user: ManagedUser) => {
     if (user.role === "admin" || user.role === "super_admin") return;
 
+    if (!canAdminModifyAccount(user)) {
+      setError(
+        "This resident must verify their email and complete any required profile details before admin activation.",
+      );
+      return;
+    }
+
     const nextStatus = user.status === "active" ? "inactive" : "active";
 
     setError("");
@@ -406,6 +447,7 @@ export default function UserManagement() {
 
       setSuccessMessage(data.message || "Account status updated.");
       await loadData();
+      notifyAdminActionCountsChanged();
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Unable to update account status.",
@@ -791,7 +833,9 @@ export default function UserManagement() {
                           )}`}
                         />
                         <span className="text-[10px] font-bold capitalize text-slate-600">
-                          {user.status}
+                          {user.status === "pending" && !isPendingApproval(user)
+                            ? "Awaiting email verification"
+                            : user.status}
                         </span>
                       </div>
                     </td>
@@ -805,24 +849,38 @@ export default function UserManagement() {
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => openRoleModal(user)}
-                            className="rounded-xl p-2 text-slate-400 transition-all hover:bg-white hover:text-emerald-600 hover:shadow-md"
-                            title="Change LGU role"
+                            disabled={
+                              !canAdminModifyAccount(user)
+                            }
+                            className="rounded-xl p-2 text-slate-400 transition-all hover:bg-white hover:text-emerald-600 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-400 disabled:hover:shadow-none"
+                            title={
+                              !canAdminModifyAccount(user)
+                                ? "Email verification and required profile details are needed first"
+                                : "Change LGU role"
+                            }
                           >
                             <Edit2 className="h-4 w-4" />
                           </button>
 
                           <button
                             onClick={() => toggleStatus(user)}
+                            disabled={
+                              !canAdminModifyAccount(user)
+                            }
                             className={`rounded-xl p-2 transition-all hover:bg-white hover:shadow-md ${
                               user.status === "active"
                                 ? "text-amber-600"
                                 : "text-emerald-600"
-                            }`}
+                            } disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:shadow-none`}
                             title={
                               user.status === "active"
                                 ? "Deactivate account"
                                 : user.status === "pending"
-                                  ? "Approve and activate account"
+                                  ? isPendingApproval(user)
+                                    ? "Approve and activate account"
+                                    : "Email verification and required profile details are needed first"
+                                  : !canAdminModifyAccount(user)
+                                    ? "Email verification is required before activation"
                                   : "Activate account"
                             }
                           >

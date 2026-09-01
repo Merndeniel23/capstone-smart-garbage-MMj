@@ -26,12 +26,14 @@ import {
   useAppState,
   type AppRole,
 } from "../context/AppStateContext";
+import type { AdminActionCounts } from "../hooks/useAdminActionCounts";
 
 interface SidebarProps {
   activeTab: string;
   onTabChange: (tab: any) => void;
   onLogout?: () => void;
   role: AppRole;
+  adminActionCounts: AdminActionCounts;
 }
 
 interface MenuItem {
@@ -45,6 +47,7 @@ export default function Sidebar({
   activeTab,
   onTabChange,
   role,
+  adminActionCounts,
 }: SidebarProps) {
   const {
     userProfile,
@@ -60,6 +63,14 @@ export default function Sidebar({
 
   const [unseenCount, setUnseenCount] =
     useState(0);
+
+  const {
+    pendingPayments,
+    pendingEndorsements,
+    pendingCollectionTasks,
+    unreadAccounts,
+    unreadComplaints,
+  } = adminActionCounts;
 
   const [collapsed, setCollapsed] =
     useState(
@@ -188,6 +199,7 @@ export default function Sidebar({
       id: "complaints",
       icon: MessageSquare,
       label: "Complaints",
+      count: unreadComplaints,
     },
     {
       id: "payments",
@@ -212,11 +224,13 @@ export default function Sidebar({
       id: "collector-tasks",
       icon: ClipboardList,
       label: "Collection Tasks",
+      count: pendingCollectionTasks,
     },
     {
       id: "complaints",
       icon: MessageSquare,
       label: "Assigned Complaints",
+      count: unreadComplaints,
     },
     {
       id: "route-map",
@@ -271,16 +285,19 @@ export default function Sidebar({
       id: "complaints",
       icon: MessageSquare,
       label: "Complaints & Tickets",
+      count: unreadComplaints,
     },
     {
       id: "endorsements",
       icon: Award,
       label: "Endorsements",
+      count: pendingEndorsements,
     },
     {
       id: "payments",
       icon: CreditCard,
       label: "Verify Payments",
+      count: pendingPayments,
     },
     {
       id: "schedule",
@@ -320,16 +337,25 @@ export default function Sidebar({
       id: "user-management",
       icon: Users,
       label: "Manage Users",
+      count: unreadAccounts,
     },
     {
       id: "complaints",
       icon: MessageSquare,
       label: "Complaints & Tickets",
+      count: unreadComplaints,
+    },
+    {
+      id: "endorsements",
+      icon: Award,
+      label: "Endorsements",
+      count: pendingEndorsements,
     },
     {
       id: "payments",
       icon: CreditCard,
       label: "Ledger Audit",
+      count: pendingPayments,
     },
     {
       id: "schedule",
@@ -364,6 +390,7 @@ export default function Sidebar({
       id: "user-management",
       icon: UserCog,
       label: "Barangay Captains",
+      count: unreadAccounts,
     },
     {
       id: "members-list",
@@ -384,11 +411,19 @@ export default function Sidebar({
       id: "complaints",
       icon: MessageSquare,
       label: "All Complaints",
+      count: unreadComplaints,
+    },
+    {
+      id: "endorsements",
+      icon: Award,
+      label: "Endorsements",
+      count: pendingEndorsements,
     },
     {
       id: "payments",
       icon: CreditCard,
       label: "Payment Verification",
+      count: pendingPayments,
     },
     {
       id: "schedule",

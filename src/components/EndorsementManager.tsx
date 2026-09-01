@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAppState } from '../context/AppStateContext';
+import { notifyAdminActionCountsChanged } from '../hooks/useAdminActionCounts';
 
 type EndorsementType = 
   | 'Barangay Clearance Support' 
@@ -396,6 +397,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
       setDesc('');
       showNotification(data.message);
+      notifyAdminActionCountsChanged();
       await loadEndorsements(true);
     } catch (error) {
       setErrorMessage(
@@ -429,6 +431,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
       );
 
       showNotification(data.message);
+      notifyAdminActionCountsChanged();
       setSelectedRequest(null);
       setAdminMemoInput('');
       await loadEndorsements(true);
@@ -493,6 +496,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
       );
 
       showNotification(data.message);
+      notifyAdminActionCountsChanged();
       await loadEndorsements(true);
     } catch (error) {
       setErrorMessage(

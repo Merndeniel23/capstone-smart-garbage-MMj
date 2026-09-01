@@ -32,6 +32,27 @@ function normalizeRole(value: unknown): ManagedRole | null {
     : null;
 }
 
+function hasVerifiedResidentProfile(user: any): boolean {
+  if (String(user?.role).toLowerCase() !== "resident") {
+    return true;
+  }
+
+  return Boolean(
+    user.email_verified_at &&
+      parsePositiveInteger(user.barangay_id) &&
+      parsePositiveInteger(user.purok_id) &&
+      String(user.phone || "").trim() &&
+      String(user.address || "").trim(),
+  );
+}
+
+function isApprovalReadyAccount(user: any): boolean {
+  return (
+    String(user?.status).toLowerCase() === "pending" &&
+    hasVerifiedResidentProfile(user)
+  );
+}
+
 
 router.get(
   "/dashboard-summary",
@@ -101,6 +122,7 @@ router.get(
         residentsResult,
         collectorsResult,
         leadersResult,
+        pendingAccountsResult,
         binsResult,
         complaintsResult,
       ] = await Promise.all([
@@ -137,10 +159,37 @@ router.get(
         db.query(
           `
           SELECT COUNT(*) AS total
+          FROM users u
+          WHERE u.status = 'pending'
+            AND u.role NOT IN ('admin', 'super_admin')
+            AND
+            (
+              u.role <> 'resident'
+              OR
+              (
+                u.email_verified_at IS NOT NULL
+                AND u.barangay_id IS NOT NULL
+                AND u.purok_id IS NOT NULL
+                AND NULLIF(TRIM(u.phone), '') IS NOT NULL
+                AND NULLIF(TRIM(u.address), '') IS NOT NULL
+              )
+            )
+            ${userWhere}
+          `,
+          userParams,
+        ),
+        db.query(
+          `
+          SELECT COUNT(*) AS total
           FROM garbage_bins gb
           LEFT JOIN puroks p
             ON p.id = gb.purok_id
-          WHERE 1 = 1
+          WHERE gb.is_active = 1
+            AND gb.latitude IS NOT NULL
+            AND gb.longitude IS NOT NULL
+            AND gb.latitude BETWEEN -90 AND 90
+            AND gb.longitude BETWEEN -180 AND 180
+            AND NOT (gb.latitude = 0 AND gb.longitude = 0)
             ${binWhere}
           `,
           binParams,
@@ -161,6 +210,7 @@ router.get(
       const residentsRows: any = residentsResult[0];
       const collectorsRows: any = collectorsResult[0];
       const leadersRows: any = leadersResult[0];
+      const pendingAccountsRows: any = pendingAccountsResult[0];
       const binsRows: any = binsResult[0];
       const complaintsRows: any = complaintsResult[0];
 
@@ -172,6 +222,7 @@ router.get(
           residents: Number(residentsRows[0]?.total || 0),
           collectors: Number(collectorsRows[0]?.total || 0),
           purokLeaders: Number(leadersRows[0]?.total || 0),
+          pendingAccounts: Number(pendingAccountsRows[0]?.total || 0),
           garbageBins: Number(binsRows[0]?.total || 0),
           pendingComplaints: Number(complaintsRows[0]?.total || 0),
         },
@@ -589,7 +640,12 @@ router.get(
           FROM garbage_bins gb
           LEFT JOIN puroks p
             ON p.id = gb.purok_id
-          WHERE 1 = 1
+          WHERE gb.is_active = 1
+            AND gb.latitude IS NOT NULL
+            AND gb.longitude IS NOT NULL
+            AND gb.latitude BETWEEN -90 AND 90
+            AND gb.longitude BETWEEN -180 AND 180
+            AND NOT (gb.latitude = 0 AND gb.longitude = 0)
             ${binFilter}
           `,
           binParams,
@@ -959,6 +1015,21 @@ router.get("/users", requireAuth, async (req: AuthRequest, res) => {
         u.address,
         u.role,
         u.status,
+        CASE
+          WHEN u.email_verified_at IS NOT NULL THEN 1
+          ELSE 0
+        END AS email_verified,
+        CASE
+          WHEN u.status <> 'pending' THEN 0
+          WHEN u.role <> 'resident' THEN 1
+          WHEN u.email_verified_at IS NOT NULL
+            AND u.barangay_id IS NOT NULL
+            AND u.purok_id IS NOT NULL
+            AND NULLIF(TRIM(u.phone), '') IS NOT NULL
+            AND NULLIF(TRIM(u.address), '') IS NOT NULL
+            THEN 1
+          ELSE 0
+        END AS approval_ready,
         u.barangay_id,
         b.name AS barangay_name,
         u.purok_id,
@@ -1158,7 +1229,16 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
 
     const [userRows]: any = await connection.query(
       `
-      SELECT id, full_name, role, status, barangay_id, purok_id
+      SELECT
+        id,
+        full_name,
+        role,
+        status,
+        email_verified_at,
+        phone,
+        address,
+        barangay_id,
+        purok_id
       FROM users
       WHERE id = ?
       LIMIT 1
@@ -1193,6 +1273,25 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
       return res.status(403).json({
         success: false,
         message: "Protected administrator accounts cannot be modified here.",
+      });
+    }
+
+    if (
+      String(user.role).toLowerCase() === "resident" &&
+      String(user.status).toLowerCase() !== "active" &&
+      (
+        (
+          String(user.status).toLowerCase() === "pending" &&
+          !hasVerifiedResidentProfile(user)
+        ) ||
+        !user.email_verified_at
+      )
+    ) {
+      await connection.rollback();
+      return res.status(409).json({
+        success: false,
+        message:
+          "This resident must verify their email and complete their profile before approval.",
       });
     }
 
@@ -1339,6 +1438,78 @@ router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => 
     }
 
     const scopeSql = isSuperAdmin ? "" : "AND barangay_id = ?";
+    const lookupParams = isSuperAdmin
+      ? [userId]
+      : [userId, barangayId];
+
+    const [userRows]: any = await db.query(
+      `
+      SELECT
+        id,
+        role,
+        status,
+        email_verified_at,
+        phone,
+        address,
+        barangay_id,
+        purok_id
+      FROM users
+      WHERE id = ?
+        AND role NOT IN ('admin', 'super_admin')
+        ${scopeSql}
+      LIMIT 1
+      `,
+      lookupParams,
+    );
+
+    const targetUser = userRows[0];
+
+    if (!targetUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User was not found in your barangay or cannot be updated.",
+      });
+    }
+
+    const targetStatus = String(targetUser.status).toLowerCase();
+    const targetIsResident =
+      String(targetUser.role).toLowerCase() === "resident";
+    const pendingResidentIsNotReady =
+      targetIsResident &&
+      targetStatus === "pending" &&
+      !hasVerifiedResidentProfile(targetUser);
+    const inactiveResidentEmailIsNotVerified =
+      targetIsResident &&
+      targetStatus === "inactive" &&
+      status === "active" &&
+      !targetUser.email_verified_at;
+
+    if (
+      pendingResidentIsNotReady ||
+      inactiveResidentEmailIsNotVerified
+    ) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "This resident must verify their email and complete their profile before approval.",
+      });
+    }
+
+    if (
+      String(targetUser.role).toLowerCase() === "resident" &&
+      String(targetUser.status).toLowerCase() === "active" &&
+      !targetUser.email_verified_at
+    ) {
+      await db.execute(
+        `
+        UPDATE users
+        SET email_verified_at = COALESCE(email_verified_at, NOW())
+        WHERE id = ?
+        `,
+        [userId],
+      );
+    }
+
     const params = isSuperAdmin
       ? [status, userId]
       : [status, userId, barangayId];

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Shield, Users, Activity, Map, CheckCircle, CreditCard, LoaderCircle, XCircle, Trash2, MessageSquare, UserRoundCheck, BarChart3, RefreshCw } from 'lucide-react';
 import { apiRequest } from '../services/api';
+import {
+  notifyAdminActionCountsChanged,
+  type AdminActionCounts,
+} from '../hooks/useAdminActionCounts';
 
 interface PendingCollector {
   id: number;
@@ -49,6 +53,7 @@ interface DashboardSummary {
   residents: number;
   collectors: number;
   purokLeaders: number;
+  pendingAccounts: number;
   garbageBins: number;
   pendingComplaints: number;
 }
@@ -73,9 +78,13 @@ interface DashboardAnalytics {
 
 interface AdminDashboardProps {
   setCurrentScreen: (screen: any) => void;
+  adminActionCounts: AdminActionCounts;
 }
 
-export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps) {
+export default function AdminDashboard({
+  setCurrentScreen,
+  adminActionCounts,
+}: AdminDashboardProps) {
   const [pendingCollectors, setPendingCollectors] = useState<PendingCollector[]>([]);
   const [collectorLoading, setCollectorLoading] = useState(true);
   const [collectorError, setCollectorError] = useState('');
@@ -86,6 +95,7 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
     residents: 0,
     collectors: 0,
     purokLeaders: 0,
+    pendingAccounts: 0,
     garbageBins: 0,
     pendingComplaints: 0,
   });
@@ -124,6 +134,7 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
         residents: Number(data?.summary?.residents || 0),
         collectors: Number(data?.summary?.collectors || 0),
         purokLeaders: Number(data?.summary?.purokLeaders || 0),
+        pendingAccounts: Number(data?.summary?.pendingAccounts || 0),
         garbageBins: Number(data?.summary?.garbageBins || 0),
         pendingComplaints: Number(data?.summary?.pendingComplaints || 0),
       });
@@ -293,6 +304,7 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
         current.filter((collector) => collector.id !== collectorId),
       );
       setCollectorMessage(data.message || 'Collector registration updated.');
+      notifyAdminActionCountsChanged();
       void Promise.all([
         loadDashboardSummary(),
         loadAnalytics(),
@@ -432,6 +444,71 @@ export default function AdminDashboard({ setCurrentScreen }: AdminDashboardProps
           </button>
         </div>
       )}
+
+      {!summaryLoading &&
+        !summaryError &&
+        (adminActionCounts.pendingAccounts > 0 ||
+          adminActionCounts.pendingComplaints > 0 ||
+          adminActionCounts.pendingPayments > 0 ||
+          adminActionCounts.pendingEndorsements > 0) && (
+          <section
+            aria-live="polite"
+            className="rounded-[2rem] border border-amber-200 bg-amber-50 p-5 shadow-sm"
+          >
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-700">
+                  Admin attention needed
+                </p>
+                <h2 className="mt-1 text-lg font-black text-slate-900">
+                  Items are waiting for review
+                </h2>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {adminActionCounts.pendingAccounts > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setCurrentScreen('user-management')}
+                    className="rounded-xl bg-white px-4 py-2 text-xs font-black text-amber-800 shadow-sm ring-1 ring-amber-200"
+                  >
+                    {adminActionCounts.pendingAccounts} account{adminActionCounts.pendingAccounts === 1 ? '' : 's'} to approve
+                  </button>
+                )}
+
+                {adminActionCounts.pendingComplaints > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setCurrentScreen('complaints')}
+                    className="rounded-xl bg-amber-700 px-4 py-2 text-xs font-black text-white shadow-sm"
+                  >
+                    {adminActionCounts.pendingComplaints} complaint{adminActionCounts.pendingComplaints === 1 ? '' : 's'} to review
+                  </button>
+                )}
+
+                {adminActionCounts.pendingPayments > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setCurrentScreen('payments')}
+                    className="rounded-xl bg-white px-4 py-2 text-xs font-black text-amber-800 shadow-sm ring-1 ring-amber-200"
+                  >
+                    {adminActionCounts.pendingPayments} payment{adminActionCounts.pendingPayments === 1 ? '' : 's'} to audit
+                  </button>
+                )}
+
+                {adminActionCounts.pendingEndorsements > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setCurrentScreen('endorsements')}
+                    className="rounded-xl bg-white px-4 py-2 text-xs font-black text-amber-800 shadow-sm ring-1 ring-amber-200"
+                  >
+                    {adminActionCounts.pendingEndorsements} endorsement{adminActionCounts.pendingEndorsements === 1 ? '' : 's'} to review
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
 
       {/* Global Metrics Grid */}
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-5">

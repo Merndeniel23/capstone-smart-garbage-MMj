@@ -1,6 +1,7 @@
 import React, {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -19,12 +20,17 @@ import {
   User,
   X,
 } from "lucide-react";
+import {
+  markAdminActionNotificationsRead,
+  notifyAdminActionCountsChanged,
+} from "../hooks/useAdminActionCounts";
 
 type AppRole =
   | "household"
   | "collector"
   | "leader"
-  | "admin";
+  | "admin"
+  | "super_admin";
 
 type ComplaintStatus =
   | "pending"
@@ -229,10 +235,15 @@ export default function ComplaintsPanel({
     useState("");
   const [chatInput, setChatInput] =
     useState("");
+  const latestLoad = useRef(0);
 
-  const loadData = async () => {
-    setLoading(true);
-    setError("");
+  const loadData = async (silent = false) => {
+    const loadId = ++latestLoad.current;
+
+    if (!silent) {
+      setLoading(true);
+      setError("");
+    }
 
     try {
       const [complaintData, profileData] =
@@ -240,6 +251,12 @@ export default function ComplaintsPanel({
           apiRequest("/complaints"),
           apiRequest("/auth/me"),
         ]);
+
+      if (loadId !== latestLoad.current) {
+        return;
+      }
+
+      setError("");
 
       setComplaints(
         Array.isArray(
@@ -259,6 +276,10 @@ export default function ComplaintsPanel({
             "/admin/collectors",
           );
 
+        if (loadId !== latestLoad.current) {
+          return;
+        }
+
         setCollectors(
           Array.isArray(
             collectorData.collectors,
@@ -270,18 +291,45 @@ export default function ComplaintsPanel({
         setCollectors([]);
       }
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to load complaints.",
-      );
+      if (loadId === latestLoad.current) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to load complaints.",
+        );
+      }
     } finally {
-      setLoading(false);
+      if (loadId === latestLoad.current) {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
-    loadData();
+    void markAdminActionNotificationsRead("complaints");
+
+    void loadData();
+
+    if (role !== "admin" && role !== "super_admin") {
+      return;
+    }
+
+    const refreshComplaints = () => {
+      void loadData(true);
+    };
+
+    const timer = window.setInterval(
+      refreshComplaints,
+      10000,
+    );
+
+    window.addEventListener("focus", refreshComplaints);
+
+    return () => {
+      latestLoad.current += 1;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshComplaints);
+    };
   }, [role]);
 
   const selectedComplaint =
@@ -420,6 +468,7 @@ export default function ComplaintsPanel({
       );
 
       await loadData();
+      notifyAdminActionCountsChanged();
     } catch (err) {
       setError(
         err instanceof Error
@@ -465,6 +514,7 @@ export default function ComplaintsPanel({
       );
 
       await loadData();
+      notifyAdminActionCountsChanged();
     } catch (err) {
       setError(
         err instanceof Error
@@ -504,6 +554,7 @@ export default function ComplaintsPanel({
       );
 
       await loadData();
+      notifyAdminActionCountsChanged();
     } catch (err) {
       setError(
         err instanceof Error
@@ -550,6 +601,7 @@ export default function ComplaintsPanel({
         );
 
         await loadData();
+        notifyAdminActionCountsChanged();
       } catch (err) {
         setError(
           err instanceof Error
@@ -590,6 +642,7 @@ export default function ComplaintsPanel({
 
       setChatInput("");
       await loadData();
+      notifyAdminActionCountsChanged();
     } catch (err) {
       setError(
         err instanceof Error
@@ -631,6 +684,7 @@ export default function ComplaintsPanel({
 
         setSelectedId(null);
         await loadData();
+        notifyAdminActionCountsChanged();
       } catch (err) {
         setError(
           err instanceof Error

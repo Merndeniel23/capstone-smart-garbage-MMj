@@ -825,6 +825,124 @@ router.patch(
 );
 
 /**
+ * PATCH /api/notifications/read-by-type
+ *
+ * Feature pages (for example Complaints & Tickets and Manage Users) can
+ * clear only the notifications that belong to that page. This keeps the
+ * notification center's other unread items untouched.
+ */
+router.patch(
+  "/read-by-type",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    const connection = await db.getConnection();
+
+    try {
+      const viewerId = positiveInteger(req.user?.id);
+
+      if (!viewerId) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required.",
+        });
+      }
+
+      const requestedTypes = Array.isArray(req.body?.notificationTypes)
+        ? req.body.notificationTypes
+        : [];
+      const notificationTypes = requestedTypes
+        .map((value: unknown) => cleanText(value, 60).toLowerCase())
+        .filter((value: string) =>
+          [
+            "account_approval_request",
+            "new_complaint",
+            "complaint_message",
+            "complaint_update",
+          ].includes(value),
+        );
+
+      if (notificationTypes.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "At least one valid notification type is required.",
+        });
+      }
+
+      await ensureNotificationReceiptsTable();
+      await connection.beginTransaction();
+
+      const viewer = await loadViewer(viewerId, connection, true);
+
+      if (!viewer || viewer.status !== "active") {
+        await connection.rollback();
+        return res.status(404).json({
+          success: false,
+          message: "User account was not found.",
+        });
+      }
+
+      const placeholders = notificationTypes.map(() => "?").join(", ");
+
+      await connection.execute(
+        `
+        INSERT INTO notification_receipts
+        (
+          notification_id,
+          user_id,
+          is_seen,
+          seen_at,
+          is_read,
+          read_at
+        )
+        SELECT
+          n.id,
+          ?,
+          1,
+          NOW(),
+          1,
+          NOW()
+        FROM notifications n
+        WHERE n.notification_type IN (${placeholders})
+          AND ${notificationVisibilitySql("n")}
+
+        ON DUPLICATE KEY UPDATE
+          is_seen = 1,
+          seen_at = COALESCE(seen_at, NOW()),
+          is_read = 1,
+          read_at = COALESCE(read_at, NOW())
+        `,
+        [
+          viewerId,
+          ...notificationTypes,
+          ...notificationVisibilityParameters(viewer),
+        ],
+      );
+
+      await connection.commit();
+
+      return res.json({
+        success: true,
+        message: "Selected notifications marked as read.",
+      });
+    } catch (error) {
+      await connection.rollback();
+
+      console.error(
+        "Mark notifications by type error:",
+        error,
+      );
+
+      return res.status(500).json({
+        success: false,
+        message: "Unable to update notification state.",
+      });
+    } finally {
+      connection.release();
+    }
+  },
+);
+
+/**
  * PATCH /api/notifications/read-all
  */
 router.patch(

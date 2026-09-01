@@ -1,15 +1,25 @@
 import { useEffect, useState } from "react";
 import { ClipboardCheck, LayoutDashboard, Calendar, User, Bell, Map, ClipboardList, Shield, Users, Award, CreditCard, MessageSquare, FileText, Truck, MapPinned, UserCog } from 'lucide-react';
+import type { AdminActionCounts } from "../hooks/useAdminActionCounts";
 
 interface BottomNavProps {
   activeTab: string;
   onTabChange: (tab: any) => void;
   role: 'household' | 'collector' | 'leader' | 'admin' | 'super_admin';
+  adminActionCounts: AdminActionCounts;
 }
 
-export default function BottomNav({ activeTab, onTabChange, role }: BottomNavProps) {
+export default function BottomNav({ activeTab, onTabChange, role, adminActionCounts }: BottomNavProps) {
   const [unseenCount, setUnseenCount] =
     useState(0);
+
+  const {
+    pendingPayments,
+    pendingEndorsements,
+    pendingCollectionTasks,
+    unreadAccounts,
+    unreadComplaints,
+  } = adminActionCounts;
 
   const loadNotificationBadge =
     async () => {
@@ -100,7 +110,7 @@ export default function BottomNav({ activeTab, onTabChange, role }: BottomNavPro
   const householdTabs = [
     { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
     { id: 'schedule', icon: Calendar, label: 'Schedule' },
-    { id: 'complaints', icon: MessageSquare, label: 'Complaints' },
+    { id: 'complaints', icon: MessageSquare, label: 'Complaints', count: unreadComplaints },
     { id: 'endorsements', icon: Award, label: 'Endorsements' },
     { id: 'payments', icon: CreditCard, label: 'Payments' },
     { id: 'notifications', icon: Bell, label: 'Alerts', count: unseenCount },
@@ -108,9 +118,9 @@ export default function BottomNav({ activeTab, onTabChange, role }: BottomNavPro
   ];
 
   const collectorTabs = [
-    { id: 'collector-tasks', icon: ClipboardList, label: 'Tasks' },
+    { id: 'collector-tasks', icon: ClipboardList, label: 'Tasks', count: pendingCollectionTasks },
     { id: 'route-map', icon: Map, label: 'Route Map' },
-    { id: 'complaints', icon: MessageSquare, label: 'Complaints' },
+    { id: 'complaints', icon: MessageSquare, label: 'Complaints', count: unreadComplaints },
     { id: 'collector-pickup-log', icon: Truck, label: 'Pickup Log' },
     { id: 'schedule', icon: Calendar, label: 'Schedule' },
     { id: 'notifications', icon: Bell, label: 'Alerts', count: unseenCount },
@@ -122,9 +132,9 @@ export default function BottomNav({ activeTab, onTabChange, role }: BottomNavPro
     { id: 'garbage-bins', icon: MapPinned, label: 'Garbage Bins' },
     { id: 'bin-inspections', icon: ClipboardCheck, label: 'Inspect Bins' },
     { id: 'members-list', icon: Users, label: 'Purok Members' },
-    { id: 'endorsements', icon: Award, label: 'Endorsements' },
-    { id: 'payments', icon: CreditCard, label: 'Verify Payments' },
-    { id: 'complaints', icon: MessageSquare, label: 'Complaints' },
+    { id: 'endorsements', icon: Award, label: 'Endorsements', count: pendingEndorsements },
+    { id: 'payments', icon: CreditCard, label: 'Verify Payments', count: pendingPayments },
+    { id: 'complaints', icon: MessageSquare, label: 'Complaints', count: unreadComplaints },
     { id: 'schedule', icon: Calendar, label: 'Schedule' },
     { id: 'notifications', icon: Bell, label: 'System Alerts', count: unseenCount },
     { id: 'profile', icon: User, label: 'Profile' },
@@ -134,9 +144,10 @@ export default function BottomNav({ activeTab, onTabChange, role }: BottomNavPro
     { id: 'admin-dashboard', icon: Shield, label: 'Admin Panel' },
     { id: 'garbage-bins', icon: MapPinned, label: 'Garbage Bins' },
     { id: 'bin-inspections', icon: ClipboardCheck, label: 'Inspections' },
-    { id: 'user-management', icon: Users, label: 'Manage Users' },
-    { id: 'payments', icon: CreditCard, label: 'Ledger Audit' },
-    { id: 'complaints', icon: MessageSquare, label: 'Complaints' },
+    { id: 'user-management', icon: Users, label: 'Manage Users', count: unreadAccounts },
+    { id: 'payments', icon: CreditCard, label: 'Ledger Audit', count: pendingPayments },
+    { id: 'complaints', icon: MessageSquare, label: 'Complaints', count: unreadComplaints },
+    { id: 'endorsements', icon: Award, label: 'Endorsements', count: pendingEndorsements },
     { id: 'route-map', icon: Map, label: 'Global Map' },
     { id: 'schedule', icon: Calendar, label: 'Schedule' },
     { id: 'notifications', icon: Bell, label: 'Global Alerts', count: unseenCount },
@@ -146,12 +157,13 @@ export default function BottomNav({ activeTab, onTabChange, role }: BottomNavPro
 
   const superAdminTabs = [
     { id: 'super-admin-dashboard', icon: LayoutDashboard, label: 'Municipal' },
-    { id: 'user-management', icon: UserCog, label: 'Captains' },
+    { id: 'user-management', icon: UserCog, label: 'Captains', count: unreadAccounts },
     { id: 'members-list', icon: Users, label: 'Directory' },
     { id: 'garbage-bins', icon: MapPinned, label: 'Bins' },
     { id: 'truck-crew-management', icon: Truck, label: 'Truck & Crew' },
-    { id: 'complaints', icon: MessageSquare, label: 'Complaints' },
-    { id: 'payments', icon: CreditCard, label: 'Payments' },
+    { id: 'complaints', icon: MessageSquare, label: 'Complaints', count: unreadComplaints },
+    { id: 'endorsements', icon: Award, label: 'Endorsements', count: pendingEndorsements },
+    { id: 'payments', icon: CreditCard, label: 'Payments', count: pendingPayments },
     { id: 'schedule', icon: Calendar, label: 'Schedules' },
     { id: 'notifications', icon: Bell, label: 'Alerts', count: unseenCount },
     { id: 'reports', icon: FileText, label: 'Reports' },
