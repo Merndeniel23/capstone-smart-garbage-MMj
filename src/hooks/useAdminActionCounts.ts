@@ -13,7 +13,6 @@ const PAYMENT_ACTION_ROLES: AppRole[] = [
 ];
 const ENDORSEMENT_ACTION_ROLES: AppRole[] = [
   "leader",
-  "admin",
   "super_admin",
 ];
 const COLLECTION_ACTION_ROLES: AppRole[] = ["collector"];
@@ -174,7 +173,9 @@ export function useAdminActionCounts(
                 payment.status === "discrepancy",
           ).length;
     const pendingEndorsements =
-      endorsementRows === null
+      !canReviewEndorsements
+        ? 0
+        : endorsementRows === null
         ? null
         : endorsementRows.filter((endorsement) =>
             role === "leader"

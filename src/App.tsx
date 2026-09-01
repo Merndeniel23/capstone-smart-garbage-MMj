@@ -114,7 +114,6 @@ const ROLE_SCREENS: Record<Role, Screen[]> = {
     "bin-inspections",
     "user-management",
     "complaints",
-    "endorsements",
     "payments",
     "route-map",
     "schedule",
@@ -558,9 +557,12 @@ function AppContent() {
   <PaymentPortal role={userRole as any} />
 )}
 
-              {currentScreen === "endorsements" && (
-                <EndorsementManager role={userRole as any} />
-              )}
+              {(userRole === "household" ||
+                userRole === "leader" ||
+                userRole === "super_admin") &&
+                currentScreen === "endorsements" && (
+                  <EndorsementManager role={userRole as any} />
+                )}
 
               {currentScreen === "notifications" && (
                 <NotificationsPanel role={userRole as any} />

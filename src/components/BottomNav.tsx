@@ -147,7 +147,6 @@ export default function BottomNav({ activeTab, onTabChange, role, adminActionCou
     { id: 'user-management', icon: Users, label: 'Manage Users', count: unreadAccounts },
     { id: 'payments', icon: CreditCard, label: 'Ledger Audit', count: pendingPayments },
     { id: 'complaints', icon: MessageSquare, label: 'Complaints', count: unreadComplaints },
-    { id: 'endorsements', icon: Award, label: 'Endorsements', count: pendingEndorsements },
     { id: 'route-map', icon: Map, label: 'Global Map' },
     { id: 'schedule', icon: Calendar, label: 'Schedule' },
     { id: 'notifications', icon: Bell, label: 'Global Alerts', count: unseenCount },

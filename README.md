@@ -76,6 +76,30 @@ registration in a deployed environment.
 
 5. Open `http://localhost:3001`.
 
+## Optional private receipt storage
+
+The payment workflow can store receipt and remittance images in a private
+Supabase Storage bucket while keeping payment records in MySQL. Without these
+settings, the existing local development behavior stores the image data in the
+database.
+
+1. Create a Supabase project and a Storage bucket named `payment-proofs`.
+2. Keep the bucket private; payment proof must not be publicly accessible.
+3. Add the project URL and server-only service role key to `.env`:
+
+   ```text
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_SECRET_KEY=your-server-only-secret-key
+   SUPABASE_STORAGE_BUCKET=payment-proofs
+   SUPABASE_STORAGE_SIGNED_URL_TTL=3600
+   ```
+
+4. Restart the server. New resident receipts and Purok Leader remittance
+   proofs will upload to Storage, while the API returns short-lived signed URLs
+   to authorized users. Never use this secret key in frontend code or a
+   `VITE_` variable. Older projects may use the legacy
+   `SUPABASE_SERVICE_ROLE_KEY` variable instead.
+
 ## Optional demo accounts
 
 Set `SEED_DEMO_DATA=true` only in a development environment, then rerun

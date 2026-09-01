@@ -6,6 +6,13 @@ import {
   requireAuth,
   type AuthRequest,
 } from "../middleware/auth.js";
+import {
+  deleteStoredProof,
+  hydratePaymentProofUrls,
+  imageExtensionForDataUrl,
+  isStorageReference,
+  storeProof,
+} from "../config/storage.js";
 
 const router = Router();
 
@@ -68,20 +75,16 @@ function validateImageDataUrl(
 ) {
   const proof = String(value || "").trim();
 
-  if (
-    !/^data:image\/(png|jpeg|jpg|webp);base64,/i.test(
-      proof,
-    )
-  ) {
+  if (!proof || proof.length > 4_800_000) {
     return null;
   }
 
-  // Approximately 3.5 MB after Base64 encoding.
-  if (proof.length > 4_800_000) {
+  try {
+    imageExtensionForDataUrl(proof);
+    return proof;
+  } catch {
     return null;
   }
-
-  return proof;
 }
 
 async function getViewer(
@@ -244,9 +247,11 @@ router.get(
           parameters,
         );
 
+      const payments = await hydratePaymentProofUrls(rows);
+
       return res.json({
         success: true,
-        payments: rows,
+        payments,
       });
     } catch (error) {
       console.error(
@@ -271,6 +276,7 @@ router.post(
     res,
   ) => {
     let connection: PoolConnection | null = null;
+    let uploadedReceiptProof: string | null = null;
 
     try {
       const userId =
@@ -448,6 +454,12 @@ router.post(
       const transactionCode =
         createTransactionCode();
 
+      uploadedReceiptProof =
+        await storeProof(
+          receiptProof,
+          `payments/${viewer.id}/${transactionCode}/receipt.${imageExtensionForDataUrl(receiptProof)}`,
+        );
+
       const [result] =
         await connection.execute<any>(
           `
@@ -490,7 +502,7 @@ router.post(
             amount,
             paymentMethod,
             paymentReference,
-            receiptProof,
+            uploadedReceiptProof,
           ],
         );
 
@@ -506,6 +518,13 @@ router.post(
     } catch (error: any) {
       if (connection) {
         await connection.rollback();
+      }
+
+      if (uploadedReceiptProof && isStorageReference(uploadedReceiptProof)) {
+        await deleteStoredProof(uploadedReceiptProof).catch(
+          (cleanupError) =>
+            console.error("Receipt proof cleanup error:", cleanupError),
+        );
       }
 
       if (
@@ -744,6 +763,7 @@ router.patch(
   ) => {
     const connection =
       await db.getConnection();
+    let uploadedRemittanceProof: string | null = null;
 
     try {
       const userId =
@@ -864,6 +884,12 @@ router.patch(
         });
       }
 
+      uploadedRemittanceProof =
+        await storeProof(
+          proof,
+          `payments/${paymentId}/remittance/${viewer.id}-${crypto.randomUUID()}.${imageExtensionForDataUrl(proof)}`,
+        );
+
       const [result] = await connection.execute<any>(
         `
         UPDATE payments
@@ -877,13 +903,21 @@ router.patch(
         `,
         [
           reference,
-          proof,
+          uploadedRemittanceProof,
           paymentId,
         ],
       );
 
       if (result.affectedRows !== 1) {
         await connection.rollback();
+
+        if (uploadedRemittanceProof && isStorageReference(uploadedRemittanceProof)) {
+          await deleteStoredProof(uploadedRemittanceProof).catch(
+            (cleanupError) =>
+              console.error("Remittance proof cleanup error:", cleanupError),
+          );
+        }
+
         return res.status(409).json({
           success: false,
           message:
@@ -900,6 +934,13 @@ router.patch(
       });
     } catch (error) {
       await connection.rollback();
+
+      if (uploadedRemittanceProof && isStorageReference(uploadedRemittanceProof)) {
+        await deleteStoredProof(uploadedRemittanceProof).catch(
+          (cleanupError) =>
+            console.error("Remittance proof cleanup error:", cleanupError),
+        );
+      }
 
       console.error(
         "Submit remittance error:",

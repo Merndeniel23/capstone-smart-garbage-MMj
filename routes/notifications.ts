@@ -909,7 +909,7 @@ router.patch(
           is_seen = 1,
           seen_at = COALESCE(seen_at, NOW()),
           is_read = 1,
-          read_at = COALESCE(read_at, NOW())
+          read_at = COALESCE(notification_receipts.read_at, NOW())
         `,
         [
           viewerId,
@@ -999,7 +999,7 @@ router.patch(
           is_seen = 1,
           seen_at = COALESCE(seen_at, NOW()),
           is_read = 1,
-          read_at = COALESCE(read_at, NOW())
+          read_at = COALESCE(notification_receipts.read_at, NOW())
         `,
         [
           viewerId,

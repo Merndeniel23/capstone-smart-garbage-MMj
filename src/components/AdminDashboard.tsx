@@ -449,8 +449,7 @@ export default function AdminDashboard({
         !summaryError &&
         (adminActionCounts.pendingAccounts > 0 ||
           adminActionCounts.pendingComplaints > 0 ||
-          adminActionCounts.pendingPayments > 0 ||
-          adminActionCounts.pendingEndorsements > 0) && (
+          adminActionCounts.pendingPayments > 0) && (
           <section
             aria-live="polite"
             className="rounded-[2rem] border border-amber-200 bg-amber-50 p-5 shadow-sm"
@@ -496,15 +495,6 @@ export default function AdminDashboard({
                   </button>
                 )}
 
-                {adminActionCounts.pendingEndorsements > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setCurrentScreen('endorsements')}
-                    className="rounded-xl bg-white px-4 py-2 text-xs font-black text-amber-800 shadow-sm ring-1 ring-amber-200"
-                  >
-                    {adminActionCounts.pendingEndorsements} endorsement{adminActionCounts.pendingEndorsements === 1 ? '' : 's'} to review
-                  </button>
-                )}
               </div>
             </div>
           </section>

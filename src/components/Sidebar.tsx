@@ -346,12 +346,6 @@ export default function Sidebar({
       count: unreadComplaints,
     },
     {
-      id: "endorsements",
-      icon: Award,
-      label: "Endorsements",
-      count: pendingEndorsements,
-    },
-    {
       id: "payments",
       icon: CreditCard,
       label: "Ledger Audit",

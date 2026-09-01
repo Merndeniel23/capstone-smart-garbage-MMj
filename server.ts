@@ -475,24 +475,26 @@ async function loadRoleScopedChatContext(user: AuthUser) {
     );
     context.inspections = inspectionRows;
 
-    const endorsementConditions: string[] = [];
-    const endorsementParameters: number[] = [];
-    addScope(endorsementConditions, endorsementParameters, role, viewer, {
-      barangay: "b",
-      purok: "p",
-    });
-    const [endorsementRows] = await db.query<any[]>(
-      `
-      SELECT er.status, COUNT(*) AS count
-      FROM endorsement_requests er
-      INNER JOIN puroks p ON p.id = er.purok_id
-      INNER JOIN barangays b ON b.id = er.barangay_id
-      WHERE ${endorsementConditions.length ? endorsementConditions.join(" AND ") : "1 = 1"}
-      GROUP BY er.status
-      `,
-      endorsementParameters,
-    );
-    context.endorsements = endorsementRows;
+    if (["purok_leader", "super_admin"].includes(role)) {
+      const endorsementConditions: string[] = [];
+      const endorsementParameters: number[] = [];
+      addScope(endorsementConditions, endorsementParameters, role, viewer, {
+        barangay: "b",
+        purok: "p",
+      });
+      const [endorsementRows] = await db.query<any[]>(
+        `
+        SELECT er.status, COUNT(*) AS count
+        FROM endorsement_requests er
+        INNER JOIN puroks p ON p.id = er.purok_id
+        INNER JOIN barangays b ON b.id = er.barangay_id
+        WHERE ${endorsementConditions.length ? endorsementConditions.join(" AND ") : "1 = 1"}
+        GROUP BY er.status
+        `,
+        endorsementParameters,
+      );
+      context.endorsements = endorsementRows;
+    }
   }
 
   if (role === "resident") {
@@ -603,8 +605,8 @@ Smart Garbage Monitoring System is a barangay waste-management application.
 Residents register and verify email, maintain their profile/location, view schedules and active bins, submit complaints and payment proofs, request endorsements, and track their own records.
 Purok Leaders inspect bins in their assigned purok, create collection requests, review resident payments/endorsements in that purok, and monitor permitted operational records.
 Collectors work on collection requests/runs in their assigned barangay, update task progress, handle assigned complaints, and share their own on-duty GPS location.
-Barangay Captains administer users, bins, schedules, notifications, complaints, payments, endorsements, inspections, collection requests, and reports for their assigned barangay.
-Super Administrators manage municipality-wide administrative and operational views.
+Barangay Captains administer users, bins, schedules, notifications, complaints, payments, inspections, collection requests, and reports for their assigned barangay; they do not have endorsement access.
+Super Administrators manage municipality-wide administrative and operational views, including read-only endorsement oversight.
 Every role is restricted by the current database role and barangay/purok assignment. Never suggest bypassing these permissions.
 
 AUDIT MODE:

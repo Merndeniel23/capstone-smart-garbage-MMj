@@ -316,11 +316,7 @@ function canViewRequest(
   }
 
   if (role === "admin") {
-    return (
-      viewer.barangay_id !== null &&
-      Number(request.barangay_id) ===
-        Number(viewer.barangay_id)
-    );
+    return false;
   }
 
   return role === "super_admin";
@@ -448,6 +444,23 @@ router.get("/verify/:code", async (req, res) => {
 
 router.use(requireAuth);
 
+// Endorsements are not a Barangay Captain workflow. Keep the legacy mutation
+// endpoint blocked so older clients cannot approve or reject requests.
+router.use((req, res, next) => {
+  if (
+    req.method === "PATCH" &&
+    /^\/\d+\/admin-review\/?$/.test(req.path)
+  ) {
+    return res.status(403).json({
+      success: false,
+      message:
+        "Barangay Captain endorsement access is disabled.",
+    });
+  }
+
+  next();
+});
+
 router.get("/", async (req: AuthRequest, res) => {
   try {
     const viewerId = positiveInteger(req.user?.id);
@@ -489,21 +502,6 @@ router.get("/", async (req: AuthRequest, res) => {
 
       whereClause = "WHERE er.purok_id = ?";
       parameters = [purokId];
-    } else if (role === "admin") {
-      const barangayId = positiveInteger(
-        viewer.barangay_id,
-      );
-
-      if (!barangayId) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Your Barangay Captain account has no assigned barangay.",
-        });
-      }
-
-      whereClause = "WHERE er.barangay_id = ?";
-      parameters = [barangayId];
     } else if (role !== "super_admin") {
       return res.status(403).json({
         success: false,
