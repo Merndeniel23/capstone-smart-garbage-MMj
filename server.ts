@@ -21,8 +21,11 @@ import superAdminRouter from "./scripts/createSuperAdmin.js";
 import { requireAuth } from "./middleware/auth.js";
 import { createRateLimiter } from "./middleware/security.js";
 import { getJwtSecret } from "./config/security.js";
+import { validateProductionEnvironment } from "./config/environment.js";
 import type { AuthRequest, AuthUser } from "./middleware/auth.js";
 dotenv.config();
+
+validateProductionEnvironment();
 
 try {
   getJwtSecret();
@@ -35,6 +38,10 @@ try {
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
 
+if (String(process.env.TRUST_PROXY || "").trim().toLowerCase() === "true") {
+  app.set("trust proxy", 1);
+}
+
 app.disable("x-powered-by");
 app.use((_req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -44,6 +51,12 @@ app.use((_req, res, next) => {
     "Permissions-Policy",
     "camera=(), microphone=(), geolocation=(self)",
   );
+  if (process.env.NODE_ENV === "production") {
+    res.setHeader(
+      "Strict-Transport-Security",
+      "max-age=31536000; includeSubDomains",
+    );
+  }
   next();
 });
 
@@ -475,7 +488,7 @@ async function loadRoleScopedChatContext(user: AuthUser) {
     );
     context.inspections = inspectionRows;
 
-    if (["purok_leader", "super_admin"].includes(role)) {
+    if (["purok_leader", "admin"].includes(role)) {
       const endorsementConditions: string[] = [];
       const endorsementParameters: number[] = [];
       addScope(endorsementConditions, endorsementParameters, role, viewer, {
@@ -602,11 +615,11 @@ async function loadRoleScopedChatContext(user: AuthUser) {
 const SYSTEM_KNOWLEDGE = `
 PRODUCT KNOWLEDGE (authoritative):
 Smart Garbage Monitoring System is a barangay waste-management application.
-Residents register and verify email, maintain their profile/location, view schedules and active bins, submit complaints and payment proofs, request endorsements, and track their own records.
-Purok Leaders inspect bins in their assigned purok, create collection requests, review resident payments/endorsements in that purok, and monitor permitted operational records.
+Residents register and verify email, maintain their profile/location, view schedules and active bins, submit complaints and payment proofs, request barangay-service endorsements for documents, permits, assistance, or other barangay services, and track their own records.
+Purok Leaders inspect bins in their assigned purok, create collection requests, review resident payments and barangay-service endorsement requests in that purok, and monitor permitted operational records.
 Collectors work on collection requests/runs in their assigned barangay, update task progress, handle assigned complaints, and share their own on-duty GPS location.
-Barangay Captains administer users, bins, schedules, notifications, complaints, payments, inspections, collection requests, and reports for their assigned barangay; they do not have endorsement access.
-Super Administrators manage municipality-wide administrative and operational views, including read-only endorsement oversight.
+Barangay Captains administer users, bins, schedules, notifications, complaints, payments, inspections, collection requests, reports, and barangay-service endorsements for their assigned barangay. They verify payment compliance before releasing an approved endorsement.
+Super Administrators manage municipality-wide administrative and operational views; they do not have endorsement access.
 Every role is restricted by the current database role and barangay/purok assignment. Never suggest bypassing these permissions.
 
 AUDIT MODE:

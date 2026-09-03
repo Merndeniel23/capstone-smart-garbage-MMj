@@ -547,8 +547,8 @@ async function createCurrentSchema() {
       requester_id INT UNSIGNED NOT NULL,
       barangay_id INT UNSIGNED NOT NULL,
       purok_id INT UNSIGNED NOT NULL,
-      request_type ENUM('barangay_clearance_support','sanitary_clearance_support')
-        NOT NULL,
+      request_type VARCHAR(64) NOT NULL,
+      requested_service VARCHAR(255) NULL,
       purpose VARCHAR(1000) NOT NULL,
       status ENUM(
         'pending_leader_review','leader_endorsed','leader_rejected',
@@ -655,6 +655,23 @@ async function migrateLegacySchema(defaultBarangayId: number) {
     WHERE u.barangay_id IS NULL
       AND u.role <> 'super_admin'
   `, [defaultBarangayId]);
+
+  if (await tableExists("endorsement_requests")) {
+    await connection.query(`
+      ALTER TABLE endorsement_requests
+        MODIFY request_type VARCHAR(64) NOT NULL
+    `);
+    await connection.query(`
+      UPDATE endorsement_requests
+      SET request_type = 'barangay_service_endorsement'
+      WHERE request_type <> 'barangay_service_endorsement'
+    `);
+    await ensureColumn(
+      "endorsement_requests",
+      "requested_service",
+      "VARCHAR(255) NULL AFTER request_type",
+    );
+  }
 
   await ensureColumn("garbage_bins", "latitude", "DECIMAL(10,7) NULL AFTER location_name");
   await ensureColumn("garbage_bins", "longitude", "DECIMAL(10,7) NULL AFTER latitude");

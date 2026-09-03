@@ -202,6 +202,11 @@ export default function Sidebar({
       count: unreadComplaints,
     },
     {
+      id: "endorsements",
+      icon: Award,
+      label: "Barangay Endorsements",
+    },
+    {
       id: "payments",
       icon: CreditCard,
       label: "Payments",
@@ -346,6 +351,12 @@ export default function Sidebar({
       count: unreadComplaints,
     },
     {
+      id: "endorsements",
+      icon: Award,
+      label: "Barangay Endorsements",
+      count: pendingEndorsements,
+    },
+    {
       id: "payments",
       icon: CreditCard,
       label: "Ledger Audit",
@@ -406,12 +417,6 @@ export default function Sidebar({
       icon: MessageSquare,
       label: "All Complaints",
       count: unreadComplaints,
-    },
-    {
-      id: "endorsements",
-      icon: Award,
-      label: "Endorsements",
-      count: pendingEndorsements,
     },
     {
       id: "payments",

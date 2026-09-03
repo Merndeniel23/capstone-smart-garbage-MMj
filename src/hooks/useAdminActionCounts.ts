@@ -13,7 +13,7 @@ const PAYMENT_ACTION_ROLES: AppRole[] = [
 ];
 const ENDORSEMENT_ACTION_ROLES: AppRole[] = [
   "leader",
-  "super_admin",
+  "admin",
 ];
 const COLLECTION_ACTION_ROLES: AppRole[] = ["collector"];
 const ACCOUNT_NOTIFICATION_TYPES = new Set([

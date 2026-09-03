@@ -24,10 +24,26 @@ const signedUrlTtlSeconds = Math.min(
 
 let client: ReturnType<typeof createClient> | null = null;
 
-function getClient() {
+function hasUsableCloudStorageConfiguration() {
   if (!supabaseUrl || !supabaseServerKey) {
+    return false;
+  }
+
+  if (/^(?:your[-_ ]|replace[-_ ]?with|put[-_ ]?a[-_ ]?)/i.test(supabaseServerKey)) {
+    return false;
+  }
+
+  try {
+    return new URL(supabaseUrl).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function getClient() {
+  if (!hasUsableCloudStorageConfiguration()) {
     throw new Error(
-      "Supabase Storage is not configured. Set SUPABASE_URL and SUPABASE_SECRET_KEY.",
+      "Supabase Storage is not configured correctly. Set a valid SUPABASE_URL and SUPABASE_SECRET_KEY.",
     );
   }
 
@@ -87,7 +103,7 @@ export function parseImageDataUrl(
 }
 
 export function isCloudStorageConfigured() {
-  return Boolean(supabaseUrl && supabaseServerKey);
+  return hasUsableCloudStorageConfiguration();
 }
 
 export function imageExtensionForDataUrl(value: unknown) {

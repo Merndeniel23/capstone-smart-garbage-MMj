@@ -7,17 +7,19 @@ than stored as browser-only mock data.
 ## Main workflows
 
 - Residents register with a verified email address, maintain their address, view
-  collection schedules, file complaints, submit payment proof, request
-  endorsements, and track progress.
+  collection schedules, file complaints, submit payment proof, request a
+  barangay-service endorsement for a document, permit, assistance, or other
+  barangay service, and track progress.
 - Purok Leaders inspect registered bins, review requests from their purok, and
-  endorse eligible resident certificates.
+  endorse valid resident barangay-service requests.
 - Collectors receive collection work, update collection runs and complaint
   progress, and share an on-duty map location.
 - Barangay Captains manage their barangay's users, bins, schedules,
-  notifications, complaints, payments, endorsements, and reports.
+  notifications, complaints, payments, endorsements, and reports; they verify
+  payment compliance before releasing an endorsement.
 - Super Administrators view municipality-wide data and provision barangay
-  captains and truck crews.
-- Approved endorsement certificates receive a server-generated certificate
+  captains and truck crews, but do not access endorsement workflows.
+- Approved barangay-service endorsements receive a server-generated reference
   number and public high-entropy verification code.
 
 Every authenticated API request reloads the current account status, role, and
@@ -53,12 +55,12 @@ registration in a deployed environment.
    npm install
    ```
 
-2. Copy `.env.example` to `.env`, then set the MySQL connection and a long,
+2. Copy `.env.template` to `.env`, then set the MySQL connection and a long,
    random `JWT_SECRET` (at least 32 characters), plus `RESEND_API_KEY` and a
    verified `RESEND_FROM_EMAIL` for registration verification:
 
    ```powershell
-   Copy-Item .env.example .env
+   Copy-Item .env.template .env
    ```
 
 3. Create or migrate the database. This command is idempotent and does not
@@ -144,8 +146,11 @@ npm start
 ```
 
 `npm start` serves the built frontend and API from the configured `PORT`.
-Set `NODE_ENV=production` and explicitly configure `CORS_ORIGINS` for the
-deployed origin.
+Set `NODE_ENV=production`, configure the exact HTTPS application origin(s) in
+`CORS_ORIGINS`, use production MySQL credentials, and set `TRUST_PROXY=true`
+when the app is behind a reverse proxy. Production startup validates the
+required database, JWT, email, and optional Supabase settings and refuses to
+start with localhost/test placeholders.
 
 ## Project layout
 
@@ -158,6 +163,6 @@ src/          React application
 server.ts     Express and Vite/static server entry point
 ```
 
-Important configuration defaults are documented in `.env.example`. Never
+Important configuration defaults are documented in `.env.template`. Never
 commit the real `.env`, database credentials, JWT secret, API keys, recovery
 codes, or production passwords.

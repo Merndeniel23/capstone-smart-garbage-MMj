@@ -17,8 +17,7 @@ type EndorsementStatus =
   | "withdrawn";
 
 type EndorsementType =
-  | "barangay_clearance_support"
-  | "sanitary_clearance_support";
+  | "barangay_service_endorsement";
 
 type DatabaseUser = {
   id: number;
@@ -69,11 +68,8 @@ function normalizeRequestType(
     .replaceAll("-", "_")
     .replaceAll(" ", "_");
 
-  if (
-    normalized === "barangay_clearance_support" ||
-    normalized === "sanitary_clearance_support"
-  ) {
-    return normalized;
+  if (normalized === "barangay_service_endorsement") {
+    return "barangay_service_endorsement";
   }
 
   return null;
@@ -87,7 +83,7 @@ function generateRequestCode() {
 }
 
 function generateCertificateNumber(barangayId: number) {
-  return `WCE-${new Date().getUTCFullYear()}-${String(
+  return `BSE-${new Date().getUTCFullYear()}-${String(
     barangayId,
   ).padStart(3, "0")}-${crypto
     .randomBytes(5)
@@ -110,10 +106,8 @@ async function prepareEndorsementSchema() {
       requester_id INT UNSIGNED NOT NULL,
       barangay_id INT UNSIGNED NOT NULL,
       purok_id INT UNSIGNED NOT NULL,
-      request_type ENUM(
-        'barangay_clearance_support',
-        'sanitary_clearance_support'
-      ) NOT NULL,
+      request_type VARCHAR(64) NOT NULL,
+      requested_service VARCHAR(255) NULL,
       purpose VARCHAR(1000) NOT NULL,
       status ENUM(
         'pending_leader_review',
@@ -171,6 +165,29 @@ async function prepareEndorsementSchema() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
       COLLATE=utf8mb4_unicode_ci
   `);
+
+  // Keep existing databases compatible while moving every request to the
+  // generic barangay-service endorsement purpose.
+  await db.query(`
+    ALTER TABLE endorsement_requests
+      MODIFY request_type VARCHAR(64) NOT NULL
+  `);
+  await db.query(`
+    UPDATE endorsement_requests
+    SET request_type = 'barangay_service_endorsement'
+    WHERE request_type <> 'barangay_service_endorsement'
+  `);
+
+  const [requestedServiceColumns] = await db.query<any[]>(
+    `SHOW COLUMNS FROM endorsement_requests LIKE 'requested_service'`,
+  );
+
+  if (!requestedServiceColumns[0]) {
+    await db.query(`
+      ALTER TABLE endorsement_requests
+        ADD COLUMN requested_service VARCHAR(255) NULL AFTER request_type
+    `);
+  }
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS endorsement_request_history (
@@ -273,6 +290,7 @@ const endorsementSelect = `
     er.barangay_id,
     er.purok_id,
     er.request_type,
+    er.requested_service,
     er.purpose,
     er.status,
     er.requester_name_snapshot,
@@ -293,7 +311,13 @@ const endorsementSelect = `
     er.verification_code,
     er.issued_at,
     er.created_at,
-    er.updated_at
+    er.updated_at,
+    (
+      SELECT COUNT(*)
+      FROM payments pay
+      WHERE pay.resident_id = er.requester_id
+        AND COALESCE(pay.status, '') <> 'completed'
+    ) AS outstanding_payment_count
   FROM endorsement_requests er
 `;
 
@@ -316,10 +340,14 @@ function canViewRequest(
   }
 
   if (role === "admin") {
-    return false;
+    return (
+      viewer.barangay_id !== null &&
+      Number(request.barangay_id) ===
+        Number(viewer.barangay_id)
+    );
   }
 
-  return role === "super_admin";
+  return false;
 }
 
 async function loadRequestById(
@@ -444,23 +472,6 @@ router.get("/verify/:code", async (req, res) => {
 
 router.use(requireAuth);
 
-// Endorsements are not a Barangay Captain workflow. Keep the legacy mutation
-// endpoint blocked so older clients cannot approve or reject requests.
-router.use((req, res, next) => {
-  if (
-    req.method === "PATCH" &&
-    /^\/\d+\/admin-review\/?$/.test(req.path)
-  ) {
-    return res.status(403).json({
-      success: false,
-      message:
-        "Barangay Captain endorsement access is disabled.",
-    });
-  }
-
-  next();
-});
-
 router.get("/", async (req: AuthRequest, res) => {
   try {
     const viewerId = positiveInteger(req.user?.id);
@@ -502,7 +513,20 @@ router.get("/", async (req: AuthRequest, res) => {
 
       whereClause = "WHERE er.purok_id = ?";
       parameters = [purokId];
-    } else if (role !== "super_admin") {
+    } else if (role === "admin") {
+      const barangayId = positiveInteger(viewer.barangay_id);
+
+      if (!barangayId) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Your Barangay Captain account has no assigned barangay.",
+        });
+      }
+
+      whereClause = "WHERE er.barangay_id = ?";
+      parameters = [barangayId];
+    } else {
       return res.status(403).json({
         success: false,
         message:
@@ -652,6 +676,11 @@ router.post("/", async (req: AuthRequest, res) => {
       req.body.requestType ?? req.body.request_type,
     );
 
+    const requestedService = cleanText(
+      req.body.requestedService ?? req.body.requested_service,
+      255,
+    );
+
     const purpose = cleanText(
       req.body.purpose ?? req.body.description,
       1000,
@@ -660,7 +689,15 @@ router.post("/", async (req: AuthRequest, res) => {
     if (!requestType) {
       return res.status(400).json({
         success: false,
-        message: "Select a valid endorsement type.",
+        message: "Select a valid barangay service endorsement type.",
+      });
+    }
+
+    if (requestedService.length < 2) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Specify the barangay service, document, permit, or assistance you need.",
       });
     }
 
@@ -668,7 +705,7 @@ router.post("/", async (req: AuthRequest, res) => {
       return res.status(400).json({
         success: false,
         message:
-          "Describe the endorsement purpose using at least 10 characters.",
+          "Describe the request purpose using at least 10 characters.",
       });
     }
 
@@ -727,6 +764,7 @@ router.post("/", async (req: AuthRequest, res) => {
         barangay_id,
         purok_id,
         request_type,
+        requested_service,
         purpose,
         status,
         requester_name_snapshot,
@@ -737,7 +775,7 @@ router.post("/", async (req: AuthRequest, res) => {
         purok_name_snapshot
       )
       VALUES
-      (?, ?, ?, ?, ?, ?, 'pending_leader_review', ?, ?, ?, ?, ?, ?)
+      (?, ?, ?, ?, ?, ?, ?, 'pending_leader_review', ?, ?, ?, ?, ?, ?)
       `,
       [
         requestCode,
@@ -745,6 +783,7 @@ router.post("/", async (req: AuthRequest, res) => {
         barangayId,
         purokId,
         requestType,
+        requestedService,
         purpose,
         viewer.full_name,
         viewer.email,
@@ -776,7 +815,7 @@ router.post("/", async (req: AuthRequest, res) => {
     return res.status(201).json({
       success: true,
       message:
-        "Endorsement request submitted to your Purok Leader.",
+        "Barangay service request submitted to your Purok Leader.",
       endorsement,
     });
   } catch (error) {
@@ -1024,6 +1063,33 @@ router.patch(
         });
       }
 
+      const [outstandingPaymentRows] = await connection.query<any[]>(
+        `
+        SELECT status, COUNT(*) AS count
+        FROM payments
+        WHERE resident_id = ?
+          AND COALESCE(status, '') <> 'completed'
+        GROUP BY status
+        `,
+        [request.requester_id],
+      );
+
+      const outstandingPaymentCount =
+        outstandingPaymentRows.reduce(
+          (total, row) => total + Number(row.count || 0),
+          0,
+        );
+
+      if (action === "approve" && outstandingPaymentCount > 0) {
+        await connection.rollback();
+        return res.status(409).json({
+          success: false,
+          message:
+            "This endorsement cannot be released until all outstanding payment records are completed.",
+          outstandingPaymentCount,
+        });
+      }
+
       const nextStatus: EndorsementStatus =
         action === "approve"
           ? "approved"
@@ -1078,7 +1144,7 @@ router.patch(
         actor: viewer,
         action:
           action === "approve"
-            ? "certificate_issued"
+            ? "endorsement_released"
             : "admin_rejected",
         fromStatus: "leader_endorsed",
         toStatus: nextStatus,
@@ -1096,7 +1162,7 @@ router.patch(
         success: true,
         message:
           action === "approve"
-            ? "Certificate approved and issued successfully."
+            ? "Barangay service endorsement approved and released successfully."
             : "Request rejected by the Barangay Captain.",
         endorsement,
       });

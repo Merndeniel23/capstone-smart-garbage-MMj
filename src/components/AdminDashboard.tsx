@@ -676,7 +676,7 @@ export default function AdminDashboard({
 
         {/* Global Alerts Feed */}
         <div className="space-y-6">
-           {/* CLEARANCE DESK INTERACTIVE CARD */}
+           {/* BARANGAY SERVICE ENDORSEMENT CARD */}
            {false && (
            <div className="bg-gradient-to-br from-[#059669] to-emerald-800 p-6 rounded-[2.5rem] text-white shadow-lg space-y-4">
               <div className="flex justify-between items-start">
@@ -688,8 +688,8 @@ export default function AdminDashboard({
                 </span>
               </div>
               <div className="space-y-1">
-                 <h3 className="text-lg font-black tracking-tight leading-none text-white">Clearance Desk Hub</h3>
-                 <p className="text-[10px] text-emerald-100">Review community sanitary and residency endorsements</p>
+                  <h3 className="text-lg font-black tracking-tight leading-none text-white">Barangay Service Desk</h3>
+               <p className="text-[10px] text-emerald-100">Review barangay service endorsements</p>
               </div>
               
               <div className="grid grid-cols-2 gap-3 bg-black/15 p-3 rounded-2xl text-center">
@@ -714,13 +714,13 @@ export default function AdminDashboard({
               {operationalLoading && (
                 <div className="flex items-center gap-2 rounded-xl bg-white/10 px-3 py-2 text-[10px] font-bold text-emerald-100">
                   <LoaderCircle className="h-3 w-3 animate-spin" />
-                  Loading clearance queue...
+                   Loading barangay service queue...
                 </div>
               )}
 
               {endorsementError && (
                 <div className="rounded-xl border border-white/15 bg-black/15 px-3 py-2 text-[10px] font-bold text-emerald-50">
-                  Clearance data unavailable: {endorsementError}
+                   Barangay service data unavailable: {endorsementError}
                 </div>
               )}
 

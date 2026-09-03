@@ -114,6 +114,7 @@ const ROLE_SCREENS: Record<Role, Screen[]> = {
     "bin-inspections",
     "user-management",
     "complaints",
+    "endorsements",
     "payments",
     "route-map",
     "schedule",
@@ -128,7 +129,6 @@ const ROLE_SCREENS: Record<Role, Screen[]> = {
     "garbage-bins",
     "truck-crew-management",
     "complaints",
-    "endorsements",
     "payments",
     "schedule",
     "notifications",
@@ -559,7 +559,7 @@ function AppContent() {
 
               {(userRole === "household" ||
                 userRole === "leader" ||
-                userRole === "super_admin") &&
+                userRole === "admin") &&
                 currentScreen === "endorsements" && (
                   <EndorsementManager role={userRole as any} />
                 )}
