@@ -1,6 +1,7 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { db } from "../config/db.js";
+import { signedProofUrl } from "../config/storage.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
@@ -51,6 +52,82 @@ function isApprovalReadyAccount(user: any): boolean {
     String(user?.status).toLowerCase() === "pending" &&
     hasVerifiedResidentProfile(user)
   );
+}
+
+function paymentPeriodExpression() {
+  return `
+    COALESCE(
+      STR_TO_DATE(
+        CONCAT('1 ', TRIM(pay.billing_period)),
+        '%e %M %Y'
+      ),
+      STR_TO_DATE(
+        CONCAT('1 ', TRIM(pay.billing_period)),
+        '%e %b %Y'
+      ),
+      STR_TO_DATE(
+        CONCAT(TRIM(pay.billing_period), '-01'),
+        '%Y-%m-%d'
+      ),
+      pay.created_at
+    )
+  `;
+}
+
+function memberContributionFields() {
+  const paymentPeriod = paymentPeriodExpression();
+
+  return `
+    COALESCE(
+      (
+        SELECT SUM(pay.amount)
+        FROM payments pay
+        WHERE pay.resident_id = u.id
+          AND pay.category = 'weekly_fee'
+          AND pay.status = 'completed'
+          AND DATE_FORMAT(
+            ${paymentPeriod},
+            '%Y-%m'
+          ) = DATE_FORMAT(CURDATE(), '%Y-%m')
+      ),
+      0
+    ) AS current_month_contribution,
+    COALESCE(
+      (
+        SELECT SUM(pay.amount)
+        FROM payments pay
+        WHERE pay.resident_id = u.id
+          AND pay.category = 'weekly_fee'
+          AND pay.status = 'completed'
+          AND DATE_FORMAT(
+            ${paymentPeriod},
+            '%Y-%m'
+          ) = DATE_FORMAT(
+            DATE_SUB(CURDATE(), INTERVAL 1 MONTH),
+            '%Y-%m'
+          )
+      ),
+      0
+    ) AS previous_month_contribution,
+    CASE
+      WHEN EXISTS (
+        SELECT 1
+        FROM payments pay
+        WHERE pay.resident_id = u.id
+          AND pay.category = 'weekly_fee'
+          AND pay.status = 'completed'
+          AND DATE_FORMAT(
+            ${paymentPeriod},
+            '%Y-%m'
+          ) = DATE_FORMAT(
+            DATE_SUB(CURDATE(), INTERVAL 1 MONTH),
+            '%Y-%m'
+          )
+      )
+      THEN 1
+      ELSE 0
+    END AS previous_month_complete
+  `;
 }
 
 
@@ -944,13 +1021,15 @@ router.get("/purok-members", requireAuth, async (req: AuthRequest, res) => {
         u.email,
         u.phone,
         u.address,
+        u.profile_photo,
         u.role,
         u.status,
         u.barangay_id,
         b.name AS barangay_name,
         u.purok_id,
         p.name AS purok_name,
-        u.created_at
+        u.created_at,
+        ${memberContributionFields()}
       FROM users u
       LEFT JOIN barangays b ON b.id = u.barangay_id
       LEFT JOIN puroks p ON p.id = u.purok_id
@@ -961,9 +1040,16 @@ router.get("/purok-members", requireAuth, async (req: AuthRequest, res) => {
       [purokId],
     );
 
+    const users = await Promise.all(
+      rows.map(async (row: any) => ({
+        ...row,
+        profile_photo: await signedProofUrl(row.profile_photo),
+      })),
+    );
+
     return res.json({
       success: true,
-      users: rows,
+      users,
     });
   } catch (error) {
     console.error("Load purok members error:", error);
@@ -1013,6 +1099,7 @@ router.get("/users", requireAuth, async (req: AuthRequest, res) => {
         u.email,
         u.phone,
         u.address,
+        u.profile_photo,
         u.role,
         u.status,
         CASE
@@ -1034,7 +1121,8 @@ router.get("/users", requireAuth, async (req: AuthRequest, res) => {
         b.name AS barangay_name,
         u.purok_id,
         p.name AS purok_name,
-        u.created_at
+        u.created_at,
+        ${memberContributionFields()}
       FROM users u
       LEFT JOIN barangays b ON b.id = u.barangay_id
       LEFT JOIN puroks p ON p.id = u.purok_id
@@ -1046,7 +1134,14 @@ router.get("/users", requireAuth, async (req: AuthRequest, res) => {
       params,
     );
 
-    return res.json({ success: true, users: rows });
+    const users = await Promise.all(
+      rows.map(async (row: any) => ({
+        ...row,
+        profile_photo: await signedProofUrl(row.profile_photo),
+      })),
+    );
+
+    return res.json({ success: true, users });
   } catch (error) {
     console.error("Admin load users error:", error);
     return res.status(500).json({
@@ -1383,7 +1478,7 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
         ? "Purok Leader"
         : role === "collector"
           ? "Garbage Collector"
-          : "Civilian";
+          : "Resident";
 
     return res.json({
       success: true,

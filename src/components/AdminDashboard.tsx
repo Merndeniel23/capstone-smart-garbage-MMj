@@ -423,7 +423,7 @@ export default function AdminDashboard({
   ];
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-20 md:pb-0">
+    <div className="min-w-0 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-20 md:pb-0">
       <header className="flex flex-col gap-2">
         <div className="flex items-center gap-2 text-emerald-600 font-black text-[10px] uppercase tracking-[0.2em]">
           <Shield className="w-3 h-3" />
@@ -962,8 +962,8 @@ function AnalyticsBarChart({
   return (
     <section>
       <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-sm font-black text-slate-800">{title}</h3>
-        <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+        <h3 className="text-lg font-black text-slate-800">{title}</h3>
+        <span className="text-sm font-black uppercase tracking-widest text-slate-400">
           Database Records
         </span>
       </div>
@@ -973,34 +973,38 @@ function AnalyticsBarChart({
           {emptyMessage}
         </div>
       ) : (
-        <div className="flex h-48 items-end gap-3 overflow-x-auto rounded-[1.5rem] bg-slate-50 px-4 pb-4 pt-8">
-          {items.map((item) => {
-            const height = Math.max(
-              item.value > 0 ? 12 : 4,
-              (item.value / maxValue) * 100,
-            );
+        <div className="overflow-x-auto rounded-[1.5rem] border border-slate-200/80 bg-slate-50 px-6 pb-5 pt-6">
+          <div className="mx-auto flex h-56 min-w-max items-end justify-center gap-8">
+            {items.map((item) => {
+              const height = Math.max(
+                item.value > 0 ? 12 : 4,
+                (item.value / maxValue) * 100,
+              );
 
-            return (
-              <div
-                key={`${title}-${item.label}`}
-                className="flex min-w-[54px] flex-1 flex-col items-center justify-end"
-              >
-                <span className="mb-2 text-[10px] font-black text-slate-700">
-                  {item.value}
-                </span>
-
+              return (
                 <div
-                  className={`w-full rounded-t-xl transition-all duration-500 ${barClass}`}
-                  style={{ height: `${height}%` }}
-                  title={`${item.label}: ${item.value}`}
-                />
+                  key={`${title}-${item.label}`}
+                  className="flex h-full w-16 shrink-0 flex-col items-center"
+                >
+                  <span className="mb-2 flex-none text-lg font-black text-slate-700">
+                    {item.value}
+                  </span>
 
-                <span className="mt-2 max-w-[72px] truncate text-[9px] font-bold text-slate-400">
-                  {item.label}
-                </span>
-              </div>
-            );
-          })}
+                  <div className="flex min-h-0 w-full flex-1 items-end justify-center border-b border-slate-200/80">
+                    <div
+                      className={`w-12 rounded-t-xl shadow-sm transition-all duration-500 ${barClass}`}
+                      style={{ height: `${height}%` }}
+                      title={`${item.label}: ${item.value}`}
+                    />
+                  </div>
+
+                  <span className="mt-3 flex-none whitespace-nowrap text-sm font-bold text-slate-400">
+                    {item.label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </section>

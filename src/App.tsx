@@ -478,7 +478,7 @@ function AppContent() {
     userRole === "super_admin";
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#F8FAFC] font-sans text-slate-900 md:flex-row">
+    <div className="flex min-h-screen min-w-0 flex-col overflow-x-clip bg-[#F8FAFC] font-sans text-slate-900 md:flex-row">
       <EmergencyAlertOverlay />
       {userRole === "collector" && (
         <PersistentCollectorLocationTracker />
@@ -491,14 +491,15 @@ function AppContent() {
         adminActionCounts={adminActionCounts}
       />
 
-      <div className="flex min-h-0 flex-1 flex-col bg-[#F1F5F9]/30">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-clip bg-[#F1F5F9]/30">
         <Header
           activeTab={currentScreen as any}
           onLogout={handleLogout}
           userRole={userRole as any}
+          profilePhoto={currentUser?.profilePhoto}
         />
 
-        <main className="mx-auto w-full max-w-7xl flex-1 overflow-y-auto p-4 md:p-8">
+        <main className="mx-auto min-w-0 w-full max-w-7xl flex-1 overflow-x-clip p-4 md:p-8">
           <AnimatePresence mode="wait">
             <motion.div
               key={currentScreen}

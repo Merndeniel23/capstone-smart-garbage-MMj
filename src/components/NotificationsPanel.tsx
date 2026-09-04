@@ -840,7 +840,7 @@ export default function NotificationsPanel({
                     Everyone in allowed area
                   </option>
                   <option value="resident">
-                    Civilians
+                    Residents
                   </option>
                   <option value="collector">
                     Garbage Collectors

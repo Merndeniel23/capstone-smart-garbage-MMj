@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Award,
+  Camera,
   HelpCircle,
+  ImagePlus,
   Loader2,
   Mail,
   MapPin,
@@ -9,8 +11,10 @@ import {
   Send,
   ShieldAlert,
   ShieldCheck,
+  Trash2,
   User,
 } from "lucide-react";
+import { useAppState } from "../context/AppStateContext";
 
 interface RegistrationBarangay {
   id: number;
@@ -36,6 +40,7 @@ interface ProfileUser {
   barangay_name: string | null;
   purok_id: number | null;
   purok_name: string | null;
+  profile_photo: string | null;
   created_at?: string;
 }
 
@@ -96,7 +101,7 @@ function roleLabel(role?: ProfileUser["role"]) {
     case "collector":
       return "Garbage Collector";
     default:
-      return "Civilian";
+      return "Resident";
   }
 }
 
@@ -115,11 +120,67 @@ function userCode(user: ProfileUser | null) {
   return `${prefix}-${String(user.id).padStart(4, "0")}`;
 }
 
+function prepareProfilePhoto(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      reject(new Error("Choose a JPG, PNG, or WebP image."));
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onerror = () => reject(new Error("Unable to read that image."));
+    reader.onload = () => {
+      const image = new Image();
+
+      image.onerror = () => reject(new Error("That image could not be loaded."));
+      image.onload = () => {
+        const maxDimension = 512;
+        const scale = Math.min(
+          1,
+          maxDimension / Math.max(image.naturalWidth, image.naturalHeight),
+        );
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+
+        const context = canvas.getContext("2d");
+
+        if (!context) {
+          reject(new Error("Your browser cannot process that image."));
+          return;
+        }
+
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.84);
+
+        if (dataUrl.length > 4_800_000) {
+          reject(new Error("That image is still too large. Choose a smaller photo."));
+          return;
+        }
+
+        resolve(dataUrl);
+      };
+
+      image.src = String(reader.result || "");
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function UserProfilePanel() {
+  const { updateProfile } = useAppState();
   const [profile, setProfile] = useState<ProfileUser | null>(null);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
+  const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
+  const [photoDraft, setPhotoDraft] = useState<string | null>(null);
+  const [photoSaving, setPhotoSaving] = useState(false);
 
   const [registrationBarangays, setRegistrationBarangays] =
     useState<RegistrationBarangay[]>([]);
@@ -199,6 +260,8 @@ export default function UserProfilePanel() {
       const user = data.user as ProfileUser;
 
       setProfile(user);
+      setProfilePhoto(user.profile_photo || null);
+      setPhotoDraft(null);
       setName(user.full_name || "");
       setPhone(sanitizePhoneInput(user.phone || ""));
       setAddress(user.address || "");
@@ -227,6 +290,100 @@ export default function UserProfilePanel() {
   useEffect(() => {
     loadProfile();
   }, []);
+
+  const handlePhotoSelected = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) return;
+
+    setError("");
+
+    try {
+      setPhotoDraft(await prepareProfilePhoto(file));
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to prepare the profile picture.",
+      );
+    }
+  };
+
+  const handleSavePhoto = async () => {
+    if (!photoDraft) return;
+
+    setPhotoSaving(true);
+    setError("");
+    setNotif("");
+
+    try {
+      const data = await apiRequest("/auth/profile-photo", {
+        method: "PUT",
+        body: JSON.stringify({ photoDataUrl: photoDraft }),
+      });
+      const savedPhoto = data.profilePhoto || photoDraft;
+
+      setProfilePhoto(savedPhoto);
+      setPhotoDraft(null);
+      setProfile((previous) =>
+        previous
+          ? { ...previous, profile_photo: savedPhoto }
+          : previous,
+      );
+      updateProfile({ profilePhoto: savedPhoto });
+      setNotif(data.message || "Profile picture updated successfully.");
+      window.setTimeout(() => setNotif(""), 4000);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to update the profile picture.",
+      );
+    } finally {
+      setPhotoSaving(false);
+    }
+  };
+
+  const handleRemovePhoto = async () => {
+    if (photoDraft) {
+      setPhotoDraft(null);
+      return;
+    }
+
+    if (!profilePhoto) return;
+
+    setPhotoSaving(true);
+    setError("");
+    setNotif("");
+
+    try {
+      const data = await apiRequest("/auth/profile-photo", {
+        method: "PUT",
+        body: JSON.stringify({ photoDataUrl: null }),
+      });
+
+      setProfilePhoto(null);
+      setProfile((previous) =>
+        previous
+          ? { ...previous, profile_photo: null }
+          : previous,
+      );
+      updateProfile({ profilePhoto: null });
+      setNotif(data.message || "Profile picture removed.");
+      window.setTimeout(() => setNotif(""), 4000);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to remove the profile picture.",
+      );
+    } finally {
+      setPhotoSaving(false);
+    }
+  };
 
   useEffect(() => {
     if (!needsInitialResidentSetup) {
@@ -373,6 +530,7 @@ export default function UserProfilePanel() {
           ? String(updatedUser.purok_id)
           : "",
       );
+      setProfilePhoto(updatedUser.profile_photo || null);
 
       if (
         updatedUser.barangay_id &&
@@ -423,6 +581,7 @@ export default function UserProfilePanel() {
                 ? "household"
                 : updatedUser.role,
           householdId: userCode(updatedUser),
+          profilePhoto: updatedUser.profile_photo || null,
         }),
       );
 
@@ -601,11 +760,37 @@ export default function UserProfilePanel() {
 
       <div className="space-y-8 overflow-hidden rounded-[2.5rem] border border-slate-100 bg-white p-6 shadow-sm md:p-8">
         <div className="flex flex-col items-center gap-6 border-b border-slate-100 pb-6 md:flex-row">
-          <div className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-emerald-500/20 bg-emerald-50 text-2xl font-black text-emerald-700 shadow-inner">
-            {(name || "U").charAt(0).toUpperCase()}
+          <div className="relative shrink-0">
+            <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-2 border-emerald-500/20 bg-emerald-50 text-3xl font-black text-emerald-700 shadow-inner">
+              {photoDraft || profilePhoto ? (
+                <img
+                  src={photoDraft || profilePhoto || ""}
+                  alt={`${name || "User"} profile`}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                (name || "U").charAt(0).toUpperCase()
+              )}
+            </div>
+
+            <label
+              htmlFor="profile-photo-input"
+              title="Choose profile picture"
+              className="absolute bottom-0 right-0 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border-2 border-white bg-emerald-600 text-white shadow-md transition hover:bg-emerald-700"
+            >
+              <Camera className="h-4 w-4" />
+            </label>
+
+            <input
+              id="profile-photo-input"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={handlePhotoSelected}
+              className="hidden"
+            />
           </div>
 
-          <div className="space-y-1 text-center md:text-left">
+          <div className="space-y-2 text-center md:text-left">
             <h3 className="text-lg font-black leading-none text-slate-800">
               {name || "User"}
             </h3>
@@ -617,6 +802,44 @@ export default function UserProfilePanel() {
             </p>
             <p className="text-[10px] font-bold uppercase text-slate-400">
               ID: {userCode(profile)}
+            </p>
+
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-1 md:justify-start">
+              <label
+                htmlFor="profile-photo-input"
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-emerald-50 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-emerald-700 transition hover:bg-emerald-100"
+              >
+                <ImagePlus className="h-3.5 w-3.5" />
+                Choose photo
+              </label>
+
+              {photoDraft && (
+                <button
+                  type="button"
+                  onClick={() => void handleSavePhoto()}
+                  disabled={photoSaving}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-white transition hover:bg-emerald-800 disabled:opacity-60"
+                >
+                  {photoSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Save photo
+                </button>
+              )}
+
+              {(photoDraft || profilePhoto) && (
+                <button
+                  type="button"
+                  onClick={() => void handleRemovePhoto()}
+                  disabled={photoSaving}
+                  className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-wider text-rose-600 transition hover:bg-rose-50 disabled:opacity-60"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {photoDraft ? "Cancel" : "Remove"}
+                </button>
+              )}
+            </div>
+
+            <p className="text-[10px] font-semibold text-slate-400">
+              JPG, PNG, or WebP · max 3.5 MB
             </p>
           </div>
         </div>

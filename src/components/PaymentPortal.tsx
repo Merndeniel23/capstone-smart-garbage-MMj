@@ -7,10 +7,13 @@ import {
   AlertTriangle,
   Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   CreditCard,
   Eye,
   FileImage,
+  Filter,
   Loader2,
   RefreshCw,
   Search,
@@ -256,6 +259,12 @@ export default function PaymentPortal({
   const [search, setSearch] =
     useState("");
 
+  const [statusFilter, setStatusFilter] =
+    useState<"all" | PaymentStatus>("all");
+
+  const [paymentPage, setPaymentPage] =
+    useState(1);
+
   const [showPaymentForm, setShowPaymentForm] =
     useState(false);
 
@@ -344,25 +353,69 @@ export default function PaymentPortal({
       const query =
         search.trim().toLowerCase();
 
-      if (!query) {
-        return payments;
-      }
+      return payments.filter((payment) => {
+        const matchesStatus =
+          statusFilter === "all" ||
+          payment.status === statusFilter;
 
-      return payments.filter(
-        (payment) =>
-          [
-            payment.transaction_code,
-            payment.resident_name,
-            payment.payment_reference,
-            payment.purok_name,
-            statusLabel(payment.status),
-          ].some((value) =>
-            String(value || "")
-              .toLowerCase()
-              .includes(query),
-          ),
-      );
-    }, [payments, search]);
+        if (!matchesStatus) {
+          return false;
+        }
+
+        if (!query) {
+          return true;
+        }
+
+        return [
+          payment.transaction_code,
+          payment.resident_name,
+          payment.payment_reference,
+          payment.purok_name,
+          payment.barangay_name,
+          statusLabel(payment.status),
+        ].some((value) =>
+          String(value || "")
+            .toLowerCase()
+            .includes(query),
+        );
+      });
+    }, [payments, search, statusFilter]);
+
+  const paymentPageSize = 8;
+  const paymentPageCount = Math.max(
+    1,
+    Math.ceil(
+      filteredPayments.length / paymentPageSize,
+    ),
+  );
+
+  const visiblePayments = useMemo(() => {
+    const safePage = Math.min(
+      paymentPage,
+      paymentPageCount,
+    );
+    const start =
+      (safePage - 1) * paymentPageSize;
+
+    return filteredPayments.slice(
+      start,
+      start + paymentPageSize,
+    );
+  }, [
+    filteredPayments,
+    paymentPage,
+    paymentPageCount,
+  ]);
+
+  useEffect(() => {
+    setPaymentPage(1);
+  }, [search, statusFilter]);
+
+  useEffect(() => {
+    if (paymentPage > paymentPageCount) {
+      setPaymentPage(paymentPageCount);
+    }
+  }, [paymentPage, paymentPageCount]);
 
   const completedTotal = payments
     .filter(
@@ -688,16 +741,51 @@ export default function PaymentPortal({
         />
       </section>
 
-      <div className="relative">
-        <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-        <input
-          value={search}
-          onChange={(event) =>
-            setSearch(event.target.value)
-          }
-          placeholder="Search transaction, resident, reference, purok, or status"
-          className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-11 pr-4 text-sm outline-none focus:border-emerald-500"
-        />
+      <div className="flex flex-col gap-3 md:flex-row">
+        <div className="relative flex-1">
+          <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            value={search}
+            onChange={(event) =>
+              setSearch(event.target.value)
+            }
+            placeholder="Search transaction, resident, reference, purok, or status"
+            className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-11 pr-4 text-sm outline-none focus:border-emerald-500"
+          />
+        </div>
+
+        <div className="relative md:w-64">
+          <Filter className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <select
+            value={statusFilter}
+            onChange={(event) =>
+              setStatusFilter(
+                event.target.value as
+                  | "all"
+                  | PaymentStatus,
+              )
+            }
+            className="w-full appearance-none rounded-2xl border border-slate-200 bg-white py-3 pl-11 pr-4 text-sm font-bold text-slate-600 outline-none focus:border-emerald-500"
+          >
+            <option value="all">All payment statuses</option>
+            <option value="pending_leader_verification">
+              Pending leader verification
+            </option>
+            <option value="pending_remittance">
+              Pending remittance
+            </option>
+            <option value="pending_admin_confirmation">
+              Pending admin confirmation
+            </option>
+            <option value="discrepancy">
+              Remittance discrepancy
+            </option>
+            <option value="rejected_by_leader">
+              Rejected by leader
+            </option>
+            <option value="completed">Completed</option>
+          </select>
+        </div>
       </div>
 
       {loading ? (
@@ -706,7 +794,56 @@ export default function PaymentPortal({
         </div>
       ) : (
         <div className="space-y-4">
-          {filteredPayments.map(
+          {filteredPayments.length > 0 && (
+            <div className="flex flex-col gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs font-bold text-slate-500">
+                Showing{" "}
+                <span className="font-black text-slate-800">
+                  {(paymentPage - 1) * paymentPageSize + 1}
+                </span>
+                {"–"}
+                <span className="font-black text-slate-800">
+                  {Math.min(
+                    paymentPage * paymentPageSize,
+                    filteredPayments.length,
+                  )}
+                </span>{" "}
+                of{" "}
+                <span className="font-black text-slate-800">
+                  {filteredPayments.length}
+                </span>{" "}
+                transactions
+              </p>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPaymentPage((page) => Math.max(1, page - 1))}
+                  disabled={paymentPage === 1}
+                  aria-label="Previous payments page"
+                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+
+                <span className="min-w-16 text-center text-xs font-black text-slate-600">
+                  {paymentPage} / {paymentPageCount}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => setPaymentPage((page) => Math.min(paymentPageCount, page + 1))}
+                  disabled={paymentPage === paymentPageCount}
+                  aria-label="Next payments page"
+                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {visiblePayments.map(
             (payment) => (
               <article
                 key={payment.id}

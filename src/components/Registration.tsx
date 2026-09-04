@@ -237,6 +237,7 @@ const [resendCountdown, setResendCountdown] = useState(0);
         : appRole === "collector"
         ? `COL-${data.user.id}`
         : `HH-${data.user.id}`,
+    profilePhoto: data.user.profile_photo || null,
   };
 
   const storage = remember ? localStorage : sessionStorage;

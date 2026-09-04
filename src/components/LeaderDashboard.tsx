@@ -193,7 +193,7 @@ export default function LeaderDashboard({ setCurrentScreen }: LeaderDashboardPro
               <div className="p-12 text-center">
                 <CheckCircle2 className="mx-auto h-9 w-9 text-emerald-400" />
                 <p className="mt-2 font-black text-slate-700">No active complaints</p>
-                <p className="mt-1 text-xs text-slate-500">New civilian complaints from your purok will appear here.</p>
+                <p className="mt-1 text-xs text-slate-500">New resident complaints from your purok will appear here.</p>
               </div>
             ) : (
               <div className="divide-y divide-slate-100">

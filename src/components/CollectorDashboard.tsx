@@ -866,7 +866,7 @@ export default function CollectorDashboard({
           </h1>
 
           <p className="mt-1 text-xs font-bold uppercase tracking-wider text-slate-500">
-            Scheduled bins, collection requests, and assigned civilian complaints
+            Scheduled bins, collection requests, and assigned resident complaints
           </p>
         </div>
 
@@ -1426,7 +1426,7 @@ export default function CollectorDashboard({
           <div>
             <h2 className="flex items-center gap-2 text-lg font-black">
               <MessageSquareWarning className="h-5 w-5 text-amber-400" />
-              Assigned Civilian Complaints
+              Assigned Resident Complaints
             </h2>
 
             <p className="mt-1 text-xs text-slate-300">

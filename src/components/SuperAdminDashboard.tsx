@@ -115,7 +115,7 @@ function roleLabel(role: string) {
     case "collector":
       return "Garbage Collector";
     default:
-      return "Civilian";
+      return "Resident";
   }
 }
 

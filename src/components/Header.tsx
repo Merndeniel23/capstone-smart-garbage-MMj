@@ -20,6 +20,7 @@ interface HeaderProps {
   onRoleChange?: (
     role: AppRole,
   ) => void;
+  profilePhoto?: string | null;
 }
 
 const THEME_STORAGE_KEY =
@@ -89,7 +90,7 @@ function getRoleLabel(
     case "collector":
       return "GARBAGE COLLECTOR";
     default:
-      return "CIVILIAN";
+      return "RESIDENT";
   }
 }
 
@@ -120,6 +121,7 @@ export default function Header({
   activeTab,
   onLogout,
   userRole,
+  profilePhoto,
 }: HeaderProps) {
   const RoleIcon =
     getRoleIcon(userRole);
@@ -276,8 +278,16 @@ export default function Header({
           </button>
 
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
-              <RoleIcon className="h-4 w-4" />
+            <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl bg-emerald-50 text-emerald-700">
+              {profilePhoto ? (
+                <img
+                  src={profilePhoto}
+                  alt="Profile"
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <RoleIcon className="h-4 w-4" />
+              )}
             </div>
 
             <div>

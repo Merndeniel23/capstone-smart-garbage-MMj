@@ -7,6 +7,8 @@ import {
 import {
   CalendarDays,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Filter,
   Loader2,
   Mail,
@@ -39,6 +41,10 @@ type DirectoryMember = {
   address: string;
   householdId: string;
   status: DirectoryStatus;
+  profilePhoto?: string | null;
+  currentMonthContribution: number;
+  previousMonthContribution: number;
+  previousMonthComplete: boolean;
   barangay?: string;
   purok?: string;
   createdAt?: string;
@@ -56,6 +62,10 @@ type DatabaseUser = {
   barangay_name?: string | null;
   purok_id?: number | null;
   purok_name?: string | null;
+  profile_photo?: string | null;
+  current_month_contribution?: number | string | null;
+  previous_month_contribution?: number | string | null;
+  previous_month_complete?: number | boolean | null;
   created_at?: string | null;
 };
 
@@ -165,6 +175,15 @@ function mapDatabaseUser(
         : user.status === "pending"
           ? "pending"
           : "active",
+    profilePhoto: user.profile_photo || null,
+    currentMonthContribution: Number(
+      user.current_month_contribution || 0,
+    ),
+    previousMonthContribution: Number(
+      user.previous_month_contribution || 0,
+    ),
+    previousMonthComplete:
+      Boolean(Number(user.previous_month_complete)),
     createdAt:
       user.created_at || undefined,
   };
@@ -192,6 +211,9 @@ export default function MembersList() {
     useState<
       "all" | DirectoryStatus
     >("all");
+
+  const [memberPage, setMemberPage] =
+    useState(1);
 
   const [deletingId, setDeletingId] =
     useState<number | null>(null);
@@ -341,6 +363,40 @@ export default function MembersList() {
     statusFilter,
   ]);
 
+  const memberPageSize = 8;
+  const memberPageCount = Math.max(
+    1,
+    Math.ceil(members.length / memberPageSize),
+  );
+
+  const visibleMembers = useMemo(() => {
+    const safePage = Math.min(
+      memberPage,
+      memberPageCount,
+    );
+    const start =
+      (safePage - 1) * memberPageSize;
+
+    return members.slice(
+      start,
+      start + memberPageSize,
+    );
+  }, [
+    members,
+    memberPage,
+    memberPageCount,
+  ]);
+
+  useEffect(() => {
+    setMemberPage(1);
+  }, [searchTerm, statusFilter]);
+
+  useEffect(() => {
+    if (memberPage > memberPageCount) {
+      setMemberPage(memberPageCount);
+    }
+  }, [memberPage, memberPageCount]);
+
   const selectedMember =
     members.find(
       (member) =>
@@ -444,7 +500,7 @@ export default function MembersList() {
           </h1>
 
           <p className="text-sm font-medium text-slate-500">
-            View registered household accounts and official contact details.
+            View household accounts, contact details, and contribution status.
           </p>
         </div>
 
@@ -573,6 +629,55 @@ export default function MembersList() {
 
       <div className="grid grid-cols-1 gap-8 xl:grid-cols-3">
         <div className="space-y-4 xl:col-span-2">
+          {!loading && !directoryUnavailable && members.length > 0 && (
+            <div className="flex flex-col gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs font-bold text-slate-500">
+                Showing{" "}
+                <span className="font-black text-slate-800">
+                  {(memberPage - 1) * memberPageSize + 1}
+                </span>
+                {"–"}
+                <span className="font-black text-slate-800">
+                  {Math.min(
+                    memberPage * memberPageSize,
+                    members.length,
+                  )}
+                </span>{" "}
+                of{" "}
+                <span className="font-black text-slate-800">
+                  {members.length}
+                </span>{" "}
+                members
+              </p>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMemberPage((page) => Math.max(1, page - 1))}
+                  disabled={memberPage === 1}
+                  aria-label="Previous members page"
+                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+
+                <span className="min-w-16 text-center text-xs font-black text-slate-600">
+                  {memberPage} / {memberPageCount}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => setMemberPage((page) => Math.min(memberPageCount, page + 1))}
+                  disabled={memberPage === memberPageCount}
+                  aria-label="Next members page"
+                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {loading ? (
             <div className="flex min-h-[260px] items-center justify-center rounded-[2rem] border border-slate-100 bg-white">
               <div className="text-center">
@@ -601,7 +706,7 @@ export default function MembersList() {
               </button>
             </div>
           ) : members.length > 0 ? (
-            members.map((member) => {
+            visibleMembers.map((member) => {
               const isSelected =
                 selectedMemberId ===
                 member.id;
@@ -624,8 +729,16 @@ export default function MembersList() {
                       : "border-slate-100 shadow-sm hover:border-slate-200"
                   }`}
                 >
-                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-emerald-50">
-                    <User className="h-7 w-7 text-emerald-600" />
+                  <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-emerald-50">
+                    {member.profilePhoto ? (
+                      <img
+                        src={member.profilePhoto}
+                        alt={`${member.name} profile`}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <User className="h-7 w-7 text-emerald-600" />
+                    )}
                   </div>
 
                   <div className="min-w-0 flex-1">
@@ -649,6 +762,25 @@ export default function MembersList() {
                       {member.barangay ||
                         "Barangay not specified"}
                     </p>
+
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <span className="rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-700">
+                        This month: ₱{member.currentMonthContribution.toFixed(2)}
+                      </span>
+
+                      <span
+                        className={
+                          member.previousMonthComplete
+                            ? "rounded-lg bg-blue-50 px-2 py-1 text-[10px] font-black text-blue-700"
+                            : "rounded-lg bg-amber-50 px-2 py-1 text-[10px] font-black text-amber-700"
+                        }
+                      >
+                        Last month:{" "}
+                        {member.previousMonthComplete
+                          ? "Complete · ₱" + member.previousMonthContribution.toFixed(2)
+                          : "Pending"}
+                      </span>
+                    </div>
                   </div>
 
                   <div className="shrink-0 text-right">
@@ -702,10 +834,18 @@ export default function MembersList() {
                 className="overflow-hidden rounded-[2rem] border border-slate-100 bg-white shadow-sm"
               >
                 <div className="bg-slate-900 p-6 text-white">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/15">
-                      <User className="h-6 w-6 text-emerald-400" />
-                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl bg-emerald-500/15">
+                        {selectedMember.profilePhoto ? (
+                          <img
+                            src={selectedMember.profilePhoto}
+                            alt={`${selectedMember.name} profile`}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <User className="h-6 w-6 text-emerald-400" />
+                        )}
+                      </div>
 
                     <div className="min-w-0">
                       <h3 className="truncate text-lg font-black">
@@ -788,6 +928,58 @@ export default function MembersList() {
                           )}
                         </p>
                       </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+                      <p className="text-[9px] font-black uppercase tracking-wider text-emerald-700">
+                        This Month&apos;s Contribution
+                      </p>
+                      <p className="mt-1 text-xl font-black text-emerald-800">
+                        ₱{selectedMember.currentMonthContribution.toFixed(2)}
+                      </p>
+                      <p className="mt-1 text-[10px] font-bold text-emerald-700/80">
+                        Completed weekly fees
+                      </p>
+                    </div>
+
+                    <div
+                      className={
+                        selectedMember.previousMonthComplete
+                          ? "rounded-2xl border border-blue-100 bg-blue-50 p-4"
+                          : "rounded-2xl border border-amber-100 bg-amber-50 p-4"
+                      }
+                    >
+                      <p
+                        className={
+                          selectedMember.previousMonthComplete
+                            ? "text-[9px] font-black uppercase tracking-wider text-blue-700"
+                            : "text-[9px] font-black uppercase tracking-wider text-amber-700"
+                        }
+                      >
+                        Last Month
+                      </p>
+                      <p
+                        className={
+                          selectedMember.previousMonthComplete
+                            ? "mt-1 text-xl font-black text-blue-800"
+                            : "mt-1 text-xl font-black text-amber-800"
+                        }
+                      >
+                        {selectedMember.previousMonthComplete
+                          ? "Complete"
+                          : "Pending"}
+                      </p>
+                      <p
+                        className={
+                          selectedMember.previousMonthComplete
+                            ? "mt-1 text-[10px] font-bold text-blue-700/80"
+                            : "mt-1 text-[10px] font-bold text-amber-700/80"
+                        }
+                      >
+                        ₱{selectedMember.previousMonthContribution.toFixed(2)} recorded
+                      </p>
                     </div>
                   </div>
 

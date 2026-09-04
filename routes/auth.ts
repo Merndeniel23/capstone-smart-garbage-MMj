@@ -16,6 +16,14 @@ import {
   getJwtSecret,
   isStrongPassword,
 } from "../config/security.js";
+import {
+  deleteStoredProof,
+  imageExtensionForDataUrl,
+  isStorageReference,
+  parseImageDataUrl,
+  signedProofUrl,
+  storeProof,
+} from "../config/storage.js";
 
 const router = Router();
 
@@ -386,6 +394,7 @@ router.post(
             u.role,
             u.phone,
             u.address,
+            u.profile_photo,
             u.duty_latitude,
             u.duty_longitude,
             u.status,
@@ -436,6 +445,7 @@ router.post(
         createToken(user);
 
       delete user.password_hash;
+      user.profile_photo = await signedProofUrl(user.profile_photo);
 
       return res.json({
         message:
@@ -469,7 +479,7 @@ router.post(
 /**
  * PUBLIC REGISTRATION
  *
- * Every new public account is automatically a Civilian:
+ * Every new public account is automatically a Resident:
  * role = resident
  *
  * The real barangay_id is taken from the selected purok.
@@ -936,6 +946,7 @@ router.post(
             u.status,
             u.phone,
             u.address,
+            u.profile_photo,
             u.created_at,
             b.name AS barangay_name,
             p.name AS purok_name
@@ -1017,7 +1028,7 @@ router.post(
         }
       } else {
         /*
-         * Google-created Civilian accounts have no location yet.
+         * Google-created Resident accounts have no location yet.
          * The frontend should ask the user to complete barangay,
          * purok, phone, and address before using location-based features.
          */
@@ -1080,6 +1091,7 @@ router.post(
                 status,
                 phone,
                 address,
+                profile_photo,
                 created_at
               FROM users
               WHERE id = ?
@@ -1115,6 +1127,7 @@ router.post(
                 status,
                 phone,
                 address,
+                profile_photo,
                 created_at
               FROM users
               WHERE email = ?
@@ -1141,9 +1154,12 @@ router.post(
       return res.json({
         message: existingRows[0]
           ? "Google login successful."
-          : "Google Civilian account created. Complete your barangay and purok assignment before using location-based features.",
+          : "Google Resident account created. Complete your barangay and purok assignment before using location-based features.",
         token,
-        user,
+        user: {
+          ...user,
+          profile_photo: await signedProofUrl(user.profile_photo),
+        },
         needsLocationSetup:
           !user.barangay_id ||
           !user.purok_id ||
@@ -1206,6 +1222,7 @@ router.get(
             u.role,
             u.phone,
             u.address,
+            u.profile_photo,
             u.status,
             u.must_change_password,
             u.created_at
@@ -1229,7 +1246,10 @@ router.get(
 
       return res.json({
         success: true,
-        user: rows[0],
+        user: {
+          ...rows[0],
+          profile_photo: await signedProofUrl(rows[0].profile_photo),
+        },
       });
     } catch (error) {
       console.error(
@@ -1511,6 +1531,7 @@ router.put(
             u.role,
             u.phone,
             u.address,
+            u.profile_photo,
             u.duty_latitude,
             u.duty_longitude,
             u.status,
@@ -1556,7 +1577,10 @@ router.put(
         message: pendingResidentApproval
           ? "Resident profile submitted. Please wait for Barangay Captain approval."
           : "Profile updated successfully.",
-        user: updatedUser,
+        user: {
+          ...updatedUser,
+          profile_photo: await signedProofUrl(updatedUser.profile_photo),
+        },
         pendingApproval:
           Boolean(pendingResidentApproval),
       });
@@ -1569,6 +1593,78 @@ router.put(
       return res.status(500).json({
         message:
           "Unable to update profile.",
+      });
+    }
+  },
+);
+
+router.put(
+  "/profile-photo",
+  requireAuthenticatedAccount,
+  async (req: AuthRequest, res) => {
+    try {
+      const photoDataUrl = req.body.photoDataUrl;
+      const userId = Number(req.user!.id);
+
+      const [currentRows] = await db.query<any[]>(
+        `SELECT profile_photo FROM users WHERE id = ? LIMIT 1`,
+        [userId],
+      );
+      const currentPhoto = currentRows[0]?.profile_photo || null;
+
+      if (photoDataUrl === null || photoDataUrl === "") {
+        await db.execute(
+          `UPDATE users SET profile_photo = NULL WHERE id = ?`,
+          [userId],
+        );
+
+        if (isStorageReference(currentPhoto)) {
+          await deleteStoredProof(currentPhoto).catch((error) =>
+            console.error("Delete old profile photo error:", error),
+          );
+        }
+
+        return res.json({
+          success: true,
+          profilePhoto: null,
+          message: "Profile picture removed.",
+        });
+      }
+
+      if (!parseImageDataUrl(photoDataUrl)) {
+        return res.status(400).json({
+          success: false,
+          message: "Choose a valid PNG, JPG, or WebP image up to 3.5 MB.",
+        });
+      }
+
+      const extension = imageExtensionForDataUrl(photoDataUrl);
+      const storedPhoto = await storeProof(
+        String(photoDataUrl),
+        `profile-photos/${userId}-${crypto.randomUUID()}.${extension}`,
+      );
+
+      await db.execute(
+        `UPDATE users SET profile_photo = ? WHERE id = ?`,
+        [storedPhoto, userId],
+      );
+
+      if (isStorageReference(currentPhoto)) {
+        await deleteStoredProof(currentPhoto).catch((error) =>
+          console.error("Delete old profile photo error:", error),
+        );
+      }
+
+      return res.json({
+        success: true,
+        profilePhoto: await signedProofUrl(storedPhoto),
+        message: "Profile picture updated successfully.",
+      });
+    } catch (error) {
+      console.error("Profile photo update error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Unable to update the profile picture.",
       });
     }
   },
@@ -2208,7 +2304,7 @@ router.post(
 
 /*
  * These older collector-verification endpoints are kept for compatibility.
- * New public registrations are Civilian accounts, while the Barangay Captain
+ * New public registrations are Resident accounts, while the Barangay Captain
  * promotes users through /api/admin/users/:id/role.
  */
 router.get(

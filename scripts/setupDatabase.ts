@@ -142,6 +142,7 @@ async function createCurrentSchema() {
         NOT NULL DEFAULT 'resident',
       phone VARCHAR(30) NULL,
       address VARCHAR(255) NULL,
+      profile_photo MEDIUMTEXT NULL,
       status ENUM('active','inactive','pending') NOT NULL DEFAULT 'active',
       must_change_password TINYINT(1) NOT NULL DEFAULT 0,
       duty_latitude DECIMAL(10,7) NULL,
@@ -643,6 +644,7 @@ async function migrateLegacySchema(defaultBarangayId: number) {
   );
   await ensureColumn("users", "duty_latitude", "DECIMAL(10,7) NULL");
   await ensureColumn("users", "duty_longitude", "DECIMAL(10,7) NULL");
+  await ensureColumn("users", "profile_photo", "MEDIUMTEXT NULL AFTER address");
   await connection.query(`
     ALTER TABLE users
       MODIFY role ENUM('super_admin','admin','purok_leader','collector','resident')

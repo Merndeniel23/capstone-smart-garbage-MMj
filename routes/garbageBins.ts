@@ -102,6 +102,16 @@ router.get(
           gb.last_inspected_at,
           gb.is_active,
 
+          (
+            SELECT bi.photo_path
+            FROM bin_inspections bi
+            WHERE bi.bin_id = gb.id
+              AND bi.photo_path IS NOT NULL
+              AND TRIM(bi.photo_path) <> ''
+            ORDER BY bi.inspected_at DESC, bi.id DESC
+            LIMIT 1
+          ) AS photo_path,
+
           p.id AS purok_id,
           p.name AS purok_name,
 

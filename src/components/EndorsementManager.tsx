@@ -613,6 +613,14 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
         }
 
         @media print {
+          html,
+          body,
+          #root {
+            height: auto !important;
+            min-height: 0 !important;
+            overflow: visible !important;
+          }
+
           #barangay-endorsement-print-area,
           #barangay-endorsement-print-area * {
             color-scheme: light !important;
@@ -621,7 +629,37 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
           #barangay-endorsement-print-area {
             background: #ffffff !important;
             color: #0f172a !important;
+            height: auto !important;
+            max-height: none !important;
+            overflow: visible !important;
           }
+
+          #barangay-endorsement-print-area > div {
+            height: auto !important;
+            min-height: 0 !important;
+            max-height: none !important;
+            overflow: visible !important;
+          }
+        }
+
+        .endorsement-scroll {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(148, 163, 184, 0.55) transparent;
+        }
+
+        .endorsement-scroll::-webkit-scrollbar {
+          display: block !important;
+          width: 7px !important;
+          height: 7px !important;
+        }
+
+        .endorsement-scroll::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .endorsement-scroll::-webkit-scrollbar-thumb {
+          background: rgba(148, 163, 184, 0.55);
+          border-radius: 9999px;
         }
       `}</style>
       
@@ -632,7 +670,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
             <Building2 className="w-4 h-4 text-emerald-600" />
             Barangay Service Endorsement Center
           </div>
-          <h1 className="text-3xl font-extrabold text-[#1E293B] tracking-tight">Endorsement Panel</h1>
+          <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight dark:text-white">Endorsement Panel</h1>
           <p className="text-slate-500 text-sm">
             {role === 'household' ? 'Request an endorsement for a barangay document, permit, assistance, or other service' :
              role === 'leader' ? 'Review resident requests and endorse eligible barangay service requests' :
@@ -1160,7 +1198,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
       {/* OFFICIAL DIGITAL CERTIFICATE PREVIEW MODAL */}
       <AnimatePresence>
         {activeCertificate && (
-          <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm z-50 overflow-y-auto py-4 px-2 md:py-10 md:px-4 flex justify-center items-start print:p-0 print:bg-white print:absolute print:inset-0">
+          <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm z-50 overflow-y-auto p-2 md:p-6 lg:p-8 flex justify-center items-start print:p-0 print:bg-white print:absolute print:inset-0 print:overflow-visible">
             
             {/* FLOATING ESCAPE QUICK-CLOSE BUTTON */}
             <button
@@ -1175,11 +1213,11 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-slate-50 w-full max-w-5xl rounded-[2.5rem] shadow-2xl overflow-hidden relative border border-slate-200 flex flex-col lg:flex-row my-4 md:my-8 print:my-0 print:border-0 print:shadow-none print:bg-white print:rounded-none"
+              className="bg-slate-50 w-full max-w-5xl max-h-[calc(100dvh-1rem)] lg:h-[calc(100dvh-4rem)] lg:max-h-none rounded-[2.5rem] shadow-2xl overflow-hidden relative border border-slate-200 flex flex-col lg:flex-row print:my-0 print:h-auto print:max-h-none print:overflow-visible print:border-0 print:shadow-none print:bg-white print:rounded-none"
             >
               
               {/* LEFT COLUMN: INTERACTIVE FORM CONTROLS (Hidden on print) */}
-              <div className={`lg:w-[360px] border-b lg:border-b-0 lg:border-r p-6 flex flex-col shrink-0 gap-4 print:hidden ${
+              <div className={`endorsement-scroll lg:w-[360px] overflow-y-auto border-b lg:border-b-0 lg:border-r p-6 flex flex-col shrink-0 gap-4 print:hidden ${
                 role === 'household' ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-800'
               }`}>
                 {role === 'household' ? (
@@ -1375,12 +1413,12 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
               {/* RIGHT COLUMN: HIGH FIDELITY PAPER BLUEPRINT REPRESENTATION */}
               <div
-                className="endorsement-paper flex-1 bg-white p-6 md:p-14 flex flex-col justify-between shadow-xs print:p-0 print:shadow-none print:w-full print:block"
+                className="endorsement-paper endorsement-scroll font-sans min-h-0 flex-1 overflow-y-auto bg-white p-6 md:p-14 flex flex-col justify-between shadow-xs print:p-0 print:shadow-none print:w-full print:block print:h-auto print:max-h-none print:overflow-visible"
                 id="barangay-endorsement-print-area"
               >
                 
                 {/* DOUBLE BORDER LETTERHEAD ORNAMENT (Matches the Philippine traditional stationery model) */}
-                <div className="border border-double border-slate-800/80 p-8 md:p-12 h-full flex flex-col justify-between space-y-10 min-h-[750px] print:border-0 print:p-0 relative">
+                <div className="border border-double border-slate-800/80 p-8 md:p-12 h-auto flex-none flex flex-col justify-between space-y-10 min-h-[750px] print:border-0 print:p-0 print:h-auto print:min-h-0 relative">
                   
                   {/* Subtle watermarking diagonal text */}
                   {activeCertificate?.status !== 'Barangay Approved' && (
@@ -1464,7 +1502,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                   </div>
 
                   {/* CERTIFICATION TEXT BODY */}
-                  <div className="font-serif text-slate-950 text-xs md:text-sm text-justify leading-relaxed space-y-6 md:space-y-8 px-1 max-w-xl mx-auto">
+                  <div className="font-sans text-slate-950 text-xs md:text-sm font-normal tracking-normal text-left leading-relaxed space-y-6 md:space-y-8 px-1 max-w-xl mx-auto">
                     <p className="indent-8">
                       THIS IS TO CERTIFY that <strong className="font-sans font-extrabold text-slate-950 border-b border-slate-900/60 pb-0.5 px-0.5">{activeCertificate.householdName}</strong>
                       {activeCertificate.requesterAccountCode
@@ -1507,7 +1545,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                     <div className="space-y-1.5 min-w-[180px] text-left">
                       <p className="text-[11px] text-slate-500 italic font-medium font-sans">Certified & Endorsed by:</p>
                       <div className="pt-2">
-                        <span className="text-[11px] text-indigo-600 font-serif font-black italic block leading-none">Verified Purok Leader</span>
+                        <span className="text-[11px] text-indigo-600 font-sans font-black italic block leading-none">Verified Purok Leader</span>
                         <strong className="text-xs text-slate-900 font-bold block border-b border-slate-350 pb-0.5">
                           {activeCertificate.endorsedBy ||
                             'Awaiting Purok Leader'}
@@ -1524,7 +1562,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       <div className="pt-2">
                         {activeCertificate?.status === 'Barangay Approved' ? (
                           <>
-                            <span className="text-xs text-emerald-600 font-serif font-bold italic block leading-none">✓ Official Digitally Signed</span>
+                            <span className="text-xs text-emerald-600 font-sans font-bold italic block leading-none">✓ Official Digitally Signed</span>
                             <strong className="text-xs md:text-sm text-slate-950 font-extrabold tracking-wide uppercase block border-b-2 border-slate-950 pb-0.5">
                               HON. {certificateApproverName.toUpperCase()}
                             </strong>
@@ -1534,7 +1572,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                           </>
                         ) : (
                           <>
-                            <span className="text-xs text-amber-600 font-serif font-medium italic block leading-none">⌛ Awaiting Admin Review</span>
+                            <span className="text-xs text-amber-600 font-sans font-medium italic block leading-none">⌛ Awaiting Admin Review</span>
                             <strong className="text-xs md:text-sm text-slate-400 font-bold tracking-wide uppercase block border-b-2 border-slate-200 pb-0.5">
                               HON. {certificateApproverName.toUpperCase()}
                             </strong>

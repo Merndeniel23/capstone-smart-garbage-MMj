@@ -152,13 +152,117 @@ const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({
   httpOptions: { headers: { "User-Agent": "aistudio-build" } }
 }) : null;
 const AI_MODEL = String(
-  process.env.GEMINI_MODEL || "gemini-3.5-flash",
+  process.env.GEMINI_MODEL || "gemini-2.5-flash",
 ).trim();
 
 const CHAT_REFUSAL =
   "I can only assist with questions related to the Smart Garbage Monitoring System.";
 const CHAT_REFUSAL_CEBUANO =
   "Makatabang ra ko sa mga pangutana bahin sa Smart Garbage Monitoring System.";
+
+function fallbackChatResponse(
+  message: string,
+  language: "Cebuano" | "English",
+) {
+  const normalized = normalizeChatText(message);
+
+  if (language === "Cebuano") {
+    if (
+      normalized.includes("inspection") ||
+      normalized.includes("inspeksyon") ||
+      normalized.includes("basura")
+    ) {
+      return "Para mag-record og manual inspection: adto sa Inspection Records, pili-a ang garbage bin, ibutang ang status ug estimated fill level, optional ang remarks/photo, dayon i-save ang inspection.";
+    }
+
+    if (
+      normalized.includes("collection") ||
+      normalized.includes("kolekta") ||
+      normalized.includes("pickup")
+    ) {
+      return "Para makahimo o maka-track og collection request: adto sa Garbage Bins o Collector Route Map, pili-a ang bin, unya i-click ang collection action. Makita ang status sa request sa list ug sa assigned collector workflow.";
+    }
+
+    if (
+      normalized.includes("payment") ||
+      normalized.includes("bayad") ||
+      normalized.includes("contribution")
+    ) {
+      return "Para sa bayad: adto sa Ledger Audit/Payments, pili-a ang fee, ibutang ang billing period ug reference number, i-upload ang receipt, dayon i-submit. Ang status moagi sa leader verification, remittance, ug barangay confirmation.";
+    }
+
+    if (
+      normalized.includes("profile") ||
+      normalized.includes("picture") ||
+      normalized.includes("photo")
+    ) {
+      return "Para mag-update sa profile: adto sa Profile o Control Center, i-upload ang profile picture, i-save ang changes, ug i-refresh ang page kung dili dayon makita.";
+    }
+
+    if (
+      normalized.includes("complaint") ||
+      normalized.includes("reklamo") ||
+      normalized.includes("ticket")
+    ) {
+      return "Para mag-submit og complaint: adto sa Complaints & Tickets, ibutang ang complaint type ug detalye, optional ang photo, dayon i-submit. Ma-track nimo ang status sa parehas nga page.";
+    }
+
+    if (
+      normalized.includes("endorsement") ||
+      normalized.includes("certificate")
+    ) {
+      return "Para mangayo og barangay service endorsement: adto sa Barangay Endorsements, pilia ang service/document, ibutang ang purpose, ug i-submit. Ma-review kini sa Purok Leader ug Barangay Captain.";
+    }
+
+    return "Makatabang ko sa Manual Inspection, Collection Requests, Garbage Bins, Payments, Complaints, Endorsements, Notifications, Profiles, ug role-based dashboards. Pangutana lang unsaon paggamit sa usa niini.";
+  }
+
+  if (
+    normalized.includes("inspection") ||
+    normalized.includes("garbage bin")
+  ) {
+    return "To record a manual inspection, open Inspection Records, select a garbage bin, enter its status and estimated fill level, optionally add remarks or a photo, then save the inspection.";
+  }
+
+  if (
+    normalized.includes("collection") ||
+    normalized.includes("pickup")
+  ) {
+    return "To create or track a collection request, open Garbage Bins or Collector Route Map, select a bin, and use the collection action. The request status appears in the list and in the assigned collector workflow.";
+  }
+
+  if (
+    normalized.includes("payment") ||
+    normalized.includes("contribution")
+  ) {
+    return "To submit a payment, open Ledger Audit/Payments, select the fee, enter the billing period and reference number, upload the receipt, and submit. The status moves through leader verification, remittance, and barangay confirmation.";
+  }
+
+  if (
+    normalized.includes("profile") ||
+    normalized.includes("picture") ||
+    normalized.includes("photo")
+  ) {
+    return "To update your profile, open Profile or Control Center, upload your profile picture, save the changes, and refresh if the new picture does not appear immediately.";
+  }
+
+  if (
+    normalized.includes("complaint") ||
+    normalized.includes("ticket")
+  ) {
+    return "To submit a complaint, open Complaints & Tickets, enter the complaint type and details, optionally attach a photo, then submit. You can track its status on the same page.";
+  }
+
+  if (
+    normalized.includes("endorsement") ||
+    normalized.includes("certificate")
+  ) {
+    return "To request a barangay service endorsement, open Barangay Endorsements, choose the service or document, enter the purpose, and submit. It is reviewed by the Purok Leader and Barangay Captain.";
+  }
+
+  return "I can help with Manual Inspection, Collection Requests, Garbage Bins, Payments, Complaints, Endorsements, Notifications, Profiles, and role-based dashboards. Ask how to use one of these features.";
+}
+
 const MAX_CHAT_MESSAGE_LENGTH = 2000;
 
 const APP_TOPIC_KEYWORDS = [
@@ -668,10 +772,8 @@ app.post("/api/chat", requireAuth, chatLimiter, async (req, res) => {
 
     if (!ai) {
       return res.json({
-        text:
-          language === "Cebuano"
-            ? "Temporary nga dili available ang AI service. Mahimo ko motabang kung ma-configure na ang Gemini API key sa server."
-            : "The AI service is temporarily unavailable. I can still assist once the Gemini API key is configured on the server.",
+        text: fallbackChatResponse(message, language),
+        fallback: true,
       });
     }
 
@@ -730,12 +832,10 @@ app.post("/api/chat", requireAuth, chatLimiter, async (req, res) => {
       },
     ];
 
-    const result =
-      await ai.models.generateContent({
-        model: AI_MODEL,
-        contents: contentsPayload,
-        config: {
-          systemInstruction: `${SYSTEM_KNOWLEDGE}
+    const generationConfig = {
+      contents: contentsPayload,
+      config: {
+        systemInstruction: `${SYSTEM_KNOWLEDGE}
 
 CURRENT SESSION CONTEXT (trusted, read-only, server-generated):
 ${viewerContext}
@@ -749,8 +849,39 @@ Reply in ${language} because that is the language detected in the user's latest 
 If the latest question is outside the product scope, reply exactly with the matching refusal:
 English: ${CHAT_REFUSAL}
 Cebuano: ${CHAT_REFUSAL_CEBUANO}`,
-        },
-      });
+      },
+    };
+
+    const candidateModels = Array.from(
+      new Set([
+        AI_MODEL,
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+      ]),
+    );
+
+    let result: any = null;
+    let lastModelError: unknown = null;
+
+    for (const model of candidateModels) {
+      try {
+        result = await ai.models.generateContent({
+          model,
+          ...generationConfig,
+        });
+        break;
+      } catch (modelError) {
+        lastModelError = modelError;
+        console.warn(
+          "Gemini model unavailable; trying the next model.",
+          { model, error: modelError },
+        );
+      }
+    }
+
+    if (!result) {
+      throw lastModelError || new Error("All Gemini models are unavailable.");
+    }
 
     const replyText = String(
       result.text || "",
@@ -768,8 +899,8 @@ Cebuano: ${CHAT_REFUSAL_CEBUANO}`,
     );
 
     return res.json({
-      text:
-        "The assistant is temporarily unavailable. Please try again in a moment.",
+      text: fallbackChatResponse(message, language),
+      fallback: true,
     });
   }
 });

@@ -493,7 +493,7 @@ export default function Sidebar({
       case "collector":
         return "Garbage Collector";
       default:
-        return "Civilian";
+        return "Resident";
     }
   })();
 
@@ -510,7 +510,7 @@ export default function Sidebar({
 
   return (
     <aside
-      className={`sticky top-0 z-20 hidden h-screen shrink-0 flex-col text-white shadow-xl transition-all duration-300 md:flex ${
+      className={`sticky top-0 hidden h-screen min-h-0 shrink-0 flex-col self-start text-white shadow-xl transition-all duration-300 md:flex ${
         collapsed
           ? "w-20"
           : "w-64"
@@ -578,7 +578,7 @@ export default function Sidebar({
       )}
 
       <nav
-        className={`flex-1 space-y-1 overflow-y-auto pb-4 pt-4 ${
+        className={`min-h-0 flex-1 space-y-1 overflow-y-auto pb-4 pt-4 ${
           collapsed
             ? "px-3"
             : "px-4"

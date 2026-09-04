@@ -35,6 +35,7 @@ type GarbageBin = {
   current_status?: BinStatus | null;
   condition_status?: string | null;
   last_inspected_at?: string | null;
+  photo_path?: string | null;
   is_active: number | boolean;
   purok_id?: number | null;
   purok_name?: string | null;
@@ -271,11 +272,47 @@ function markerColor(bin: GarbageBin): string {
   return "#2563eb";
 }
 
+function getSafePhotoUrl(value?: string | null): string | null {
+  const photoPath = value?.trim();
+
+  if (!photoPath) return null;
+
+  try {
+    const url = new URL(photoPath, window.location.origin);
+
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(
+    /[&<>"']/g,
+    (character) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[character] || character,
+  );
+}
+
 function makeMarkerIcon(bin: GarbageBin): L.DivIcon {
   const color = markerColor(bin);
   const scheduledRing = isScheduledToday(bin)
     ? "box-shadow: 0 0 0 4px rgba(34,197,94,.25);"
     : "";
+  const photoUrl = getSafePhotoUrl(bin.photo_path);
+  const centerContent = photoUrl
+    ? `<img src="${escapeHtml(photoUrl)}" alt="" style="width: 20px; height: 20px; object-fit: cover; border-radius: 999px; display: block; transform: rotate(45deg);" />`
+    : `<div style="width: 8px; height: 8px; border-radius: 999px; background: white;"></div>`;
 
   return L.divIcon({
     className: "",
@@ -288,14 +325,11 @@ function makeMarkerIcon(bin: GarbageBin): L.DivIcon {
         background: ${color};
         border: 3px solid white;
         ${scheduledRing}
+        display: flex;
+        align-items: center;
+        justify-content: center;
       ">
-        <div style="
-          width: 8px;
-          height: 8px;
-          margin: 7px;
-          border-radius: 999px;
-          background: white;
-        "></div>
+        ${centerContent}
       </div>
     `,
     iconSize: [28, 28],
@@ -870,8 +904,14 @@ export default function MapView({
         { icon: makeMarkerIcon(bin) },
       ).addTo(markerLayer);
 
+      const photoUrl = getSafePhotoUrl(bin.photo_path);
+      const photoMarkup = photoUrl
+        ? `<img src="${escapeHtml(photoUrl)}" alt="Garbage bin ${escapeHtml(bin.bin_code)}" style="width: 100%; height: 120px; object-fit: cover; border-radius: 10px; margin-bottom: 8px; display: block;" />`
+        : "";
+
       marker.bindPopup(`
         <div style="min-width: 210px; line-height: 1.5;">
+          ${photoMarkup}
           <strong>${bin.bin_code}</strong><br />
           ${bin.location_name}<br />
           ${bin.purok_name || "No purok"}${

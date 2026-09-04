@@ -20,6 +20,7 @@ export interface UserProfile {
   householdId: string;
   contactInfo: string;
   communalZone: string;
+  profilePhoto?: string | null;
 }
 
 export interface UserAccount {
@@ -36,6 +37,7 @@ export interface UserAccount {
   status?: "active" | "pending" | "inactive";
   createdAt?: string;
   mustChangePassword?: boolean;
+  profilePhoto?: string | null;
 }
 
 interface AppState {
@@ -58,6 +60,7 @@ const emptyProfile: UserProfile = {
   householdId: "",
   contactInfo: "",
   communalZone: "",
+  profilePhoto: null,
 };
 
 const AppStateContext = createContext<AppState | undefined>(undefined);
@@ -177,6 +180,7 @@ function mapApiUser(user: any): UserAccount {
     status: user?.status || "active",
     createdAt: user?.created_at || undefined,
     mustChangePassword: Boolean(user?.must_change_password),
+    profilePhoto: user?.profile_photo || null,
   });
 }
 
@@ -232,6 +236,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
           householdId: account.householdId,
           contactInfo: account.phone,
           communalZone: account.communalZone,
+          profilePhoto: account.profilePhoto || null,
         };
 
         setCurrentUser(account);
@@ -325,6 +330,10 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
             phone: profile.contactInfo ?? previous.phone,
             address: profile.address ?? previous.address,
             communalZone: profile.communalZone ?? previous.communalZone,
+            profilePhoto:
+              profile.profilePhoto !== undefined
+                ? profile.profilePhoto
+                : previous.profilePhoto,
           })
         : previous,
     );
