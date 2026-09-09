@@ -1,4 +1,3 @@
-import bcrypt from "bcryptjs";
 import dotenv from "dotenv";
 import mysql, { type Connection } from "mysql2/promise";
 
@@ -903,12 +902,12 @@ async function migrateLegacySchema(defaultBarangayId: number) {
 
 async function seedReferenceData() {
   const defaultBarangay = String(
-    process.env.DEFAULT_BARANGAY_NAME || "Bang-bang",
+    process.env.DEFAULT_BARANGAY_NAME || "",
   ).trim();
-  const purokCount = Math.max(
-    1,
-    Math.min(99, Number(process.env.DEFAULT_PUROK_COUNT || 9)),
-  );
+  const purokCount = Number(process.env.DEFAULT_PUROK_COUNT);
+  if (!defaultBarangay || !Number.isInteger(purokCount) || purokCount < 1 || purokCount > 99) {
+    throw new Error("Set DEFAULT_BARANGAY_NAME and DEFAULT_PUROK_COUNT (1-99) before running database setup.");
+  }
 
   await connection.execute(
     `
@@ -941,62 +940,6 @@ async function seedReferenceData() {
   return barangayId;
 }
 
-async function seedDemoData(barangayId: number) {
-  if (String(process.env.SEED_DEMO_DATA || "false").toLowerCase() !== "true") {
-    return;
-  }
-
-  const [purokRows] = await connection.query<any[]>(
-    `SELECT id FROM puroks WHERE barangay_id = ? ORDER BY id LIMIT 1`,
-    [barangayId],
-  );
-  const purokId = Number(purokRows[0]?.id);
-
-  if (!purokId) {
-    throw new Error("Cannot seed demo accounts without at least one purok.");
-  }
-
-  const passwordHash = await bcrypt.hash("password123", 12);
-  const demoUsers = [
-    [barangayId, null, "Demo Barangay Captain", "admin@barangay.gov", "admin"],
-    [barangayId, purokId, "Demo Purok Leader", "leader@barangay.gov", "purok_leader"],
-    [barangayId, null, "Demo Garbage Collector", "collector@barangay.gov", "collector"],
-    [barangayId, purokId, "Demo Resident", "resident@example.com", "resident"],
-  ];
-
-  for (const [assignedBarangay, assignedPurok, name, email, role] of demoUsers) {
-    await connection.execute(
-      `
-      INSERT IGNORE INTO users (
-        barangay_id,
-        purok_id,
-        full_name,
-        email,
-        password_hash,
-        role,
-        status
-      )
-      VALUES (?, ?, ?, ?, ?, ?, 'active')
-      `,
-      [assignedBarangay, assignedPurok, name, email, passwordHash, role],
-    );
-  }
-
-  const bins = [
-    ["BIN-P1-001", "Near the covered court"],
-    ["BIN-P1-002", "Purok main road"],
-  ];
-
-  for (const [code, location] of bins) {
-    await connection.execute(
-      `
-      INSERT IGNORE INTO garbage_bins (purok_id, bin_code, location_name)
-      VALUES (?, ?, ?)
-      `,
-      [purokId, code, location],
-    );
-  }
-}
 
 try {
   await connection.query(
@@ -1004,15 +947,10 @@ try {
   );
   await connection.query(`USE ${safeIdentifier(databaseName)}`);
   await createCurrentSchema();
-  const defaultBarangayId = await seedReferenceData();
-  await seedDemoData(defaultBarangayId);
+  await seedReferenceData();
 
   console.log(`Database '${databaseName}' is ready.`);
-  console.log(
-    String(process.env.SEED_DEMO_DATA || "false").toLowerCase() === "true"
-      ? "Demo accounts were created only when missing; existing passwords were not reset."
-      : "Demo data was not requested. Set SEED_DEMO_DATA=true to add safe development fixtures.",
-  );
+
 } finally {
   await connection.end();
 }

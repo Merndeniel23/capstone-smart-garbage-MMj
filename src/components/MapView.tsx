@@ -111,9 +111,14 @@ type CurrentUserProfile = {
   full_name?: string;
 };
 
+function mapCoordinate(raw: string | undefined, fallback: number, limit: number) {
+  const value = raw?.trim() ? Number(raw) : fallback;
+  return Number.isFinite(value) && Math.abs(value) <= limit ? value : fallback;
+}
+
 const DEFAULT_CENTER: L.LatLngExpression = [
-  10.2525,
-  123.9494,
+  mapCoordinate(import.meta.env.VITE_MAP_CENTER_LAT, 10.2525, 90),
+  mapCoordinate(import.meta.env.VITE_MAP_CENTER_LNG, 123.9494, 180),
 ];
 
 const MAX_USABLE_ACCURACY_METERS = 1000;

@@ -14,6 +14,8 @@ import {
   storeProof,
 } from "../config/storage.js";
 
+import { CATEGORY_AMOUNTS, paymentCategories } from "../config/paymentFees.js";
+
 const router = Router();
 
 type PaymentStatus =
@@ -30,11 +32,7 @@ const ALLOWED_CATEGORIES = new Set([
   "hazardous_disposal",
 ]);
 
-const CATEGORY_AMOUNTS: Record<string, number> = {
-  weekly_fee: 5,
-  special_heavy_trash: 80,
-  hazardous_disposal: 120,
-};
+
 
 const ALLOWED_METHODS = new Set([
   "gcash",
@@ -252,6 +250,7 @@ router.get(
       return res.json({
         success: true,
         payments,
+        categories: paymentCategories,
       });
     } catch (error) {
       console.error(

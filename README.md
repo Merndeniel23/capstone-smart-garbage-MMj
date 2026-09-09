@@ -102,20 +102,22 @@ database.
    `VITE_` variable. Older projects may use the legacy
    `SUPABASE_SERVICE_ROLE_KEY` variable instead.
 
-## Optional demo accounts
+## Application configuration
 
-Set `SEED_DEMO_DATA=true` only in a development environment, then rerun
-`npm run db:setup`. Missing demo accounts are created with password
-`password123`; existing account passwords are never overwritten.
+Payment rates come from the server settings PAYMENT_WEEKLY_FEE,
+PAYMENT_HEAVY_TRASH_FEE, and PAYMENT_HAZARDOUS_FEE. Defaults remain PHP 5,
+80, and 120. Both payment forms load these rates from the payments API.
+Restart the server after changing rates; existing payment records retain their amounts.
 
-| Role | Email |
-| --- | --- |
-| Barangay Captain | `admin@barangay.gov` |
-| Purok Leader | `leader@barangay.gov` |
-| Collector | `collector@barangay.gov` |
-| Resident | `resident@example.com` |
+VITE_MAP_CENTER_LAT and VITE_MAP_CENTER_LNG configure the initial map view.
+Rebuild the frontend after changing them. Actual collector positions use GPS data.
 
-Do not enable demo seeding in production.
+Database setup requires DEFAULT_BARANGAY_NAME and DEFAULT_PUROK_COUNT (1-99).
+It does not seed demo accounts or bins. Existing accounts and bins remain in the database.
+SEED_DEMO_DATA is no longer used. Create records through the app's authorized workflows.
+
+The chatbot retains help replies for when its AI provider is unavailable.
+Reports use the browser print dialog for printing and Save as PDF.
 
 ## Initial Super Administrator
 

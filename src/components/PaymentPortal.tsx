@@ -1,3 +1,4 @@
+import { PAYMENT_CATEGORY_LABELS, type PaymentCategoryOption } from "../../shared/paymentCategories";
 import {
   useEffect,
   useMemo,
@@ -74,23 +75,7 @@ interface PaymentRecord {
   created_at: string;
 }
 
-const CATEGORY_OPTIONS = [
-  {
-    value: "weekly_fee",
-    label: "Weekly Purok Maintenance Fee",
-    amount: 5,
-  },
-  {
-    value: "special_heavy_trash",
-    label: "Special Heavy Trash Pickup",
-    amount: 80,
-  },
-  {
-    value: "hazardous_disposal",
-    label: "Hazardous / E-Waste Disposal",
-    amount: 120,
-  },
-] as const;
+
 
 function token() {
   return (
@@ -177,10 +162,7 @@ function categoryLabel(
   category: PaymentRecord["category"],
 ) {
   return (
-    CATEGORY_OPTIONS.find(
-      (item) =>
-        item.value === category,
-    )?.label || category
+    PAYMENT_CATEGORY_LABELS[category] || category
   );
 }
 
@@ -241,6 +223,7 @@ function statusClasses(
 export default function PaymentPortal({
   role = "household",
 }: PaymentPortalProps) {
+  const [CATEGORY_OPTIONS, setCategoryOptions] = useState<PaymentCategoryOption[]>([]);
   const [payments, setPayments] =
     useState<PaymentRecord[]>([]);
 
@@ -277,7 +260,7 @@ export default function PaymentPortal({
     >("weekly_fee");
 
   const [amount, setAmount] =
-    useState("5");
+    useState("");
 
   const [billingPeriod, setBillingPeriod] =
     useState(
@@ -313,6 +296,10 @@ export default function PaymentPortal({
   const [discrepancyAmount, setDiscrepancyAmount] =
     useState("");
 
+  useEffect(() => {
+    setAmount(String(CATEGORY_OPTIONS.find(item => item.value === category)?.amount ?? ''));
+  }, [CATEGORY_OPTIONS, category]);
+
   const isResident = role === "household";
   const isLeader = role === "leader";
   const isAdmin =
@@ -326,6 +313,7 @@ export default function PaymentPortal({
       const data =
         await apiRequest("/");
 
+      setCategoryOptions(data.categories);
       setPayments(
         Array.isArray(data.payments)
           ? data.payments

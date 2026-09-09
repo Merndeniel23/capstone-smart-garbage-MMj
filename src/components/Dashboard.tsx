@@ -1,3 +1,4 @@
+import { PAYMENT_CATEGORY_LABELS, type PaymentCategoryOption } from "../../shared/paymentCategories";
 import React, { useCallback, useEffect, useState } from 'react';
 import { 
   AlertTriangle, 
@@ -80,11 +81,7 @@ type DashboardComplaint = {
   resolutionRemark?: string;
 };
 
-const PAYMENT_CATEGORY_OPTIONS = [
-  { value: 'weekly_fee', label: 'Weekly Purok Maintenance Fee', amount: 5 },
-  { value: 'special_heavy_trash', label: 'Special Heavy Construction Waste', amount: 80 },
-  { value: 'hazardous_disposal', label: 'E-Waste & Electronics', amount: 120 },
-] as const;
+
 
 const formatDate = (value: string) => {
   const date = new Date(value);
@@ -120,7 +117,7 @@ const complaintStatusLabel = (status: ComplaintRecord['status']) => {
 };
 
 const paymentCategoryLabel = (category: PaymentRecord['category']) =>
-  PAYMENT_CATEGORY_OPTIONS.find((option) => option.value === category)?.label || titleCaseStatus(category);
+  PAYMENT_CATEGORY_LABELS[category] || titleCaseStatus(category);
 
 const paymentMethodLabel = (method: PaymentRecord['payment_method']) => {
   if (method === 'gcash') return 'GCash';
@@ -146,6 +143,7 @@ const imageToDataUrl = (file: File): Promise<string> => new Promise((resolve, re
 });
 
 export default function Dashboard({ setCurrentScreen }: DashboardProps) {
+  const [PAYMENT_CATEGORY_OPTIONS, setCategoryOptions] = useState<PaymentCategoryOption[]>([]);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [schedules, setSchedules] = useState<CollectionSchedule[]>([]);
   const [complaints, setComplaints] = useState<ComplaintRecord[]>([]);
@@ -162,7 +160,7 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
 
   // Form states - Payment
   const [payCategory, setPayCategory] = useState<PaymentRecord['category']>('weekly_fee');
-  const [payAmount, setPayAmount] = useState('5');
+  const [payAmount, setPayAmount] = useState('');
   const [payBillingPeriod, setPayBillingPeriod] = useState(() =>
     new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
   );
@@ -173,6 +171,10 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
   const [submittingComplaint, setSubmittingComplaint] = useState(false);
   const [submittingPayment, setSubmittingPayment] = useState(false);
   const [modalError, setModalError] = useState('');
+
+  useEffect(() => {
+    setPayAmount(String(PAYMENT_CATEGORY_OPTIONS.find(item => item.value === payCategory)?.amount ?? ''));
+  }, [PAYMENT_CATEGORY_OPTIONS, payCategory]);
 
   // Notification banners
   const [alertText, setAlertText] = useState('');
@@ -186,9 +188,10 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
         apiRequest<{ success: boolean; user: CurrentUser }>('/auth/me'),
         apiRequest<{ success: boolean; schedules: CollectionSchedule[] }>('/collection-schedules'),
         apiRequest<{ success: boolean; complaints: ComplaintRecord[] }>('/complaints'),
-        apiRequest<{ success: boolean; payments: PaymentRecord[] }>('/payments'),
+        apiRequest<{ success: boolean; payments: PaymentRecord[]; categories: PaymentCategoryOption[] }>('/payments'),
       ]);
 
+      setCategoryOptions(paymentResult.categories);
       setCurrentUser(profileResult.user || null);
       setSchedules(Array.isArray(scheduleResult.schedules) ? scheduleResult.schedules : []);
       setComplaints(Array.isArray(complaintResult.complaints) ? complaintResult.complaints : []);
