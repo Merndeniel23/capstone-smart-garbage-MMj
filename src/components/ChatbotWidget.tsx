@@ -27,6 +27,10 @@ export default function ChatbotWidget() {
 
   const presetQuestions = [
     {
+      label: "Payment Summary (Admin)",
+      text: "Summarize payments",
+    },
+    {
       label: "Manual Inspection",
       text: "How do I submit a manual garbage bin inspection?",
     },

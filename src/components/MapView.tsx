@@ -281,6 +281,7 @@ function getSafePhotoUrl(value?: string | null): string | null {
   const photoPath = value?.trim();
 
   if (!photoPath) return null;
+  if (/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(photoPath)) return photoPath;
 
   try {
     const url = new URL(photoPath, window.location.origin);

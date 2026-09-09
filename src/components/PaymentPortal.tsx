@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Clock3,
   CreditCard,
+  Download,
   Eye,
   FileImage,
   Filter,
@@ -207,17 +208,17 @@ function statusClasses(
   status: PaymentStatus,
 ) {
   if (status === "completed") {
-    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    return "border-emerald-500/40 bg-emerald-500/10 text-emerald-600";
   }
 
   if (
     status === "rejected_by_leader" ||
     status === "discrepancy"
   ) {
-    return "border-rose-200 bg-rose-50 text-rose-700";
+    return "border-rose-500/40 bg-rose-500/10 text-rose-600";
   }
 
-  return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-amber-500/40 bg-amber-500/10 text-amber-600";
 }
 
 export default function PaymentPortal({
@@ -247,6 +248,9 @@ export default function PaymentPortal({
 
   const [paymentPage, setPaymentPage] =
     useState(1);
+  const [selectedPayment, setSelectedPayment] = useState<number | null>(null);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const [showPaymentForm, setShowPaymentForm] =
     useState(false);
@@ -342,6 +346,9 @@ export default function PaymentPortal({
         search.trim().toLowerCase();
 
       return payments.filter((payment) => {
+        const created = new Date(payment.created_at);
+        const day = [created.getFullYear(), String(created.getMonth() + 1).padStart(2, "0"), String(created.getDate()).padStart(2, "0")].join("-");
+        if ((dateFrom && day < dateFrom) || (dateTo && day > dateTo)) return false;
         const matchesStatus =
           statusFilter === "all" ||
           payment.status === statusFilter;
@@ -356,6 +363,7 @@ export default function PaymentPortal({
 
         return [
           payment.transaction_code,
+          String(payment.amount),
           payment.resident_name,
           payment.payment_reference,
           payment.purok_name,
@@ -367,9 +375,9 @@ export default function PaymentPortal({
             .includes(query),
         );
       });
-    }, [payments, search, statusFilter]);
+    }, [payments, search, statusFilter, dateFrom, dateTo]);
 
-  const paymentPageSize = 8;
+  const paymentPageSize = 10;
   const paymentPageCount = Math.max(
     1,
     Math.ceil(
@@ -397,7 +405,7 @@ export default function PaymentPortal({
 
   useEffect(() => {
     setPaymentPage(1);
-  }, [search, statusFilter]);
+  }, [search, statusFilter, dateFrom, dateTo]);
 
   useEffect(() => {
     if (paymentPage > paymentPageCount) {
@@ -648,19 +656,19 @@ export default function PaymentPortal({
   };
 
   return (
-    <div className="space-y-6 pb-20 md:pb-0">
+    <div className="space-y-4 pb-20 md:pb-0">
       <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">
-            Accountable Collection Workflow
+            Smart Garbage Monitoring System
           </span>
 
-          <h1 className="mt-1 text-3xl font-black text-slate-900">
+          <h1 className="mt-1 text-2xl font-black text-slate-900">
             {isResident
               ? "My Payments"
               : isLeader
-                ? "Purok Payment Verification"
-                : "Barangay Remittance Control"}
+                ? "Payments"
+                : "Payments"}
           </h1>
 
           <p className="mt-1 text-xs font-medium text-slate-500">
@@ -714,35 +722,44 @@ export default function PaymentPortal({
         </div>
       )}
 
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Metric
-          label="Transactions"
+          label="Total records"
+          icon={CreditCard}
+          tone="bg-blue-500/10 text-blue-500"
           value={String(payments.length)}
         />
         <Metric
-          label="Completed Total"
-          value={`₱${completedTotal.toFixed(2)}`}
+          label="Completed"
+          icon={CheckCircle2}
+          tone="bg-emerald-500/10 text-emerald-500"
+          value={String(payments.filter(p => p.status === "completed").length)}
         />
         <Metric
-          label="Pending Accountability"
-          value={`₱${pendingTotal.toFixed(2)}`}
+          label="Pending"
+          icon={Clock3}
+          tone="bg-amber-500/10 text-amber-500"
+          value={String(payments.filter(p => p.status.startsWith("pending_")).length)}
         />
+        <Metric icon={AlertTriangle} tone="bg-rose-500/10 text-rose-500" label="Rejected / discrepancy" value={String(payments.filter(p => ["rejected_by_leader", "discrepancy"].includes(p.status)).length)} />
       </section>
+      <p className="text-xs text-slate-500">Confirmed collections: PHP {completedTotal.toFixed(2)} · Pending accountability: PHP {pendingTotal.toFixed(2)}</p>
 
-      <div className="flex flex-col gap-3 md:flex-row">
+      <div className="grid grid-cols-1 items-center gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_190px_auto]">
         <div className="relative flex-1">
           <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             value={search}
+            aria-label="Search payments"
             onChange={(event) =>
               setSearch(event.target.value)
             }
-            placeholder="Search transaction, resident, reference, purok, or status"
-            className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-11 pr-4 text-sm outline-none focus:border-emerald-500"
+            placeholder="Search transaction, resident, reference, purok or amount..."
+            className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-11 pr-4 text-xs outline-none focus:border-emerald-500"
           />
         </div>
 
-        <div className="relative md:w-64">
+        <div className="relative">
           <Filter className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <select
             value={statusFilter}
@@ -753,7 +770,7 @@ export default function PaymentPortal({
                   | PaymentStatus,
               )
             }
-            className="w-full appearance-none rounded-2xl border border-slate-200 bg-white py-3 pl-11 pr-4 text-sm font-bold text-slate-600 outline-none focus:border-emerald-500"
+            className="w-full appearance-none rounded-lg border border-slate-200 bg-white py-2.5 pl-11 pr-4 text-xs font-bold text-slate-600 outline-none focus:border-emerald-500"
           >
             <option value="all">All payment statuses</option>
             <option value="pending_leader_verification">
@@ -774,6 +791,22 @@ export default function PaymentPortal({
             <option value="completed">Completed</option>
           </select>
         </div>
+      <div className="flex flex-wrap items-center gap-2 sm:col-span-2 xl:col-span-1">
+        <label className="text-[10px] font-semibold text-slate-500"><span className="sr-only">From</span><input type="date" value={dateFrom} max={dateTo || undefined} onChange={e => setDateFrom(e.target.value)} className="block h-10 w-[125px] rounded-lg border border-slate-200 bg-white px-2 py-2 text-slate-700" /></label>
+        <label className="text-[10px] font-semibold text-slate-500"><span className="sr-only">To</span><input type="date" value={dateTo} min={dateFrom || undefined} onChange={e => setDateTo(e.target.value)} className="block h-10 w-[125px] rounded-lg border border-slate-200 bg-white px-2 py-2 text-slate-700" /></label>
+        <button type="button" onClick={() => {setSearch(""); setStatusFilter("all"); setDateFrom(""); setDateTo("");}} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-500">Clear</button>
+      </div>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-2" aria-label="Payment status filters">
+          {(["all", "pending_leader_verification", "pending_remittance", "pending_admin_confirmation", "completed", "rejected_by_leader", "discrepancy"] as const).map(status => <button key={status} type="button" aria-pressed={statusFilter === status} onClick={() => setStatusFilter(status)} className={`rounded-full border px-3 py-2 text-[10px] font-semibold transition ${statusFilter === status ? "border-emerald-500 bg-emerald-500/15 text-emerald-600" : "border-slate-200 text-slate-500 hover:border-emerald-500"}`}>{status === "all" ? "All" : ({pending_leader_verification:"To verify",pending_remittance:"To remit",pending_admin_confirmation:"To confirm",completed:"Completed",rejected_by_leader:"Rejected",discrepancy:"Discrepancy"}[status])} ({payments.filter(p => status === "all" || p.status === status).length.toLocaleString()})</button>)}
+        </div>
+        <button type="button" disabled={!filteredPayments.length} onClick={() => {
+          const cell = (value: unknown) => '"' + String(value ?? "").replace(/^[\s]*[=+@-]/, "'$&").replace(/"/g, '""') + '"';
+          const rows = [["Date", "Transaction", "Resident", "Purok", "Category", "Amount (PHP)", "Status"], ...filteredPayments.map(p => [p.created_at,p.transaction_code,p.resident_name,p.purok_name,categoryLabel(p.category),p.amount,statusLabel(p.status)])];
+          const url = URL.createObjectURL(new Blob(["\uFEFF" + rows.map(row => row.map(cell).join(",")).join("\r\n")], {type:"text/csv;charset=utf-8"}));
+          const link = document.createElement("a"); link.href=url; link.download="payments.csv"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }} className="inline-flex items-center gap-2 rounded-lg border border-emerald-500 px-3 py-2 text-xs font-bold text-emerald-600 disabled:opacity-40"><Download className="h-4 w-4" />Export CSV</button>
       </div>
 
       {loading ? (
@@ -781,9 +814,24 @@ export default function PaymentPortal({
           <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-1">
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="w-full min-w-[900px] text-left text-xs">
+              <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500"><tr>{["Date & time","Transaction #","Resident","Purok","Category","Amount","Status","Actions"].map(title => <th key={title} scope="col" className="px-4 py-3 font-bold">{title}</th>)}</tr></thead>
+              <tbody className="divide-y divide-slate-100">{visiblePayments.map(payment => <tr key={payment.id} className="transition hover:bg-emerald-500/5">
+                <td className="whitespace-nowrap px-4 py-3 text-slate-700">{new Date(payment.created_at).toLocaleDateString()}<span className="mt-1 block text-[10px] text-slate-400">{new Date(payment.created_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</span></td>
+                <td className="px-4 py-3 font-mono text-[10px] text-slate-700">{payment.transaction_code}</td>
+                <td className="px-4 py-3 font-semibold text-slate-700">{payment.resident_name}</td>
+                <td className="whitespace-nowrap px-4 py-3 text-slate-500">{payment.purok_name}</td>
+                <td className="px-4 py-3 text-slate-500">{categoryLabel(payment.category)}</td>
+                <td className="whitespace-nowrap px-4 py-3 font-bold tabular-nums text-slate-700">₱{Number(payment.amount).toFixed(2)}</td>
+                <td className="px-4 py-3"><span className={`inline-block whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-bold ${statusClasses(payment.status)}`}>{statusLabel(payment.status)}</span></td>
+                <td className="px-4 py-3"><button type="button" aria-label={`View payment ${payment.transaction_code}`} onClick={() => {resetForm(); setSelectedPayment(payment.id);}} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2 py-1.5 text-slate-600 hover:border-emerald-500 hover:text-emerald-600"><Eye className="h-3.5 w-3.5" />View</button></td>
+              </tr>)}</tbody>
+            </table>
+          </div>
           {filteredPayments.length > 0 && (
-            <div className="flex flex-col gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-2 px-1 py-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs font-bold text-slate-500">
                 Showing{" "}
                 <span className="font-black text-slate-800">
@@ -809,7 +857,7 @@ export default function PaymentPortal({
                   onClick={() => setPaymentPage((page) => Math.max(1, page - 1))}
                   disabled={paymentPage === 1}
                   aria-label="Previous payments page"
-                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex h-7 w-7 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </button>
@@ -823,7 +871,7 @@ export default function PaymentPortal({
                   onClick={() => setPaymentPage((page) => Math.min(paymentPageCount, page + 1))}
                   disabled={paymentPage === paymentPageCount}
                   aria-label="Next payments page"
-                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex h-7 w-7 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <ChevronRight className="h-4 w-4" />
                 </button>
@@ -831,8 +879,9 @@ export default function PaymentPortal({
             </div>
           )}
 
-          {visiblePayments.map(
+          {payments.filter(payment => payment.id === selectedPayment).map(
             (payment) => (
+              <Modal key={payment.id} title="Payment details" onClose={() => {setSelectedPayment(null); resetForm();}}>
               <article
                 key={payment.id}
                 className="rounded-[2rem] border border-slate-100 bg-white p-5 shadow-sm"
@@ -1130,6 +1179,7 @@ export default function PaymentPortal({
                   </div>
                 </div>
               </article>
+              </Modal>
             ),
           )}
 
@@ -1321,18 +1371,24 @@ export default function PaymentPortal({
 function Metric({
   label,
   value,
+  icon: Icon,
+  tone,
 }: {
   label: string;
   value: string;
+  icon: typeof CreditCard;
+  tone: string;
 }) {
   return (
-    <div className="rounded-[1.8rem] border border-slate-100 bg-white p-5 shadow-sm">
-      <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">
+    <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${tone}`}><Icon className="h-5 w-5" /></span>
+      <div><p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
         {label}
       </p>
-      <p className="mt-2 text-2xl font-black text-slate-900">
-        {value}
+      <p className="mt-1 text-2xl font-black tabular-nums text-slate-900">
+        {Number(value).toLocaleString()}
       </p>
+      </div>
     </div>
   );
 }

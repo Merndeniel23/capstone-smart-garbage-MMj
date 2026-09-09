@@ -675,6 +675,7 @@ async function migrateLegacySchema(defaultBarangayId: number) {
   }
 
   await ensureColumn("garbage_bins", "latitude", "DECIMAL(10,7) NULL AFTER location_name");
+  await ensureColumn("garbage_bins", "photo_path", "MEDIUMTEXT NULL");
   await ensureColumn("garbage_bins", "longitude", "DECIMAL(10,7) NULL AFTER latitude");
   await ensureColumn(
     "garbage_bins",

@@ -5,7 +5,15 @@ import {
   type AuthRequest,
 } from "../middleware/auth.js";
 
+import { isBinPhoto } from "../shared/binPhotos.js";
 const router = Router();
+
+router.use((req, res, next) => {
+  if (["POST", "PUT"].includes(req.method) && req.body?.photo_path != null && req.body.photo_path !== "" && !isBinPhoto(req.body.photo_path)) {
+    return res.status(400).json({ success: false, message: "Choose a JPEG, PNG or WebP photo up to 500 KB." });
+  }
+  next();
+});
 
 /**
  * The database uses "purok_leader", while some frontend
@@ -102,7 +110,8 @@ router.get(
           gb.last_inspected_at,
           gb.is_active,
 
-          (
+          gb.photo_path AS bin_photo,
+          COALESCE(gb.photo_path, (
             SELECT bi.photo_path
             FROM bin_inspections bi
             WHERE bi.bin_id = gb.id
@@ -110,7 +119,7 @@ router.get(
               AND TRIM(bi.photo_path) <> ''
             ORDER BY bi.inspected_at DESC, bi.id DESC
             LIMIT 1
-          ) AS photo_path,
+          )) AS photo_path,
 
           p.id AS purok_id,
           p.name AS purok_name,
@@ -234,27 +243,41 @@ router.post(
   requireAuth,
   async (req: AuthRequest, res) => {
     try {
-      if (
-        !isPurokLeader(
-          req.user?.role,
-        )
-      ) {
+      const isCaptain = req.user?.role === "admin";
+      if (!isCaptain && !isPurokLeader(req.user?.role)) {
         return res.status(403).json({
           success: false,
           message:
-            "Only Purok Leaders can register garbage-bin locations.",
+            "Only Barangay Captains and Purok Leaders can register garbage-bin locations.",
         });
       }
 
-      const purokId =
-        getAssignedPurokId(req);
+      const purokId = isCaptain
+        ? Number(req.body.purok_id)
+        : getAssignedPurokId(req);
 
-      if (!purokId) {
+      if (!purokId || !Number.isSafeInteger(purokId) || purokId <= 0) {
         return res.status(400).json({
           success: false,
           message:
-            "Your account has no assigned purok. Ask the administrator to assign one.",
+            isCaptain
+              ? "Select a purok in your barangay before saving the garbage bin."
+              : "Your account has no assigned purok. Ask the administrator to assign one.",
         });
+      }
+
+      if (isCaptain) {
+        const barangayId = getAssignedBarangayId(req);
+        if (!barangayId) {
+          return res.status(403).json({ success: false, message: "Your account has no assigned barangay." });
+        }
+        const [puroks] = await db.query<any[]>(
+          "SELECT id FROM puroks WHERE id = ? AND barangay_id = ? LIMIT 1",
+          [purokId, barangayId],
+        );
+        if (!puroks.length) {
+          return res.status(403).json({ success: false, message: "Select a purok within your assigned barangay." });
+        }
       }
 
       const binCode = String(
@@ -300,6 +323,7 @@ router.post(
             purok_id,
             bin_code,
             location_name,
+            photo_path,
             latitude,
             longitude,
             current_status,
@@ -307,12 +331,13 @@ router.post(
             is_active
           )
           VALUES
-          (?, ?, ?, ?, ?, 'empty', 'good', 1)
+          (?, ?, ?, ?, ?, ?, 'empty', 'good', 1)
           `,
           [
             purokId,
             binCode,
             locationName,
+            req.body.photo_path || null,
             coordinates.latitude,
             coordinates.longitude,
           ],
@@ -441,6 +466,7 @@ router.put(
           SET
             bin_code = ?,
             location_name = ?,
+            photo_path = IF(?, ?, photo_path),
             latitude = ?,
             longitude = ?
           WHERE id = ?
@@ -449,6 +475,8 @@ router.put(
           [
             binCode,
             locationName,
+            Object.prototype.hasOwnProperty.call(req.body, "photo_path"),
+            req.body.photo_path || null,
             coordinates.latitude,
             coordinates.longitude,
             binId,

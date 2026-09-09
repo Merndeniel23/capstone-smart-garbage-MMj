@@ -9,9 +9,12 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useAppState } from "../context/AppStateContext";
 import MapView from "./MapView";
+import { isBinPhoto, MAX_BIN_PHOTO_BYTES } from "../../shared/binPhotos";
 
 import {
   MapPin,
+  ImagePlus,
+  Upload,
   Pencil,
   Plus,
   RefreshCw,
@@ -21,6 +24,8 @@ import {
 } from "lucide-react";
 
 type GarbageBin = {
+  photo_path?: string | null;
+  bin_photo?: string | null;
   id: number;
   bin_code: string;
   location_name: string;
@@ -36,6 +41,7 @@ type GarbageBin = {
 };
 
 type BinForm = {
+  photo: string;
   id: number;
   binCode: string;
   locationName: string;
@@ -61,6 +67,7 @@ type PurokOption = {
 };
 
 const emptyForm: BinForm = {
+  photo: "",
   id: 0,
   binCode: "",
   locationName: "",
@@ -185,6 +192,37 @@ export default function ManageGarbageBins() {
 
   const [form, setForm] =
     useState<BinForm>(emptyForm);
+  const [photoLoading, setPhotoLoading] = useState(false);
+  const photoRequest = useRef(0);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+
+  const uploadPhoto = async (file?: File) => {
+    if (!file) return;
+    const request = ++photoRequest.current;
+    setPhotoLoading(true);
+    setErrorMessage("");
+    try {
+      if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 10_000_000) {
+        throw new Error("Choose a JPEG, PNG or WebP photo smaller than 10 MB.");
+      }
+      const bitmap = await createImageBitmap(file);
+      const scale = Math.min(1, 1000 / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext("2d");
+      if (!context) { bitmap.close(); throw new Error("Unable to prepare the photo."); }
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close();
+      const photo = canvas.toDataURL("image/jpeg", 0.75);
+      if (!isBinPhoto(photo)) throw new Error(`Please choose a simpler or smaller photo (saved limit: ${MAX_BIN_PHOTO_BYTES / 1000} KB).`);
+      if (request === photoRequest.current) setForm(previous => ({ ...previous, photo }));
+    } catch (error) {
+      if (request === photoRequest.current) setErrorMessage(error instanceof Error ? error.message : "Unable to read this photo.");
+    } finally {
+      if (request === photoRequest.current) setPhotoLoading(false);
+    }
+  };
 
   const [showForm, setShowForm] =
     useState(false);
@@ -412,6 +450,7 @@ export default function ManageGarbageBins() {
 
       marker.bindPopup(`
         <div style="min-width: 180px;">
+          ${isBinPhoto(bin.photo_path) ? `<img src="${bin.photo_path}" alt="Garbage bin" style="width:100%;max-width:240px;height:140px;object-fit:cover;border-radius:10px;margin-bottom:8px" />` : ""}
           <strong>${bin.bin_code}</strong>
           <br />
           ${bin.location_name}
@@ -474,6 +513,8 @@ export default function ManageGarbageBins() {
   };
 
   const resetForm = () => {
+    photoRequest.current++;
+    setPhotoLoading(false);
     setForm(emptyForm);
     setShowForm(false);
     removeSelectedMarker();
@@ -526,8 +567,11 @@ export default function ManageGarbageBins() {
     setSuccessMessage("");
     setErrorMessage("");
 
+    photoRequest.current++;
+    setPhotoLoading(false);
     setForm({
       id: bin.id,
+      photo: bin.bin_photo || "",
       binCode: bin.bin_code,
       locationName:
         bin.location_name,
@@ -568,6 +612,7 @@ export default function ManageGarbageBins() {
     event: FormEvent,
   ) => {
     event.preventDefault();
+    if (photoLoading) return;
 
     if (form.id ? !canEditBins : !canAddBins) {
       setErrorMessage(
@@ -610,6 +655,7 @@ export default function ManageGarbageBins() {
       }
 
       const payload = {
+        photo_path: form.photo || null,
         bin_code:
           form.binCode.trim(),
         location_name:
@@ -843,7 +889,7 @@ export default function ManageGarbageBins() {
           ) : (
             <form
               onSubmit={handleSubmit}
-              className="space-y-4"
+              className="space-y-5"
             >
               <div className="flex items-center justify-between">
                 <h2 className="font-black text-slate-900">
@@ -856,12 +902,13 @@ export default function ManageGarbageBins() {
                   type="button"
                   onClick={resetForm}
                   aria-label="Close form"
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-emerald-600"
                 >
                   <X className="h-5 w-5" />
                 </button>
               </div>
 
-              <div className="rounded-xl border bg-slate-50 p-3">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <p className="text-xs font-bold text-slate-500">
                   Area assignment
                 </p>
@@ -913,6 +960,40 @@ export default function ManageGarbageBins() {
                 </label>
               )}
 
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-bold text-slate-700">Bin photo</p>
+                  <span className="text-xs text-slate-500">Optional</span>
+                </div>
+                <input ref={photoInputRef} type="file" accept="image/jpeg,image/png,image/webp" disabled={photoLoading || saving}
+                  aria-label="Choose a garbage bin photo" hidden
+                  onChange={event => { void uploadPhoto(event.target.files?.[0]); event.target.value = ""; }} />
+                {form.photo ? (
+                  <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                    <img src={form.photo} alt="Garbage bin preview" className="h-44 w-full object-cover" />
+                    <div className="flex flex-wrap items-center justify-between gap-2 p-3">
+                      <button type="button" disabled={photoLoading || saving} onClick={() => photoInputRef.current?.click()}
+                        className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50 focus-visible:outline-2 focus-visible:outline-emerald-600 disabled:opacity-50">
+                        <Upload className="h-4 w-4" />Change photo
+                      </button>
+                      <button type="button" disabled={photoLoading || saving} onClick={() => setForm(previous => ({ ...previous, photo: "" }))}
+                        className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 focus-visible:outline-2 focus-visible:outline-red-600 disabled:opacity-50">
+                        <Trash2 className="h-3.5 w-3.5" />Remove
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button type="button" disabled={photoLoading || saving} onClick={() => photoInputRef.current?.click()}
+                    className="group flex w-full flex-col items-center gap-2 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center transition hover:border-emerald-500 hover:bg-emerald-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 disabled:cursor-wait disabled:opacity-60">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><ImagePlus className="h-5 w-5" /></span>
+                    <span className="text-sm font-bold text-slate-900">Choose a bin photo</span>
+                    <span className="text-xs text-slate-500">JPG, PNG or WebP · Up to 10 MB</span>
+                  </button>
+                )}
+                <p aria-live="polite" className="text-xs leading-relaxed text-slate-500">
+                  {photoLoading ? "Preparing your photo..." : "Appears in the map popup when this bin is selected."}
+                </p>
+              </div>
               <label className="block text-xs font-bold text-slate-700">
                 Bin Code
                 <input
@@ -975,8 +1056,8 @@ export default function ManageGarbageBins() {
 
               <button
                 type="submit"
-                disabled={saving}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 font-black text-white disabled:opacity-60"
+                disabled={saving || photoLoading}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 font-bold text-white shadow-sm transition hover:bg-emerald-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Save className="h-4 w-4" />
 
