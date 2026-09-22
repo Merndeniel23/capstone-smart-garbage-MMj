@@ -9,6 +9,10 @@ import {
   UserCog,
   Users,
   Truck,
+  CalendarDays,
+  MessageSquare,
+  ArrowUpRight,
+  Trash2,
 } from "lucide-react";
 import {
   useEffect,
@@ -18,6 +22,17 @@ import {
 
 interface SuperAdminDashboardProps {
   setCurrentScreen: (screen: any) => void;
+  onOpenDirectory: (role?: string, status?: string, createCaptain?: boolean) => void;
+}
+
+interface CollectionSchedule {
+  id: number;
+  barangay_name: string;
+  day_of_week: string;
+  start_time: string;
+  end_time?: string | null;
+  notes?: string | null;
+  is_active: number | boolean;
 }
 
 interface CurrentUser {
@@ -58,11 +73,14 @@ interface SystemUser {
 }
 
 const API_BASE = "/api";
+const DASHBOARD_PREVIEW_LIMIT = 5;
 
 function getToken(): string {
   return (
     localStorage.getItem("token") ||
     sessionStorage.getItem("token") ||
+    localStorage.getItem("authToken") ||
+    sessionStorage.getItem("authToken") ||
     ""
   );
 }
@@ -113,7 +131,7 @@ function roleLabel(role: string) {
     case "purok_leader":
       return "Purok Leader";
     case "collector":
-      return "Garbage Collector";
+      return "Collector";
     default:
       return "Resident";
   }
@@ -129,6 +147,7 @@ function statusClass(status: string) {
 
 export default function SuperAdminDashboard({
   setCurrentScreen,
+  onOpenDirectory,
 }: SuperAdminDashboardProps) {
   const [currentUser, setCurrentUser] =
     useState<CurrentUser | null>(null);
@@ -141,17 +160,45 @@ export default function SuperAdminDashboard({
 
   const [loading, setLoading] =
     useState(true);
+  const [refreshing, setRefreshing] =
+    useState(false);
 
   const [error, setError] =
     useState("");
 
   const [activities,setActivities]=useState<ActivityItem[]>([]);
   const [activityError,setActivityError]=useState("");
+  const [usersAvailable, setUsersAvailable] = useState(false);
+  const [barangaysAvailable, setBarangaysAvailable] = useState(false);
+  const [dataWarnings, setDataWarnings] = useState<string[]>([]);
+  const [schedules, setSchedules] = useState<CollectionSchedule[] | null>(null);
+  const [binsNeedingCollection, setBinsNeedingCollection] = useState<number | null>(null);
+  const [openComplaints, setOpenComplaints] = useState<number | null>(null);
+  const [activeTrucks, setActiveTrucks] = useState<number | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
 
-  const loadDashboard = async () => {
-    setLoading(true);
+  const loadDashboard = async (isRefresh = false) => {
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     setError("");
+    setActivityError("");
+    setDataWarnings([]);
+
+    if (!isRefresh) {
+      setUsers([]);
+      setBarangays([]);
+      setActivities([]);
+      setUsersAvailable(false);
+      setBarangaysAvailable(false);
+      setSchedules(null);
+      setBinsNeedingCollection(null);
+      setOpenComplaints(null);
+      setActiveTrucks(null);
+    }
 
     try {
       const profileData =
@@ -178,6 +225,10 @@ export default function SuperAdminDashboard({
             "/auth/registration-locations",
           ),
           apiRequest("/admin/recent-activities"),
+          apiRequest("/collection-schedules"),
+          apiRequest("/garbage-bins"),
+          apiRequest("/complaints"),
+          apiRequest("/admin/truck-crews"),
         ]);
 
       const userResult = results[0];
@@ -190,6 +241,7 @@ export default function SuperAdminDashboard({
         userResult.status ===
         "fulfilled"
       ) {
+        setUsersAvailable(true);
         setUsers(
           Array.isArray(
             userResult.value.users,
@@ -205,6 +257,7 @@ export default function SuperAdminDashboard({
         locationResult.status ===
         "fulfilled"
       ) {
+        setBarangaysAvailable(true);
         setBarangays(
           Array.isArray(
             locationResult.value
@@ -220,10 +273,31 @@ export default function SuperAdminDashboard({
 
       if (activityResult.status==="fulfilled"){
         setActivities(Array.isArray(activityResult.value.activities)?activityResult.value.activities:[]);
+        if (activityResult.value.unavailableSources?.length) {
+          setActivityError("Some recent activity sources are unavailable. Showing the records that could be loaded.");
+        }
       }else{
         setActivities([]);
         setActivityError("Recent activities unavailable.");
       }
+
+      const [scheduleResult, binResult, complaintResult, truckResult] = results.slice(3);
+      if (scheduleResult.status === "fulfilled" && Array.isArray(scheduleResult.value.schedules)) {
+        setSchedules(scheduleResult.value.schedules.filter((schedule: CollectionSchedule) => Number(schedule.is_active) === 1));
+      }
+      if (binResult.status === "fulfilled" && Array.isArray(binResult.value.bins)) {
+        const uniqueBins = new Map<number, any>(binResult.value.bins.map((bin: any) => [Number(bin.id), bin]));
+        setBinsNeedingCollection([...uniqueBins.values()].filter((bin) => Number(bin.is_active) === 1 && (["full", "overflowing", "overflow"].includes(String(bin.current_status).toLowerCase()) || Number(bin.is_scheduled_today) === 1)).length);
+      }
+      if (complaintResult.status === "fulfilled" && Array.isArray(complaintResult.value.complaints)) {
+        setOpenComplaints(complaintResult.value.complaints.filter((complaint: { status: string }) => !["resolved", "cancelled"].includes(complaint.status)).length);
+      }
+      if (truckResult.status === "fulfilled" && Array.isArray(truckResult.value.trucks)) {
+        setActiveTrucks(truckResult.value.trucks.filter((truck: { status: string }) => truck.status === "active").length);
+      }
+      const labels = ["System accounts", "Barangays", "Recent activity", "Collection schedules", "Bins", "Complaints", "Truck fleet"];
+      setDataWarnings(results.flatMap((result, index) => result.status === "rejected" ? [labels[index]] : []));
+      setLastUpdated(new Date());
     } catch (err) {
       setError(
         err instanceof Error
@@ -232,11 +306,12 @@ export default function SuperAdminDashboard({
       );
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
   useEffect(() => {
-    loadDashboard();
+    void loadDashboard();
   }, []);
 
   const stats = useMemo(() => {
@@ -279,10 +354,22 @@ export default function SuperAdminDashboard({
       [users],
     );
 
+  const todayName = new Date().toLocaleDateString("en-US", { weekday: "long" });
+  const todaysSchedules = schedules?.filter((schedule) => schedule.day_of_week === todayName) ?? [];
+  const captainPreview = captainAccounts.slice(0, DASHBOARD_PREVIEW_LIMIT);
+  const todaysSchedulePreview = todaysSchedules.slice(0, DASHBOARD_PREVIEW_LIMIT);
+  const activityPreview = activities.slice(0, DASHBOARD_PREVIEW_LIMIT);
+  const formatTime = (value: string) => {
+    if (!value) return "Time not provided";
+    const [hours, minutes] = value.split(":");
+    const hour = Number(hours);
+    return `${hour % 12 || 12}:${minutes} ${hour >= 12 ? "PM" : "AM"}`;
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-[500px] items-center justify-center">
-        <div className="text-center">
+        <div className="text-center" role="status" aria-live="polite">
           <Loader2 className="mx-auto h-8 w-8 animate-spin text-emerald-700" />
           <p className="mt-3 text-sm font-bold text-slate-500">
             Loading municipal control center...
@@ -293,7 +380,7 @@ export default function SuperAdminDashboard({
   }
 
   return (
-    <div className="space-y-8 pb-20 md:pb-0">
+    <div className="sg-page space-y-6 pb-20 md:pb-0">
       <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.22em] text-emerald-600">
@@ -301,26 +388,27 @@ export default function SuperAdminDashboard({
           </p>
 
           <h1 className="text-3xl font-black tracking-tight text-slate-900">
-            Municipal Administrator Dashboard
+            Municipal Dashboard
           </h1>
 
           <p className="mt-1 text-sm text-slate-500">
-            Municipality-wide LGU account and barangay monitoring center
+            Monitor collections, respond to issues, and manage municipal accounts.
           </p>
         </div>
 
         <button
           type="button"
-          onClick={loadDashboard}
-          className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 shadow-sm"
+          onClick={() => void loadDashboard(true)}
+          disabled={refreshing}
+          className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <RefreshCw className="h-4 w-4" />
-          Refresh
+          <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+          {refreshing ? "Refreshing" : "Refresh"}
         </button>
       </header>
 
       {error && (
-        <div className="flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-700">
+        <div role="alert" className="flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-700">
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
           <p className="text-sm font-bold">
             {error}
@@ -328,19 +416,21 @@ export default function SuperAdminDashboard({
         </div>
       )}
 
-      <section className="overflow-hidden rounded-[2rem] bg-gradient-to-br from-slate-900 via-slate-900 to-emerald-950 p-6 text-white shadow-xl md:p-8">
-        <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+      {dataWarnings.length > 0 && <div role="status" className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Some data could not be loaded: {dataWarnings.join(", ")}. Refresh to try again. Any retained totals may be from the previous refresh.</div>}
+
+      <section className="overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-slate-900 to-emerald-950 p-5 text-white shadow-xl md:p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-4">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10">
-              <ShieldCheck className="h-8 w-8 text-emerald-300" />
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/10">
+              <ShieldCheck className="h-6 w-6 text-emerald-300" />
             </div>
 
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-300">
-                Logged-in Super Admin
+                Municipal Administrator
               </p>
 
-              <h2 className="mt-1 text-2xl font-black">
+              <h2 className="mt-1 text-xl font-black">
                 {currentUser?.full_name ||
                   "Municipal System Administrator"}
               </h2>
@@ -351,7 +441,7 @@ export default function SuperAdminDashboard({
             </div>
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-5 py-4">
+          <div className="shrink-0 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
               Account Status
             </p>
@@ -366,64 +456,98 @@ export default function SuperAdminDashboard({
         </div>
       </section>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+      <section className="grid grid-cols-2 gap-3 md:gap-4 xl:grid-cols-6">
         <SummaryCard
           label="Barangays"
-          value={stats.barangays}
+          value={barangaysAvailable ? stats.barangays : null}
           icon={Building2}
+          onClick={() => onOpenDirectory("admin")}
         />
 
         <SummaryCard
           label="Captains"
-          value={stats.captains}
+          value={usersAvailable ? stats.captains : null}
           icon={UserCog}
+          onClick={() => onOpenDirectory("admin")}
         />
 
         <SummaryCard
           label="Leaders"
-          value={stats.leaders}
+          value={usersAvailable ? stats.leaders : null}
           icon={Users}
+          onClick={() => onOpenDirectory("purok_leader")}
         />
 
         <SummaryCard
           label="Collectors"
-          value={stats.collectors}
+          value={usersAvailable ? stats.collectors : null}
           icon={Users}
+          onClick={() => onOpenDirectory("collector")}
         />
 
         <SummaryCard
           label="Residents"
-          value={stats.residents}
+          value={usersAvailable ? stats.residents : null}
           icon={Users}
+          onClick={() => onOpenDirectory("resident")}
         />
 
         <SummaryCard
           label="Active Users"
-          value={stats.activeUsers}
+          value={usersAvailable ? stats.activeUsers : null}
           icon={ShieldCheck}
+          onClick={() => onOpenDirectory("all", "active")}
         />
+      </section>
+
+      <section aria-labelledby="operations-title" className="space-y-4">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div><h2 id="operations-title" className="text-xl font-black text-slate-900">Operations at a glance</h2><p className="mt-1 text-xs text-slate-500">{new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</p></div>
+          {lastUpdated && <p className="text-xs text-slate-500">Updated {lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>}
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard label="Today's Schedules" value={schedules ? todaysSchedules.length : null} icon={CalendarDays} onClick={() => setCurrentScreen("schedule")} />
+          <SummaryCard label="Bins Needing Collection" value={binsNeedingCollection} icon={Trash2} onClick={() => setCurrentScreen("garbage-bins")} />
+          <SummaryCard label="Open Complaints" value={openComplaints} icon={MessageSquare} onClick={() => setCurrentScreen("complaints")} />
+          <SummaryCard label="Active Trucks" value={activeTrucks} icon={Truck} onClick={() => setCurrentScreen("truck-crew-management")} />
+        </div>
+        <p className="text-xs text-slate-500">Bins needing collection include active bins that are full, overflowing, or scheduled today. Open complaints include completed work awaiting resolution.</p>
       </section>
 
       <div className="grid gap-8 lg:grid-cols-3">
         <section className="space-y-4 lg:col-span-2">
-          <div className="flex items-end justify-between">
+          <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-black text-slate-900">Today's Collections</h2><p className="mt-1 text-xs text-slate-500">{todaysSchedules.length} published window{todaysSchedules.length === 1 ? "" : "s"}</p></div><button type="button" onClick={() => setCurrentScreen("schedule")} className="min-h-11 text-sm font-bold text-emerald-700">View schedule →</button></div>
+            <p className="mt-1 text-xs text-slate-500">Recurring collection windows for {todayName}. These are scheduled windows, not confirmation of completed pickups.</p>
+            {!schedules ? <p className="mt-4 text-sm text-slate-500">Collection schedules are unavailable. Refresh to try again.</p> : todaysSchedules.length === 0 ? <p className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">No collections scheduled for today.</p> : <><ul className="mt-4 divide-y divide-slate-100">{todaysSchedulePreview.map((schedule) => <li key={schedule.id} className="flex flex-wrap items-center justify-between gap-2 py-3"><div className="min-w-0"><p className="text-sm font-bold text-slate-900">{schedule.barangay_name}</p>{schedule.notes && <p className="mt-1 max-w-md truncate text-xs text-slate-500">{schedule.notes}</p>}</div><span className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800">{formatTime(schedule.start_time)}{schedule.end_time ? ` – ${formatTime(schedule.end_time)}` : ""}</span></li>)}</ul>{todaysSchedules.length > DASHBOARD_PREVIEW_LIMIT && <button type="button" onClick={() => setCurrentScreen("schedule")} className="mt-3 text-xs font-bold text-emerald-700">View all {todaysSchedules.length} collection windows →</button>}</>}
+          </div>
+          <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 className="text-xl font-black text-slate-900">
                 Barangay Captain Accounts
               </h2>
 
               <p className="text-xs text-slate-500">
-                Municipal-level account overview
+                {captainAccounts.length} account{captainAccounts.length === 1 ? "" : "s"} across the municipality
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setCurrentScreen("user-management")}
-              className="rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-black uppercase tracking-wide text-white"
-            >
-              Create Captain
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => onOpenDirectory("admin")}
+                className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black uppercase tracking-wide text-slate-700"
+              >
+                View Directory
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenDirectory("admin", "all", true)}
+                className="min-h-11 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-black uppercase tracking-wide text-white"
+              >
+                Create Captain
+              </button>
+            </div>
           </div>
 
           <div className="overflow-hidden rounded-[2rem] border border-slate-100 bg-white shadow-sm">
@@ -433,16 +557,16 @@ export default function SuperAdminDashboard({
                 <UserCog className="mx-auto h-9 w-9 text-slate-300" />
 
                 <p className="mt-3 font-black text-slate-700">
-                  No captain accounts loaded
+                  {usersAvailable ? "No captain accounts yet" : "Captain accounts unavailable"}
                 </p>
 
                 <p className="mt-1 text-xs text-slate-500">
-                  Create the first secured captain account from User Management.
+                  {usersAvailable ? "Create a captain account to assign a barangay." : "Refresh to try loading account records again."}
                 </p>
               </div>
             ) : (
               <div className="divide-y divide-slate-100">
-                {captainAccounts.map(
+                {captainPreview.map(
                   (captain) => (
                     <article
                       key={captain.id}
@@ -481,7 +605,7 @@ export default function SuperAdminDashboard({
 
                         <button
                           type="button"
-                          onClick={() => setCurrentScreen("user-management")}
+                          onClick={() => onOpenDirectory("admin")}
                           className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black uppercase text-slate-700"
                         >
                           Manage
@@ -493,12 +617,21 @@ export default function SuperAdminDashboard({
               </div>
             )}
           </div>
+          {captainAccounts.length > DASHBOARD_PREVIEW_LIMIT && (
+            <button
+              type="button"
+              onClick={() => onOpenDirectory("admin")}
+              className="text-xs font-bold text-emerald-700"
+            >
+              View all {captainAccounts.length} captain accounts →
+            </button>
+          )}
         </section>
 
         <section className="space-y-4">
-          <div className="rounded-[2rem] border border-slate-100 bg-white p-6 shadow-sm">
+          <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
             <h2 className="text-lg font-black text-slate-900">
-              Municipal Controls
+              Quick Actions
             </h2>
 
             <div className="mt-4 space-y-3">
@@ -506,18 +639,18 @@ export default function SuperAdminDashboard({
                 label="Barangays & Captains"
                 description="Review locations and captain assignments"
                 icon={Building2}
-                onClick={() => setCurrentScreen("user-management")}
+                onClick={() => onOpenDirectory("admin")}
               />
 
               <ActionButton
                 label="Create Barangay Captain"
                 description="Issue a secured captain account"
                 icon={UserCog}
-                onClick={() => setCurrentScreen("user-management")}
+                onClick={() => onOpenDirectory("admin", "all", true)}
               />
 
               <ActionButton
-                label="Truck & Crew Management"
+                label="Register Truck & Crew"
                 description="Register collection trucks, driver accounts, and crew"
                 icon={Truck}
                 onClick={() =>
@@ -527,6 +660,10 @@ export default function SuperAdminDashboard({
                 }
               />
 
+              <ActionButton label="View Complaints" description="Review and assign open complaints" icon={MessageSquare} onClick={() => setCurrentScreen("complaints")} />
+              <ActionButton label="View Collection Schedule" description="Monitor barangay collection windows" icon={CalendarDays} onClick={() => setCurrentScreen("schedule")} />
+              <ActionButton label="View Municipal Bins" description="Locate bins that need collection" icon={Trash2} onClick={() => setCurrentScreen("garbage-bins")} />
+
               <ActionButton
                 label="Account Security"
                 description="Review your profile and recovery email"
@@ -535,37 +672,34 @@ export default function SuperAdminDashboard({
               />
 
               <ActionButton
-                label="View User Management"
+                label="View User Directory"
                 description="Open the current user directory"
                 icon={Users}
-                onClick={() =>
-                  setCurrentScreen(
-                    "user-management",
-                  )
-                }
+                onClick={() => onOpenDirectory()}
               />
             </div>
           </div>
 
           
-          <div className="rounded-[2rem] border border-slate-100 bg-white p-6 shadow-sm">
+          <div className="rounded-3xl border border-slate-100 bg-white p-5 shadow-sm">
             <h2 className="text-lg font-black text-slate-900">Recent Activity</h2>
             {activityError && <p className="mt-3 text-xs text-rose-600">{activityError}</p>}
             <div className="mt-4 space-y-3">
-              {activities.length===0 ? (
+              {!activityError && activities.length===0 ? (
                 <p className="text-xs text-slate-500">No recent activity.</p>
-              ) : activities.slice(0,6).map(a=>(
+              ) : activityPreview.map(a=>(
                 <div key={a.activity_id} className="border-b border-slate-100 pb-2">
                   <p className="text-sm font-bold text-slate-800">{a.title}</p>
                   <p className="text-[10px] text-slate-500">{a.description}</p>
                   <p className="text-[10px] text-emerald-700">{a.barangay_name||""} {a.purok_name||""}</p>
+                  <time dateTime={a.activity_date} className="mt-1 block text-xs text-slate-500">{new Date(a.activity_date).toLocaleString()}</time>
                 </div>
               ))}
             </div>
           </div>
 
 
-          <div className="rounded-[2rem] border border-amber-200 bg-amber-50 p-6">
+          <div className="rounded-3xl border border-amber-200 bg-amber-50 p-5">
             <div className="flex items-center gap-3">
               <KeyRound className="h-6 w-6 text-amber-600" />
 
@@ -575,7 +709,7 @@ export default function SuperAdminDashboard({
                 </p>
 
                 <p className="text-[10px] font-bold uppercase tracking-wide text-amber-700">
-                  Emergency code enabled
+                  Account recovery
                 </p>
               </div>
             </div>
@@ -594,29 +728,32 @@ function SummaryCard({
   label,
   value,
   icon: Icon,
+  onClick,
 }: {
   label: string;
-  value: number;
+  value: number | null;
   icon: any;
+  onClick: () => void;
 }) {
   return (
-    <div className="rounded-[1.7rem] border border-slate-100 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between">
-        <div>
+    <button type="button" onClick={onClick} className="group min-w-0 rounded-2xl border border-slate-100 bg-white p-3 text-left shadow-sm transition hover:border-emerald-300 hover:shadow-md md:p-4">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
           <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">
             {label}
           </p>
 
-          <p className="mt-2 text-3xl font-black text-slate-900">
-            {value}
+          <p className="mt-1 text-2xl font-black text-slate-900 md:text-3xl">
+            {value ?? <span aria-label="Data unavailable">—</span>}
           </p>
         </div>
 
-        <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700">
-          <Icon className="h-5 w-5" />
+        <div className="shrink-0 rounded-xl bg-emerald-50 p-2 text-emerald-700">
+          <Icon className="h-4 w-4" />
         </div>
       </div>
-    </div>
+      <span className="mt-2 flex items-center gap-1 text-[11px] font-bold text-emerald-700">Open <ArrowUpRight className="h-3.5 w-3.5" /></span>
+    </button>
   );
 }
 

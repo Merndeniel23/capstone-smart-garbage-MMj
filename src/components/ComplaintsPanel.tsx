@@ -14,6 +14,8 @@ import {
   MessageSquare,
   Phone,
   Plus,
+  RefreshCw,
+  Search,
   Send,
   ShieldAlert,
   Trash2,
@@ -24,6 +26,9 @@ import {
   markAdminActionNotificationsRead,
   notifyAdminActionCountsChanged,
 } from "../hooks/useAdminActionCounts";
+import ConfirmDialog from "./ConfirmDialog";
+import FeedbackToast from "./FeedbackToast";
+import Pagination, { DEFAULT_PAGE_SIZE } from "./Pagination";
 
 type AppRole =
   | "household"
@@ -166,6 +171,12 @@ function formatDate(
     : date.toLocaleString();
 }
 
+function localDateKey(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 function statusClass(
   status: ComplaintStatus,
 ) {
@@ -190,6 +201,8 @@ function statusClass(
 export default function ComplaintsPanel({
   role,
 }: ComplaintsPanelProps) {
+  const isMunicipal = role === "super_admin";
+  const canManage = role === "admin" || isMunicipal;
   const [complaints, setComplaints] =
     useState<Complaint[]>([]);
   const [collectors, setCollectors] =
@@ -204,6 +217,21 @@ export default function ComplaintsPanel({
     useState<
       "all" | "active" | "resolved"
     >("all");
+  const [search, setSearch] = useState("");
+  const [complaintPage, setComplaintPage] = useState(1);
+  const [complaintPageSize, setComplaintPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [barangayFilter, setBarangayFilter] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [confirmation, setConfirmation] = useState<{
+    action: "cancel" | "resolve";
+    complaintId: number;
+    status: ComplaintStatus;
+  } | null>(null);
+  const [collectorError, setCollectorError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [statusNotice, setStatusNotice] = useState("");
+  const detailsRef = useRef<HTMLDivElement>(null);
 
   const [loading, setLoading] =
     useState(true);
@@ -242,7 +270,7 @@ export default function ComplaintsPanel({
 
     if (!silent) {
       setLoading(true);
-      setError("");
+      setLoadError("");
     }
 
     try {
@@ -256,7 +284,7 @@ export default function ComplaintsPanel({
         return;
       }
 
-      setError("");
+      setLoadError("");
 
       setComplaints(
         Array.isArray(
@@ -270,29 +298,23 @@ export default function ComplaintsPanel({
         profileData.user || null,
       );
 
-      if (role === "admin") {
-        const collectorData =
-          await apiRequest(
-            "/admin/collectors",
-          );
-
-        if (loadId !== latestLoad.current) {
-          return;
+      if (canManage) {
+        try {
+          const collectorData = await apiRequest("/admin/collectors");
+          if (loadId !== latestLoad.current) return;
+          setCollectors(Array.isArray(collectorData.collectors) ? collectorData.collectors : []);
+          setCollectorError("");
+        } catch (err) {
+          if (loadId !== latestLoad.current) return;
+          setCollectors([]);
+          setCollectorError(err instanceof Error ? err.message : "Unable to load collectors.");
         }
-
-        setCollectors(
-          Array.isArray(
-            collectorData.collectors,
-          )
-            ? collectorData.collectors
-            : [],
-        );
       } else {
         setCollectors([]);
       }
     } catch (err) {
       if (loadId === latestLoad.current) {
-        setError(
+        setLoadError(
           err instanceof Error
             ? err.message
             : "Unable to load complaints.",
@@ -366,6 +388,27 @@ export default function ComplaintsPanel({
     useMemo(() => {
       return complaints.filter(
         (item) => {
+          const query = search.trim().toLowerCase();
+          if (query && ![
+            item.complaint_type,
+            item.description,
+            item.reporter_name,
+            item.reporter_email,
+            item.purok_name,
+            item.barangay_name,
+            item.assigned_collector_name,
+            statusLabel(item.status),
+            String(item.id),
+          ].some((value) => String(value || "").toLowerCase().includes(query))) {
+            return false;
+          }
+
+          if (isMunicipal) {
+            if (barangayFilter && String(item.barangay_id) !== barangayFilter) return false;
+            const submittedDate = localDateKey(item.created_at);
+            if (dateFrom && submittedDate < dateFrom) return false;
+            if (dateTo && submittedDate > dateTo) return false;
+          }
           if (activeTab === "active") {
             return ![
               "resolved",
@@ -385,7 +428,77 @@ export default function ComplaintsPanel({
           return true;
         },
       );
-    }, [complaints, activeTab]);
+    }, [complaints, activeTab, search, isMunicipal, barangayFilter, dateFrom, dateTo]);
+
+  const complaintPageCount = Math.max(1, Math.ceil(filteredComplaints.length / complaintPageSize));
+  const visibleComplaints = useMemo(() => {
+    const safePage = Math.min(complaintPage, complaintPageCount);
+    const start = (safePage - 1) * complaintPageSize;
+    return filteredComplaints.slice(start, start + complaintPageSize);
+  }, [complaintPage, complaintPageCount, complaintPageSize, filteredComplaints]);
+
+  const barangays = useMemo(() => {
+    const values = new Map<number, string>();
+    complaints.forEach((item) => {
+      if (item.barangay_id && item.barangay_name) values.set(item.barangay_id, item.barangay_name);
+    });
+    return [...values.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [complaints]);
+
+  const availableCollectors = collectors.filter((collector) =>
+    collector.status === "active" &&
+    Boolean(selectedComplaint?.barangay_id) &&
+    Number(collector.barangay_id) === Number(selectedComplaint?.barangay_id),
+  );
+  const canAssign = canManage && Boolean(selectedComplaint && ["pending", "assigned"].includes(selectedComplaint.status));
+  const canResolve = canManage && selectedComplaint?.status === "completed";
+  const canCancel = Boolean(selectedComplaint && (
+    (canManage && ["pending", "assigned"].includes(selectedComplaint.status)) ||
+    (role === "household" && selectedComplaint.status === "pending")
+  ));
+  const confirmationIsCurrent = Boolean(
+    confirmation && selectedComplaint &&
+    confirmation.complaintId === selectedComplaint.id &&
+    confirmation.status === selectedComplaint.status,
+  );
+
+  const closeStaleConfirmation = () => {
+    setConfirmation(null);
+    setStatusNotice("This complaint changed while confirmation was open. Review its current status before taking another action.");
+  };
+
+  const openConfirmation = (action: "cancel" | "resolve") => {
+    if (!selectedComplaint) return;
+    setError("");
+    setStatusNotice("");
+    setConfirmation({ action, complaintId: selectedComplaint.id, status: selectedComplaint.status });
+  };
+
+  useEffect(() => {
+    // A successful action closes its own dialog before reloading. Let an
+    // in-flight action finish before interpreting a poll as an external change.
+    if (confirmation && !confirmationIsCurrent && !saving) {
+      closeStaleConfirmation();
+    }
+  }, [confirmation, confirmationIsCurrent, saving]);
+
+  useEffect(() => {
+    if (selectedId !== null && !filteredComplaints.some((item) => item.id === selectedId)) {
+      setSelectedId(null);
+    }
+  }, [filteredComplaints, selectedId]);
+
+  useEffect(() => {
+    setChatInput("");
+  }, [selectedId]);
+
+  useEffect(() => {
+    setComplaintPage(1);
+  }, [activeTab, search, barangayFilter, dateFrom, dateTo]);
+
+  useEffect(() => {
+    if (complaintPage > complaintPageCount) setComplaintPage(complaintPageCount);
+  }, [complaintPage, complaintPageCount]);
 
   const stats = useMemo(() => {
     return {
@@ -483,10 +596,11 @@ export default function ComplaintsPanel({
   const assignCollector = async () => {
     if (
       !selectedComplaint ||
-      !selectedCollectorId
+      !selectedCollectorId || !canAssign ||
+      !availableCollectors.some((collector) => String(collector.id) === selectedCollectorId)
     ) {
       setError(
-        "Select a Garbage Collector first.",
+        "Select an active collector from this complaint's barangay.",
       );
       return;
     }
@@ -568,7 +682,10 @@ export default function ComplaintsPanel({
 
   const resolveComplaint =
     async () => {
-      if (!selectedComplaint) return;
+      if (!selectedComplaint || !canResolve || !confirmationIsCurrent || confirmation?.action !== "resolve") {
+        closeStaleConfirmation();
+        return;
+      }
 
       if (
         !resolutionRemark.trim()
@@ -599,6 +716,8 @@ export default function ComplaintsPanel({
           data.message ||
             "Complaint resolved.",
         );
+
+        setConfirmation(null);
 
         await loadData();
         notifyAdminActionCountsChanged();
@@ -641,6 +760,7 @@ export default function ComplaintsPanel({
       );
 
       setChatInput("");
+      setSuccess("Message sent successfully.");
       await loadData();
       notifyAdminActionCountsChanged();
     } catch (err) {
@@ -656,14 +776,10 @@ export default function ComplaintsPanel({
 
   const cancelComplaint =
     async () => {
-      if (!selectedComplaint) return;
-
-      const confirmed =
-        window.confirm(
-          "Cancel this complaint?",
-        );
-
-      if (!confirmed) return;
+      if (!selectedComplaint || !canCancel || !confirmationIsCurrent || confirmation?.action !== "cancel") {
+        closeStaleConfirmation();
+        return;
+      }
 
       setSaving(true);
       setError("");
@@ -683,6 +799,7 @@ export default function ComplaintsPanel({
         );
 
         setSelectedId(null);
+        setConfirmation(null);
         await loadData();
         notifyAdminActionCountsChanged();
       } catch (err) {
@@ -709,14 +826,21 @@ export default function ComplaintsPanel({
           </div>
 
           <h1 className="text-3xl font-black tracking-tight text-slate-900">
-            Complaints & Logs
+            {isMunicipal ? "All Complaints" : "Complaints & Logs"}
           </h1>
 
           <p className="mt-1 text-xs text-slate-500">
-            Real complaints, collector assignments, and status history from MySQL.
+            Review resident reports, coordinate collectors, and verify completed work.
           </p>
         </div>
 
+        {isMunicipal && (
+          <button type="button" onClick={() => void loadData()} disabled={loading || saving}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 disabled:opacity-50">
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+        )}
         {canSubmit && (
           <button
             type="button"
@@ -738,13 +862,26 @@ export default function ComplaintsPanel({
       </header>
 
       {error && (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">
+        <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">
           {error}
         </div>
       )}
 
-      {success && (
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">
+      {loadError && (
+        <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">
+          {loadError}
+        </div>
+      )}
+
+      {statusNotice && (
+        <div role="status" className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+          {statusNotice}
+        </div>
+      )}
+
+      {isMunicipal && <FeedbackToast message={success} onDismiss={() => setSuccess("")} />}
+      {!isMunicipal && success && (
+        <div role="status" className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">
           {success}
         </div>
       )}
@@ -752,17 +889,17 @@ export default function ComplaintsPanel({
       <div className="grid grid-cols-3 gap-4">
         <MetricCard
           label="Pending Review"
-          value={stats.pending}
+          value={loading || (loadError && complaints.length === 0) ? "—" : stats.pending}
           tone="amber"
         />
         <MetricCard
           label="Under Action"
-          value={stats.active}
+          value={loading || (loadError && complaints.length === 0) ? "—" : stats.active}
           tone="indigo"
         />
         <MetricCard
           label="Resolved"
-          value={stats.resolved}
+          value={loading || (loadError && complaints.length === 0) ? "—" : stats.resolved}
           tone="emerald"
         />
       </div>
@@ -785,6 +922,7 @@ export default function ComplaintsPanel({
           <button
             key={tab.id}
             type="button"
+            aria-pressed={activeTab === tab.id}
             onClick={() =>
               setActiveTab(
                 tab.id as typeof activeTab,
@@ -801,6 +939,62 @@ export default function ComplaintsPanel({
         ))}
       </div>
 
+      <section aria-label="Complaint search" className="sg-list-toolbar flex flex-col gap-2 sm:flex-row sm:items-center">
+        <label className="relative block flex-1">
+          <span className="sr-only">Search complaints</span>
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search complaint, resident, area, collector, or status"
+            className="min-h-10 w-full rounded-lg border border-slate-200 bg-white py-2 pl-10 pr-3 text-sm text-slate-800 outline-none focus:border-amber-500"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => setSearch("")}
+          disabled={!search}
+          className="min-h-10 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-600 disabled:opacity-40"
+        >
+          Clear search
+        </button>
+        <span className="text-xs text-slate-500" role="status">
+          {loading ? "Loading" : `${filteredComplaints.length} complaint${filteredComplaints.length === 1 ? "" : "s"}`}
+        </span>
+      </section>
+
+      {isMunicipal && (
+        <div className="sg-list-toolbar space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <label className="text-xs font-semibold text-slate-600">
+              Barangay
+              <select value={barangayFilter} onChange={(event) => setBarangayFilter(event.target.value)}
+                className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800">
+                <option value="">All barangays</option>
+                {barangays.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-semibold text-slate-600">
+              Submitted from
+              <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(event) => setDateFrom(event.target.value)}
+                className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800" />
+            </label>
+            <label className="text-xs font-semibold text-slate-600">
+              Submitted to
+              <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(event) => setDateTo(event.target.value)}
+                className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800" />
+            </label>
+            <button type="button" onClick={() => { setSearch(""); setBarangayFilter(""); setDateFrom(""); setDateTo(""); setActiveTab("all"); }}
+              disabled={!search && !barangayFilter && !dateFrom && !dateTo && activeTab === "all"}
+              className="self-end rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 disabled:opacity-40">
+              Clear filters
+            </button>
+          </div>
+          {dateFrom && dateTo && dateFrom > dateTo && <p role="alert" className="text-xs text-rose-600">The end date must be on or after the start date.</p>}
+          <p className="text-xs text-slate-500" role="status">{loading ? "Loading complaints…" : `${filteredComplaints.length} of ${complaints.length} complaints shown`}</p>
+        </div>
+      )}
+
       <div className="grid gap-8 lg:grid-cols-12">
         <div className="space-y-3 lg:col-span-5">
           {loading ? (
@@ -814,21 +1008,24 @@ export default function ComplaintsPanel({
             <div className="rounded-[2rem] border border-dashed border-slate-200 bg-white p-12 text-center">
               <MessageSquare className="mx-auto h-8 w-8 text-slate-300" />
               <p className="mt-2 text-xs font-bold text-slate-700">
-                No complaints found.
+                {loadError ? "Complaints could not be loaded." : activeTab === "active" && !barangayFilter && !dateFrom && !dateTo ? "No active complaints." : complaints.length === 0 ? "No complaints yet." : "No complaints match your filters."}
               </p>
+              <p className="mt-2 text-xs text-slate-500">{loadError ? "Use Refresh to try again." : complaints.length ? "Try another status, barangay, or date range." : "Resident reports will appear here when submitted."}</p>
             </div>
           ) : (
-            filteredComplaints.map(
+            visibleComplaints.map(
               (item) => (
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() =>
-                    setSelectedId(
-                      item.id,
-                    )
-                  }
-                  className={`w-full rounded-[1.6rem] border bg-white p-4 text-left transition ${
+                  onClick={() => {
+                    setSelectedId(item.id);
+                    if (window.matchMedia("(max-width: 1023px)").matches) {
+                      window.requestAnimationFrame(() => detailsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+                    }
+                  }}
+                  aria-pressed={selectedId === item.id}
+                  className={`sg-compact-row w-full rounded-xl border bg-white p-3 text-left transition ${
                     selectedId ===
                     item.id
                       ? "border-amber-500 ring-1 ring-amber-500/20"
@@ -850,6 +1047,7 @@ export default function ComplaintsPanel({
                   <p className="mt-2 line-clamp-2 text-[11px] leading-relaxed text-slate-500">
                     {item.description}
                   </p>
+                  {isMunicipal && <p className="mt-2 flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3.5 w-3.5" />{[item.barangay_name, item.purok_name].filter(Boolean).join(" / ") || "Area not recorded"}</p>}
 
                   <div className="mt-3 flex items-center justify-between border-t border-slate-50 pt-3 text-[10px]">
                     <span className="flex items-center gap-1 font-bold text-slate-500">
@@ -869,9 +1067,23 @@ export default function ComplaintsPanel({
               ),
             )
           )}
+          {!loading && filteredComplaints.length > 0 && (
+            <Pagination
+              page={complaintPage}
+              pageSize={complaintPageSize}
+              totalItems={filteredComplaints.length}
+              onPageChange={setComplaintPage}
+              onPageSizeChange={(size) => {
+                setComplaintPageSize(size);
+                setComplaintPage(1);
+              }}
+              itemLabel="complaints"
+              compact
+            />
+          )}
         </div>
 
-        <div className="lg:col-span-7">
+        <div ref={detailsRef} className="scroll-mt-6 lg:col-span-7">
           {!selectedComplaint ? (
             <div className="flex min-h-[430px] flex-col items-center justify-center rounded-[2.5rem] border-2 border-dashed border-slate-200 bg-slate-50/50 p-12 text-center">
               <MessageSquare className="h-10 w-10 text-slate-300" />
@@ -900,21 +1112,13 @@ export default function ComplaintsPanel({
                   />
                 </div>
 
-                {(role === "admin" ||
-                  role ===
-                    "household") &&
-                  ![
-                    "resolved",
-                    "cancelled",
-                  ].includes(
-                    selectedComplaint.status,
-                  ) && (
+                {canCancel && (
                     <button
                       type="button"
-                      onClick={
-                        cancelComplaint
-                      }
+                      onClick={() => openConfirmation("cancel")}
                       disabled={saving}
+                      title="Cancel complaint"
+                      aria-label="Cancel complaint"
                       className="rounded-xl p-2 text-rose-500 hover:bg-rose-50"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -928,6 +1132,8 @@ export default function ComplaintsPanel({
                     selectedComplaint.complaint_type
                   }
                 </h2>
+
+                {isMunicipal && <p className="flex items-center gap-2 text-sm font-semibold text-slate-700"><User className="h-4 w-4" />Resident: {selectedComplaint.reporter_name}</p>}
 
                 <div className="flex flex-wrap gap-4 text-xs font-bold text-slate-500">
                   <span className="flex items-center gap-1.5">
@@ -971,15 +1177,28 @@ export default function ComplaintsPanel({
                 )}
               </section>
 
-              {role === "admin" && (
+              {isMunicipal && <ComplaintProgress complaint={selectedComplaint} />}
+
+              {canManage && (
                 <section className="space-y-4 rounded-[1.8rem] border border-slate-800 bg-slate-900 p-5 text-white">
                   <p className="text-[10px] font-black uppercase tracking-widest text-emerald-400">
-                    Barangay Captain Console
+                    {isMunicipal ? "Next action" : "Barangay Captain Console"}
                   </p>
 
+                  <p className="text-sm leading-relaxed text-slate-300">{
+                    selectedComplaint.status === "pending" ? "Assign an active collector from this barangay to begin handling the complaint." :
+                    selectedComplaint.status === "assigned" ? "The assigned collector can start work. You can reassign this complaint until work begins." :
+                    selectedComplaint.status === "in_progress" ? "The assigned collector is handling this complaint. Resolution becomes available after the collector marks the task completed." :
+                    selectedComplaint.status === "completed" ? "Review the collector's messages and completed work, then add an official resolution note." :
+                    selectedComplaint.status === "resolved" ? "This complaint is resolved. Its resolution and messages remain available below." :
+                    "This complaint was cancelled. Its history remains available below."
+                  }</p>
+
+                  {canAssign && <>
+                  {collectorError && <p role="alert" className="text-sm text-rose-300">{collectorError} Refresh to try again.</p>}
                   <div className="grid gap-4 md:grid-cols-2">
                     <label className="text-[9px] font-black uppercase text-slate-400">
-                      Garbage Collector
+                      Collector
                       <div className="relative mt-2">
                         <select
                           value={
@@ -1000,7 +1219,7 @@ export default function ComplaintsPanel({
                             Select collector
                           </option>
 
-                          {collectors.map(
+                          {availableCollectors.map(
                             (
                               collector,
                             ) => (
@@ -1035,17 +1254,21 @@ export default function ComplaintsPanel({
                         }
                         disabled={
                           saving ||
-                          !selectedCollectorId
+                          !availableCollectors.some((collector) => String(collector.id) === selectedCollectorId)
                         }
                         className="w-full rounded-xl bg-blue-600 px-4 py-3 text-xs font-black uppercase text-white disabled:opacity-50"
                       >
-                        Assign Collector
+                        {saving ? "Saving…" : selectedComplaint.assigned_collector_id ? "Reassign Collector" : "Assign Collector"}
                       </button>
                     </div>
                   </div>
 
+                  {!collectorError && availableCollectors.length === 0 && <p className="text-sm text-amber-300">No active collectors found for this barangay.</p>}
+                  </>}
+
+                  {canResolve && <>
                   <label className="block text-[9px] font-black uppercase text-slate-400">
-                    Official Resolution Note
+                    Official Resolution Note (required)
                     <input
                       type="text"
                       value={
@@ -1066,18 +1289,16 @@ export default function ComplaintsPanel({
 
                   <button
                     type="button"
-                    onClick={
-                      resolveComplaint
-                    }
+                    onClick={() => openConfirmation("resolve")}
                     disabled={
                       saving ||
-                      selectedComplaint.status ===
-                        "resolved"
+                      !resolutionRemark.trim()
                     }
                     className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-xs font-black uppercase text-white disabled:opacity-50"
                   >
-                    Mark Resolved
+                    Resolve Complaint
                   </button>
+                  </>}
                 </section>
               )}
 
@@ -1133,7 +1354,7 @@ export default function ComplaintsPanel({
               {selectedComplaint.assigned_collector_name && (
                 <section className="rounded-2xl border border-amber-100 bg-amber-50 p-4 text-xs">
                   <p className="font-black uppercase tracking-wide text-amber-700">
-                    Assigned Garbage Collector
+                    Assigned Collector
                   </p>
                   <p className="mt-1 font-bold text-slate-700">
                     {
@@ -1225,11 +1446,15 @@ export default function ComplaintsPanel({
                       )
                     }
                     placeholder="Type message..."
+                    aria-label="Complaint message"
+                    maxLength={2000}
                     className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-semibold text-slate-800"
                   />
 
                   <button
                     type="submit"
+                    aria-label="Send message"
+                    title="Send message"
                     disabled={
                       saving ||
                       !chatInput.trim()
@@ -1244,6 +1469,18 @@ export default function ComplaintsPanel({
           )}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmation !== null}
+        title={confirmation?.action === "cancel" ? "Cancel this complaint?" : "Resolve this complaint?"}
+        description={<div className="space-y-3"><p>{confirmation?.action === "cancel" ? "The complaint will be marked cancelled. Its record and messages will remain in the log." : "Confirm that the collector's work has been verified. Your resolution note will be saved with the complaint."}</p>{confirmation?.action === "resolve" && <p className="whitespace-pre-line rounded-xl bg-slate-100 p-3">{resolutionRemark}</p>}{error && <p role="alert" className="text-rose-600">{error}</p>}</div>}
+        confirmLabel={confirmation?.action === "cancel" ? "Cancel Complaint" : "Resolve Complaint"}
+        cancelLabel="Go Back"
+        busy={saving}
+        destructive={confirmation?.action === "cancel"}
+        onCancel={() => setConfirmation(null)}
+        onConfirm={() => void (confirmation?.action === "cancel" ? cancelComplaint() : resolveComplaint())}
+      />
 
       {showSubmitModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
@@ -1275,7 +1512,7 @@ export default function ComplaintsPanel({
               onSubmit={
                 createComplaint
               }
-              className="space-y-4"
+              className="sg-compact-form"
             >
               <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500">
                 Issue Category
@@ -1400,13 +1637,43 @@ export default function ComplaintsPanel({
   );
 }
 
+function ComplaintProgress({ complaint }: { complaint: Complaint }) {
+  const steps = [
+    { status: "pending", label: "Submitted", date: complaint.created_at },
+    { status: "assigned", label: "Assigned", date: complaint.assigned_at },
+    { status: "in_progress", label: "Under Action", date: complaint.started_at },
+    { status: "completed", label: "Completed", date: complaint.completed_at },
+    { status: "resolved", label: "Resolved", date: complaint.resolved_at },
+  ];
+
+  return (
+    <section aria-label="Complaint status history" className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <h3 className="text-sm font-bold text-slate-800">Status history</h3>
+      <p className="mt-1 text-xs text-slate-500">The assigned collector starts and completes work; an administrator verifies the resolution.</p>
+      <ol className="mt-4 grid gap-3 sm:grid-cols-5">
+        {steps.map((step) => (
+          <li key={step.status} aria-current={complaint.status === step.status ? "step" : undefined}
+            className={`rounded-xl border p-3 ${complaint.status === step.status ? "border-emerald-500 bg-emerald-50" : "border-slate-200 bg-white"}`}>
+            <span className={`mb-2 flex h-6 w-6 items-center justify-center rounded-full ${step.date ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"}`}>
+              {step.date ? <CheckCircle2 className="h-4 w-4" /> : <Clock className="h-4 w-4" />}
+            </span>
+            <p className="text-xs font-bold text-slate-700">{step.label}</p>
+            <p className="mt-1 text-[10px] leading-relaxed text-slate-500">{step.date ? formatDate(step.date) : "No recorded date"}</p>
+          </li>
+        ))}
+      </ol>
+      {complaint.status === "cancelled" && <p className="mt-3 text-xs font-semibold text-rose-600">Cancelled · Last updated {formatDate(complaint.updated_at)}</p>}
+    </section>
+  );
+}
+
 function MetricCard({
   label,
   value,
   tone,
 }: {
   label: string;
-  value: number;
+  value: number | string;
   tone:
     | "amber"
     | "indigo"

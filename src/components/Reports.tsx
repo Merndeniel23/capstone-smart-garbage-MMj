@@ -175,7 +175,7 @@ export default function Reports() {
   }
 
   return (
-    <div className="space-y-8 pb-20 md:pb-0">
+    <div className="sg-page space-y-5 pb-20 md:pb-0">
       <style>
         {`
           @media print {
@@ -199,7 +199,7 @@ export default function Reports() {
         `}
       </style>
 
-      <header className="no-print flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+      <header className="sg-list-toolbar no-print flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.22em] text-emerald-600">
             Smart Garbage Monitoring System
@@ -218,7 +218,7 @@ export default function Reports() {
           <button
             type="button"
             onClick={() => void loadReport()}
-            className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 shadow-sm"
+            className="flex min-h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 shadow-sm transition hover:border-emerald-300"
           >
             <RefreshCw className="h-4 w-4" />
             Refresh
@@ -227,7 +227,7 @@ export default function Reports() {
           <button
             type="button"
             onClick={() => window.print()}
-            className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 shadow-sm"
+            className="flex min-h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 shadow-sm transition hover:border-emerald-300"
           >
             <Printer className="h-4 w-4" />
             Print
@@ -236,7 +236,7 @@ export default function Reports() {
           <button
             type="button"
             onClick={exportPdf}
-            className="flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-emerald-800"
+            className="flex min-h-10 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white shadow-sm transition hover:bg-emerald-800"
           >
             <FileText className="h-4 w-4" />
             Export PDF
@@ -261,8 +261,8 @@ export default function Reports() {
       )}
 
       {report && (
-        <section className="print-report overflow-hidden rounded-[2rem] border border-slate-100 bg-white shadow-sm">
-          <div className="border-b border-slate-100 bg-gradient-to-r from-slate-900 to-emerald-900 p-6 text-white md:p-8">
+        <section className="print-report overflow-hidden rounded-[1.5rem] border border-slate-100 bg-white shadow-sm">
+          <div className="border-b border-slate-100 bg-gradient-to-r from-slate-900 to-emerald-900 p-5 text-white md:p-6">
             <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-300">
@@ -280,7 +280,7 @@ export default function Reports() {
                 </p>
               </div>
 
-              <div className="rounded-2xl border border-white/10 bg-white/10 px-5 py-4">
+              <div className="rounded-xl border border-white/10 bg-white/10 px-4 py-3">
                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-300">
                   Scope
                 </p>
@@ -293,24 +293,24 @@ export default function Reports() {
             </div>
           </div>
 
-          <div className="p-6 md:p-8">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="p-5 md:p-6">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {cards.map((card) => (
                 <article
                   key={card.label}
-                  className="print-card rounded-[1.5rem] border border-slate-100 bg-slate-50 p-5"
+                  className="print-card rounded-xl border border-slate-100 bg-slate-50 p-4"
                 >
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
                         {card.label}
                       </p>
-                      <p className="mt-2 text-3xl font-black text-slate-900">
+                      <p className="mt-1.5 text-2xl font-black text-slate-900">
                         {card.value}
                       </p>
                     </div>
 
-                    <div className="rounded-2xl bg-white p-3 text-emerald-700 shadow-sm">
+                    <div className="rounded-xl bg-white p-2.5 text-emerald-700 shadow-sm">
                       <card.icon className="h-5 w-5" />
                     </div>
                   </div>
@@ -318,7 +318,7 @@ export default function Reports() {
               ))}
             </div>
 
-            <div className="mt-8 rounded-[1.5rem] border border-emerald-100 bg-emerald-50 p-5">
+            <div className="mt-6 rounded-xl border border-emerald-100 bg-emerald-50 p-4">
               <h3 className="text-sm font-black text-emerald-900">
                 Report Notes
               </h3>
@@ -329,7 +329,7 @@ export default function Reports() {
               </p>
             </div>
 
-            <div className="mt-10 grid gap-8 text-center text-xs text-slate-500 sm:grid-cols-2">
+            <div className="mt-8 grid gap-6 text-center text-xs text-slate-500 sm:grid-cols-2">
               <div>
                 <div className="mx-auto mb-2 h-px max-w-xs bg-slate-300" />
                 Municipal Administrator / Barangay Captain

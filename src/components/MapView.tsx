@@ -15,8 +15,10 @@ import {
   MapPin,
   Navigation,
   RefreshCw,
+  Search,
   Truck,
 } from "lucide-react";
+import Pagination, { DEFAULT_PAGE_SIZE } from "./Pagination";
 
 type BinStatus =
   | "empty"
@@ -69,6 +71,13 @@ type CollectionRequest = {
 type BinWithRequest = GarbageBin & {
   request: CollectionRequest | null;
 };
+
+type MapBinFilter =
+  | "all"
+  | "active_tasks"
+  | "needs_collection"
+  | "scheduled_today"
+  | "urgent";
 
 type CollectorLocation = {
   collector_id: number;
@@ -425,6 +434,12 @@ export default function MapView({
     useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [binSearch, setBinSearch] = useState("");
+  const [binFilter, setBinFilter] = useState<MapBinFilter>("all");
+  const [binPage, setBinPage] = useState(1);
+  const [binPageSize, setBinPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [collectorPage, setCollectorPage] = useState(1);
+  const [collectorPageSize, setCollectorPageSize] = useState(DEFAULT_PAGE_SIZE);
 
   const loadData = async () => {
     setLoading(true);
@@ -849,8 +864,78 @@ export default function MapView({
     ],
   );
 
+  const filteredBins = useMemo(() => {
+    const query = binSearch.trim().toLowerCase();
+
+    return visibleBins.filter((bin) => {
+      const matchesSearch = !query || [
+        bin.bin_code,
+        bin.location_name,
+        bin.purok_name,
+        bin.barangay_name,
+      ].some((value) => value?.toLowerCase().includes(query));
+      const hasActiveTask = Boolean(
+        bin.request && !["completed", "cancelled"].includes(bin.request.status),
+      );
+      const matchesFilter = binFilter === "all"
+        || (binFilter === "active_tasks" && hasActiveTask)
+        || (binFilter === "needs_collection" && needsCollection(bin))
+        || (binFilter === "scheduled_today" && isScheduledToday(bin))
+        || (binFilter === "urgent" && normalizeStatus(bin.current_status) === "overflowing");
+
+      return matchesSearch && matchesFilter;
+    });
+  }, [visibleBins, binFilter, binSearch]);
+
+  const binPageCount = Math.max(1, Math.ceil(filteredBins.length / binPageSize));
+  const safeBinPage = Math.min(binPage, binPageCount);
+  const paginatedBins = useMemo(
+    () => filteredBins.slice((safeBinPage - 1) * binPageSize, safeBinPage * binPageSize),
+    [filteredBins, safeBinPage, binPageSize],
+  );
+  const collectorPageCount = Math.max(1, Math.ceil(collectorLocations.length / collectorPageSize));
+  const safeCollectorPage = Math.min(collectorPage, collectorPageCount);
+  const paginatedCollectors = useMemo(
+    () => collectorLocations.slice(
+      (safeCollectorPage - 1) * collectorPageSize,
+      safeCollectorPage * collectorPageSize,
+    ),
+    [collectorLocations, safeCollectorPage, collectorPageSize],
+  );
+
+  useEffect(() => {
+    if (binPage > binPageCount) setBinPage(binPageCount);
+  }, [binPage, binPageCount]);
+
+  useEffect(() => {
+    setBinPage(1);
+  }, [binFilter, binSearch]);
+
+  useEffect(() => {
+    if (collectorPage > collectorPageCount) setCollectorPage(collectorPageCount);
+  }, [collectorPage, collectorPageCount]);
+
+  useEffect(() => {
+    if (selectedId !== null && !filteredBins.some((bin) => bin.id === selectedId)) {
+      setSelectedId(null);
+    }
+  }, [filteredBins, selectedId]);
+
+  const selectBin = (bin: BinWithRequest, centerMap = true) => {
+    setSelectedId(bin.id);
+    const index = filteredBins.findIndex((item) => item.id === bin.id);
+    if (index >= 0) setBinPage(Math.floor(index / binPageSize) + 1);
+
+    if (centerMap && hasCoordinates(bin)) {
+      mapRef.current?.setView(
+        [Number(bin.latitude), Number(bin.longitude)],
+        17,
+      );
+    }
+  };
+
   const selectedBin =
-    visibleBins.find(
+    filteredBins.find(
       (bin) => bin.id === selectedId,
     ) || null;
 
@@ -902,7 +987,7 @@ export default function MapView({
     if (!markerLayer) return;
 
     markerLayer.clearLayers();
-    const mappedBins = visibleBins.filter(hasCoordinates);
+    const mappedBins = filteredBins.filter(hasCoordinates);
 
     mappedBins.forEach((bin) => {
       const marker = L.marker(
@@ -935,7 +1020,7 @@ export default function MapView({
         </div>
       `);
 
-      marker.on("click", () => setSelectedId(bin.id));
+      marker.on("click", () => selectBin(bin, false));
     });
 
     const map = mapRef.current;
@@ -1038,9 +1123,10 @@ export default function MapView({
       );
     }
   }, [
-    visibleBins,
+    filteredBins,
     ownCollectorLocation,
     loading,
+    binPageSize,
   ]);
 
   useEffect(() => {
@@ -1269,7 +1355,7 @@ export default function MapView({
   const needsCollectionCount = visibleBins.filter(
     needsCollection,
   ).length;
-  const mappedCount = visibleBins.filter(hasCoordinates).length;
+  const mappedCount = filteredBins.filter(hasCoordinates).length;
   const historyPointCount = collectorHistory.length;
 
   return (
@@ -1404,11 +1490,58 @@ export default function MapView({
         </div>
       )}
 
+      <section className="grid gap-3 rounded-2xl border bg-white p-3 shadow-sm sm:grid-cols-[1fr_190px_auto]" aria-label="Garbage bin map filters">
+        <label className="text-xs font-bold text-slate-600">
+          Search bins
+          <span className="relative mt-1 block">
+            <Search aria-hidden="true" className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="search"
+              value={binSearch}
+              onChange={(event) => setBinSearch(event.target.value)}
+              placeholder="Bin code, location, purok, or barangay"
+              className="min-h-10 w-full rounded-xl border border-slate-200 py-2 pl-9 pr-3 text-sm font-normal"
+            />
+          </span>
+        </label>
+        <label className="text-xs font-bold text-slate-600">
+          Show
+          <select
+            value={binFilter}
+            onChange={(event) => setBinFilter(event.target.value as MapBinFilter)}
+            className="mt-1 min-h-10 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal"
+          >
+            <option value="all">All active bins</option>
+            <option value="active_tasks">Active tasks</option>
+            <option value="needs_collection">Needs collection</option>
+            <option value="scheduled_today">Scheduled today</option>
+            <option value="urgent">Overflowing</option>
+          </select>
+        </label>
+        <div className="flex items-end gap-2">
+          {(binFilter !== "all" || binSearch) && (
+            <button
+              type="button"
+              onClick={() => {
+                setBinFilter("all");
+                setBinSearch("");
+              }}
+              className="min-h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 hover:bg-slate-50"
+            >
+              Clear
+            </button>
+          )}
+          <span className="pb-2 text-xs font-bold text-slate-500" aria-live="polite">
+            {filteredBins.length} matching
+          </span>
+        </div>
+      </section>
+
       <div className="grid gap-5 xl:grid-cols-[1.6fr_1fr]">
         <div className="relative isolate overflow-hidden rounded-2xl border bg-white shadow-sm">
           <div
             ref={mapContainerRef}
-            className="relative z-0 h-[560px] w-full"
+            className="relative z-0 h-[360px] w-full sm:h-[560px]"
           />
         </div>
 
@@ -1449,7 +1582,7 @@ export default function MapView({
           </div>
 
           <div className="divide-y">
-            {collectorLocations.map((collector) => (
+            {paginatedCollectors.map((collector) => (
               <button
                 key={collector.collector_id}
                 type="button"
@@ -1493,6 +1626,20 @@ export default function MapView({
               </button>
             ))}
           </div>
+          <div className="px-5 pb-4">
+            <Pagination
+              page={safeCollectorPage}
+              pageSize={collectorPageSize}
+              totalItems={collectorLocations.length}
+              onPageChange={setCollectorPage}
+              onPageSizeChange={(nextPageSize) => {
+                setCollectorPageSize(nextPageSize);
+                setCollectorPage(1);
+              }}
+              compact
+              itemLabel="collector locations"
+            />
+          </div>
         </section>
       )}
 
@@ -1507,22 +1654,11 @@ export default function MapView({
         </div>
 
         <div className="divide-y">
-          {visibleBins.map((bin) => (
+          {paginatedBins.map((bin) => (
             <button
               key={bin.id}
               type="button"
-              onClick={() => {
-                setSelectedId(bin.id);
-                if (hasCoordinates(bin)) {
-                  mapRef.current?.setView(
-                    [
-                      Number(bin.latitude),
-                      Number(bin.longitude),
-                    ],
-                    17,
-                  );
-                }
-              }}
+              onClick={() => selectBin(bin)}
               className={`flex w-full flex-col gap-3 p-5 text-left transition hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between ${
                 selectedId === bin.id ? "bg-emerald-50" : ""
               }`}
@@ -1562,18 +1698,22 @@ export default function MapView({
             </button>
           ))}
 
-          {!loading && visibleBins.length === 0 && (
+          {!loading && filteredBins.length === 0 && (
             <div className="p-10 text-center text-slate-500">
               <AlertCircle className="mx-auto mb-2 h-8 w-8 text-slate-300" />
               <p className="font-black">
-                {getStoredRole() === "collector"
-                  ? "No garbage bins found in your assigned barangay"
-                  : "No garbage bins found"}
+                {visibleBins.length === 0
+                  ? (getStoredRole() === "collector"
+                    ? "No garbage bins found in your assigned barangay"
+                    : "No garbage bins found")
+                  : "No garbage bins match these filters"}
               </p>
               <p className="mt-1 text-xs">
-                {getStoredRole() === "collector"
-                  ? "Registered bins from your assigned barangay will appear here even when they do not yet have a collection task."
-                  : "A Purok Leader must register a garbage bin first."}
+                {visibleBins.length === 0
+                  ? (getStoredRole() === "collector"
+                    ? "Registered bins from your assigned barangay will appear here even when they do not yet have a collection task."
+                    : "A Purok Leader must register a garbage bin first.")
+                  : "Clear the search or choose a different filter to see more bins."}
               </p>
             </div>
           )}
@@ -1585,6 +1725,22 @@ export default function MapView({
             </div>
           )}
         </div>
+        {!loading && filteredBins.length > 0 && (
+          <div className="px-5 pb-4">
+            <Pagination
+              page={safeBinPage}
+              pageSize={binPageSize}
+              totalItems={filteredBins.length}
+              onPageChange={setBinPage}
+              onPageSizeChange={(nextPageSize) => {
+                setBinPageSize(nextPageSize);
+                setBinPage(1);
+              }}
+              compact
+              itemLabel="garbage bins"
+            />
+          </div>
+        )}
       </section>
     </div>
   );

@@ -7,8 +7,6 @@ import {
 import {
   CalendarDays,
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
   Filter,
   Loader2,
   Mail,
@@ -26,6 +24,10 @@ import {
   motion,
 } from "motion/react";
 import { apiRequest } from "../services/api";
+import ConfirmDialog from "./ConfirmDialog";
+import Pagination, {
+  DEFAULT_PAGE_SIZE,
+} from "./Pagination";
 
 type DirectoryStatus =
   | "active"
@@ -215,6 +217,12 @@ export default function MembersList() {
   const [memberPage, setMemberPage] =
     useState(1);
 
+  const [memberPageSize, setMemberPageSize] =
+    useState(DEFAULT_PAGE_SIZE);
+
+  const [deleteConfirmation, setDeleteConfirmation] =
+    useState<DirectoryMember | null>(null);
+
   const [deletingId, setDeletingId] =
     useState<number | null>(null);
 
@@ -363,7 +371,6 @@ export default function MembersList() {
     statusFilter,
   ]);
 
-  const memberPageSize = 8;
   const memberPageCount = Math.max(
     1,
     Math.ceil(members.length / memberPageSize),
@@ -385,6 +392,7 @@ export default function MembersList() {
     members,
     memberPage,
     memberPageCount,
+    memberPageSize,
   ]);
 
   useEffect(() => {
@@ -437,15 +445,6 @@ export default function MembersList() {
         return;
       }
 
-      const confirmed =
-        window.confirm(
-          `Delete ${member.name}? This action cannot be undone.`,
-        );
-
-      if (!confirmed) {
-        return;
-      }
-
       setDeletingId(member.id);
       setActionMessage(null);
 
@@ -469,6 +468,7 @@ export default function MembersList() {
               "User deleted successfully.",
           });
         }
+        setDeleteConfirmation(null);
       } catch (error) {
         console.error(
           "DELETE ERROR:",
@@ -482,10 +482,35 @@ export default function MembersList() {
               ? error.message
               : "Unable to delete the user.",
         });
+        setDeleteConfirmation(null);
       } finally {
         setDeletingId(null);
       }
     };
+
+  const requestDeleteMember = (
+    member: DirectoryMember,
+  ) => {
+    if (!canManageUsers) {
+      setActionMessage({
+        type: "error",
+        text:
+          "Only an administrator can delete user accounts.",
+      });
+      return;
+    }
+
+    if (currentUser?.id === member.id) {
+      setActionMessage({
+        type: "error",
+        text:
+          "You cannot delete your own account.",
+      });
+      return;
+    }
+
+    setDeleteConfirmation(member);
+  };
 
   return (
     <div className="space-y-6 pb-20 md:pb-0 animate-in fade-in slide-in-from-right-4 duration-500">
@@ -496,11 +521,11 @@ export default function MembersList() {
           </span>
 
           <h1 className="text-2xl font-black text-slate-900">
-            Purok Members
+            {currentUser?.role === "super_admin" ? "Household Directory" : "Purok Members"}
           </h1>
 
           <p className="text-sm font-medium text-slate-500">
-            View household accounts, contact details, and contribution status.
+            {currentUser?.role === "super_admin" ? "Resident and household records, contact details, and contributions. Manage system roles and account access in User Directory." : "View household accounts, contact details, and contribution status."}
           </p>
         </div>
 
@@ -630,51 +655,19 @@ export default function MembersList() {
       <div className="grid grid-cols-1 gap-8 xl:grid-cols-3">
         <div className="space-y-4 xl:col-span-2">
           {!loading && !directoryUnavailable && members.length > 0 && (
-            <div className="flex flex-col gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-xs font-bold text-slate-500">
-                Showing{" "}
-                <span className="font-black text-slate-800">
-                  {(memberPage - 1) * memberPageSize + 1}
-                </span>
-                {"–"}
-                <span className="font-black text-slate-800">
-                  {Math.min(
-                    memberPage * memberPageSize,
-                    members.length,
-                  )}
-                </span>{" "}
-                of{" "}
-                <span className="font-black text-slate-800">
-                  {members.length}
-                </span>{" "}
-                members
-              </p>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setMemberPage((page) => Math.max(1, page - 1))}
-                  disabled={memberPage === 1}
-                  aria-label="Previous members page"
-                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </button>
-
-                <span className="min-w-16 text-center text-xs font-black text-slate-600">
-                  {memberPage} / {memberPageCount}
-                </span>
-
-                <button
-                  type="button"
-                  onClick={() => setMemberPage((page) => Math.min(memberPageCount, page + 1))}
-                  disabled={memberPage === memberPageCount}
-                  aria-label="Next members page"
-                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-              </div>
+            <div className="rounded-2xl border border-slate-100 bg-white px-4 pb-3 shadow-sm">
+              <Pagination
+                page={memberPage}
+                pageSize={memberPageSize}
+                totalItems={members.length}
+                itemLabel="members"
+                compact
+                onPageChange={setMemberPage}
+                onPageSizeChange={(nextPageSize) => {
+                  setMemberPageSize(nextPageSize);
+                  setMemberPage(1);
+                }}
+              />
             </div>
           )}
 
@@ -723,13 +716,13 @@ export default function MembersList() {
                       member.id,
                     )
                   }
-                  className={`flex w-full items-center gap-5 rounded-[2rem] border bg-white p-5 text-left transition-all ${
+                  className={`flex w-full flex-col gap-3 rounded-2xl border bg-white px-4 py-3 text-left transition-all sm:flex-row sm:items-center ${
                     isSelected
                       ? "border-emerald-500 shadow-lg shadow-emerald-500/5"
                       : "border-slate-100 shadow-sm hover:border-slate-200"
                   }`}
                 >
-                  <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-emerald-50">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-emerald-50">
                     {member.profilePhoto ? (
                       <img
                         src={member.profilePhoto}
@@ -737,7 +730,7 @@ export default function MembersList() {
                         className="h-full w-full object-cover"
                       />
                     ) : (
-                      <User className="h-7 w-7 text-emerald-600" />
+                      <User className="h-5 w-5 text-emerald-600" />
                     )}
                   </div>
 
@@ -763,27 +756,9 @@ export default function MembersList() {
                         "Barangay not specified"}
                     </p>
 
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <span className="rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-700">
-                        This month: ₱{member.currentMonthContribution.toFixed(2)}
-                      </span>
-
-                      <span
-                        className={
-                          member.previousMonthComplete
-                            ? "rounded-lg bg-blue-50 px-2 py-1 text-[10px] font-black text-blue-700"
-                            : "rounded-lg bg-amber-50 px-2 py-1 text-[10px] font-black text-amber-700"
-                        }
-                      >
-                        Last month:{" "}
-                        {member.previousMonthComplete
-                          ? "Complete · ₱" + member.previousMonthContribution.toFixed(2)
-                          : "Pending"}
-                      </span>
-                    </div>
                   </div>
 
-                  <div className="shrink-0 text-right">
+                  <div className="flex w-full items-center justify-between gap-3 sm:w-auto sm:block sm:text-right">
                     <span
                       className={`inline-flex rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-wider ${statusClasses(
                         member.status,
@@ -794,8 +769,8 @@ export default function MembersList() {
                       )}
                     </span>
 
-                    <p className="mt-2 hidden text-[10px] font-bold text-slate-400 sm:block">
-                      View profile
+                    <p className="text-[10px] font-bold text-slate-400 sm:mt-2">
+                      View details
                     </p>
                   </div>
                 </motion.button>
@@ -987,7 +962,7 @@ export default function MembersList() {
                     <button
                       type="button"
                       onClick={() =>
-                        void handleDeleteMember(
+                        requestDeleteMember(
                           selectedMember,
                         )
                       }
@@ -1028,6 +1003,33 @@ export default function MembersList() {
           </AnimatePresence>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={Boolean(deleteConfirmation)}
+        title="Delete household account?"
+        description={
+          deleteConfirmation
+            ? `Delete ${deleteConfirmation.name}? This action cannot be undone.`
+            : ""
+        }
+        confirmLabel="Delete account"
+        destructive
+        busy={
+          deletingId === deleteConfirmation?.id
+        }
+        onCancel={() => {
+          if (!deletingId) {
+            setDeleteConfirmation(null);
+          }
+        }}
+        onConfirm={() => {
+          if (deleteConfirmation) {
+            void handleDeleteMember(
+              deleteConfirmation,
+            );
+          }
+        }}
+      />
     </div>
   );
 }

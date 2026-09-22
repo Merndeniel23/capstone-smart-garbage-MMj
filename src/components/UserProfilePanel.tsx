@@ -699,7 +699,7 @@ export default function UserProfilePanel() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6 pb-20 md:pb-0">
+    <div className="sg-page mx-auto max-w-3xl space-y-5 pb-20 md:pb-0">
       <div>
         <span className="mb-1 block text-[10px] font-extrabold uppercase tracking-[0.2em] text-emerald-600">
           LGU Account Settings
@@ -758,8 +758,8 @@ export default function UserProfilePanel() {
         </div>
       )}
 
-      <div className="space-y-8 overflow-hidden rounded-[2.5rem] border border-slate-100 bg-white p-6 shadow-sm md:p-8">
-        <div className="flex flex-col items-center gap-6 border-b border-slate-100 pb-6 md:flex-row">
+      <div className="space-y-6 overflow-hidden rounded-[2rem] border border-slate-100 bg-white p-5 shadow-sm md:p-6">
+        <div className="flex flex-col items-center gap-5 border-b border-slate-100 pb-5 md:flex-row">
           <div className="relative shrink-0">
             <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-2 border-emerald-500/20 bg-emerald-50 text-3xl font-black text-emerald-700 shadow-inner">
               {photoDraft || profilePhoto ? (
@@ -844,8 +844,10 @@ export default function UserProfilePanel() {
           </div>
         </div>
 
-        <form onSubmit={handleSave} className="space-y-6 text-xs font-semibold">
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        <form onSubmit={handleSave} className="sg-compact-form text-xs font-semibold">
+          <fieldset className="sg-form-section">
+            <legend className="sg-form-section-title">Account contact</legend>
+            <div className="sg-form-grid sg-form-grid--two">
             <div className="space-y-1.5">
               <label className="ml-1 block font-black uppercase tracking-widest text-slate-500">
                 Full Name
@@ -856,7 +858,7 @@ export default function UserProfilePanel() {
                   type="text"
                   value={name}
                   onChange={(event) => setName(event.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3.5 pl-11 pr-4 font-extrabold text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-11 pr-4 font-extrabold text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
                   required
                 />
               </div>
@@ -872,7 +874,7 @@ export default function UserProfilePanel() {
                   type="email"
                   value={profile?.email || ""}
                   disabled
-                  className="w-full cursor-not-allowed rounded-2xl border border-slate-200 bg-slate-100 py-3.5 pl-11 pr-4 font-bold text-slate-500"
+                  className="w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-100 py-2.5 pl-11 pr-4 font-bold text-slate-500"
                 />
               </div>
             </div>
@@ -895,10 +897,20 @@ export default function UserProfilePanel() {
                   }
                   placeholder="+639XXXXXXXXX"
                   maxLength={16}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3.5 pl-11 pr-4 font-extrabold text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-11 pr-4 font-extrabold text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
                 />
               </div>
             </div>
+
+            </div>
+          </fieldset>
+
+          <fieldset className="sg-form-section">
+            <legend className="sg-form-section-title">Official assignment</legend>
+            <p className="-mt-1 text-[10px] font-semibold leading-relaxed text-slate-400">
+              Assignment fields come from your official LGU record. Residents can submit a correction request below when needed.
+            </p>
+            <div className="sg-form-grid sg-form-grid--two">
 
             <div className="space-y-1.5">
               <label className="ml-1 block font-black uppercase tracking-widest text-slate-500">
@@ -915,7 +927,7 @@ export default function UserProfilePanel() {
                     );
                     setSetupPurokId("");
                   }}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3.5 font-extrabold text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 font-extrabold text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
                   required
                 >
                   <option value="">
@@ -941,7 +953,7 @@ export default function UserProfilePanel() {
                     type="text"
                     value={profile?.barangay_name || "Not assigned"}
                     disabled
-                    className="w-full cursor-not-allowed rounded-2xl border border-slate-200 bg-slate-100 py-3.5 pl-11 pr-4 font-bold text-slate-500"
+                    className="w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-100 py-2.5 pl-11 pr-4 font-bold text-slate-500"
                   />
                 </div>
               )}
@@ -964,7 +976,7 @@ export default function UserProfilePanel() {
                       event.target.value,
                     )
                   }
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3.5 font-extrabold text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/10 disabled:bg-slate-100 disabled:text-slate-400"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 font-extrabold text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/10 disabled:bg-slate-100 disabled:text-slate-400"
                   required
                 >
                   <option value="">
@@ -994,7 +1006,7 @@ export default function UserProfilePanel() {
                         : profile?.purok_name || "Not assigned"
                     }
                     disabled
-                    className="w-full cursor-not-allowed rounded-2xl border border-slate-200 bg-slate-100 py-3.5 pl-11 pr-4 font-bold text-slate-500"
+                    className="w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-100 py-2.5 pl-11 pr-4 font-bold text-slate-500"
                   />
                 </div>
               )}
@@ -1010,12 +1022,12 @@ export default function UserProfilePanel() {
                   type="text"
                   value={userCode(profile)}
                   disabled
-                  className="w-full cursor-not-allowed rounded-2xl border border-slate-200 bg-slate-100 py-3.5 pl-11 pr-4 font-bold text-slate-500"
+                  className="w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-100 py-2.5 pl-11 pr-4 font-bold text-slate-500"
                 />
               </div>
             </div>
 
-            <div className="space-y-1.5 md:col-span-2">
+            <div className="space-y-1.5 sm:col-span-2">
               <div className="ml-1 flex items-center justify-between">
                 <label className="block font-black uppercase tracking-widest text-slate-500">
                   Physical Address
@@ -1044,7 +1056,7 @@ export default function UserProfilePanel() {
                       ? "Enter your complete physical address"
                       : undefined
                   }
-                  className={`w-full rounded-2xl border py-3.5 pl-11 pr-4 font-extrabold ${
+                  className={`w-full rounded-xl border py-2.5 pl-11 pr-4 font-extrabold ${
                     isCivilian &&
                     !needsInitialResidentSetup
                       ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-500"
@@ -1053,7 +1065,8 @@ export default function UserProfilePanel() {
                 />
               </div>
             </div>
-          </div>
+            </div>
+          </fieldset>
 
           <button
             type="submit"

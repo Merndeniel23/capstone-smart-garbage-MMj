@@ -20,6 +20,11 @@ import {
   markAdminActionNotificationsRead,
   notifyAdminActionCountsChanged,
 } from "../hooks/useAdminActionCounts";
+import ConfirmDialog from "./ConfirmDialog";
+import FeedbackToast from "./FeedbackToast";
+import Pagination, {
+  DEFAULT_PAGE_SIZE,
+} from "./Pagination";
 
 interface ManagedUser {
   id: number;
@@ -144,7 +149,7 @@ function roleLabel(role: ManagedUser["role"]) {
       return "Purok Leader";
 
     case "collector":
-      return "Garbage Collector";
+      return "Collector";
 
     default:
       return "Resident";
@@ -170,7 +175,13 @@ function canAdminModifyAccount(user: ManagedUser) {
   return Boolean(Number(user.email_verified));
 }
 
-export default function UserManagement() {
+export default function UserManagement({ initialRoleFilter = "all", initialStatusFilter = "all", initialCreateCaptain = false, onViewHouseholds, onRoleFilterChange }: {
+  initialRoleFilter?: string;
+  initialStatusFilter?: string;
+  initialCreateCaptain?: boolean;
+  onViewHouseholds?: () => void;
+  onRoleFilterChange?: (role: string) => void;
+}) {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [barangays, setBarangays] = useState<Barangay[]>([]);
   const [puroks, setPuroks] = useState<Purok[]>([]);
@@ -180,6 +191,15 @@ export default function UserManagement() {
   >("all");
 
   const [searchTerm, setSearchTerm] = useState("");
+  const [roleFilter, setRoleFilter] = useState(initialRoleFilter);
+  const [barangayFilter, setBarangayFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState(initialStatusFilter);
+  const [sortBy, setSortBy] = useState("priority");
+  const [sortDirection, setSortDirection] = useState("asc");
+  const [userPage, setUserPage] = useState(1);
+  const [userPageSize, setUserPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [statusConfirmation, setStatusConfirmation] = useState<ManagedUser | null>(null);
+  const [roleConfirmation, setRoleConfirmation] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -197,7 +217,7 @@ export default function UserManagement() {
     sessionStorage.getItem("sg_user_role");
   const isSuperAdmin = currentRole === "super_admin";
 
-  const [showCaptainModal, setShowCaptainModal] = useState(false);
+  const [showCaptainModal, setShowCaptainModal] = useState(initialCreateCaptain && isSuperAdmin);
   const [captainFullName, setCaptainFullName] = useState("");
   const [captainEmail, setCaptainEmail] = useState("");
   const [captainRecoveryEmail, setCaptainRecoveryEmail] = useState("");
@@ -209,9 +229,8 @@ export default function UserManagement() {
   const [showTemporaryPassword, setShowTemporaryPassword] = useState(false);
 
   const refreshUsers = async (silent = true) => {
-    if (silent) {
-      setRefreshing(true);
-    }
+    setRefreshing(true);
+    if (!silent) setError("");
 
     try {
       const usersData = await apiRequest("/admin/users");
@@ -232,9 +251,7 @@ export default function UserManagement() {
         );
       }
     } finally {
-      if (silent) {
-        setRefreshing(false);
-      }
+      setRefreshing(false);
     }
   };
 
@@ -288,6 +305,10 @@ export default function UserManagement() {
     };
   }, []);
 
+  useEffect(() => {
+    if (initialCreateCaptain && isSuperAdmin) setShowCaptainModal(true);
+  }, [initialCreateCaptain, isSuperAdmin]);
+
   const filteredUsers = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
 
@@ -305,8 +326,17 @@ export default function UserManagement() {
         (activeTab === "collectors" && user.role === "collector") ||
         (activeTab === "leaders" && user.role === "purok_leader");
 
-      return matchesSearch && matchesTab;
+      return matchesSearch && matchesTab &&
+        (roleFilter === "all" || user.role === roleFilter) &&
+        (barangayFilter === "all" || String(user.barangay_id) === barangayFilter) &&
+        (statusFilter === "all" || user.status === statusFilter);
     }).sort((a, b) => {
+      if (sortBy !== "priority") {
+        const value = (user: ManagedUser) => sortBy === "name" ? user.full_name
+          : sortBy === "role" ? roleLabel(user.role)
+          : sortBy === "barangay" ? user.barangay_name || "" : user.status;
+        return value(a).localeCompare(value(b), undefined, { sensitivity: "base", numeric: true }) * (sortDirection === "asc" ? 1 : -1);
+      }
       const pendingDifference =
         Number(isPendingApproval(b)) -
         Number(isPendingApproval(a));
@@ -320,7 +350,57 @@ export default function UserManagement() {
         new Date(a.created_at).getTime()
       );
     });
-  }, [users, searchTerm, activeTab]);
+  }, [users, searchTerm, activeTab, roleFilter, barangayFilter, statusFilter, sortBy, sortDirection]);
+
+  const userPageCount = Math.max(
+    1,
+    Math.ceil(filteredUsers.length / userPageSize),
+  );
+
+  const visibleUsers = useMemo(() => {
+    const safePage = Math.min(
+      userPage,
+      userPageCount,
+    );
+    const start = (safePage - 1) * userPageSize;
+
+    return filteredUsers.slice(
+      start,
+      start + userPageSize,
+    );
+  }, [
+    filteredUsers,
+    userPage,
+    userPageCount,
+    userPageSize,
+  ]);
+
+  useEffect(() => {
+    setUserPage(1);
+  }, [
+    searchTerm,
+    activeTab,
+    roleFilter,
+    barangayFilter,
+    statusFilter,
+    sortBy,
+    sortDirection,
+  ]);
+
+  useEffect(() => {
+    if (userPage > userPageCount) {
+      setUserPage(userPageCount);
+    }
+  }, [userPage, userPageCount]);
+
+  const resetFilters = () => {
+    setSearchTerm("");
+    setRoleFilter("all");
+    onRoleFilterChange?.("all");
+    setBarangayFilter("all");
+    setStatusFilter("all");
+    setActiveTab("all");
+  };
 
   const pendingCount = useMemo(
     () =>
@@ -366,6 +446,7 @@ export default function UserManagement() {
   };
 
   const closeRoleModal = () => {
+    if (saving) return;
     setSelectedUser(null);
     setSelectedBarangayId("");
     setSelectedPurokId("");
@@ -380,7 +461,7 @@ export default function UserManagement() {
   };
 
   const saveRole = async () => {
-    if (!selectedUser) return;
+    if (!selectedUser || saving) return;
 
     if (!selectedBarangayId) {
       setError("Please select a barangay.");
@@ -413,11 +494,10 @@ export default function UserManagement() {
       await loadData();
       notifyAdminActionCountsChanged();
 
-      window.setTimeout(() => {
-        closeRoleModal();
-        setSuccessMessage("");
-      }, 700);
+      setRoleConfirmation(false);
+      setSelectedUser(null);
     } catch (err) {
+      setRoleConfirmation(false);
       setError(err instanceof Error ? err.message : "Unable to update role.");
     } finally {
       setSaving(false);
@@ -425,6 +505,7 @@ export default function UserManagement() {
   };
 
   const toggleStatus = async (user: ManagedUser) => {
+    if (saving) return;
     if (user.role === "admin" || user.role === "super_admin") return;
 
     if (!canAdminModifyAccount(user)) {
@@ -438,6 +519,7 @@ export default function UserManagement() {
 
     setError("");
     setSuccessMessage("");
+    setSaving(true);
 
     try {
       const data = await apiRequest(`/admin/users/${user.id}/status`, {
@@ -446,12 +528,16 @@ export default function UserManagement() {
       });
 
       setSuccessMessage(data.message || "Account status updated.");
+      setStatusConfirmation(null);
       await loadData();
       notifyAdminActionCountsChanged();
     } catch (err) {
+      setStatusConfirmation(null);
       setError(
         err instanceof Error ? err.message : "Unable to update account status.",
       );
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -645,15 +731,17 @@ export default function UserManagement() {
             LGU Access Control
           </div>
           <h1 className="text-3xl font-black tracking-tight text-slate-900">
-            User Management
+            {isSuperAdmin ? roleFilter === "admin" ? "Barangay Captains" : "User Directory" : "User Management"}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Manage Municipal, Barangay Captain, Purok Leader, Collector, and
-            Resident accounts.
+            {isSuperAdmin ? "System accounts across municipal, barangay, and collection roles. Household records are managed in the Household Directory." : "Manage Purok Leader, Collector, and Resident accounts in your barangay."}
           </p>
         </div>
 
-        <div className="flex w-full flex-col gap-3 md:w-auto md:flex-row md:items-center">
+        <div className="flex w-full flex-col gap-3 md:w-auto md:flex-row md:flex-wrap md:items-center">
+          {isSuperAdmin && onViewHouseholds && (
+            <button type="button" onClick={onViewHouseholds} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-bold text-slate-700">Household Directory</button>
+          )}
           {isSuperAdmin && (
             <button
               type="button"
@@ -674,6 +762,7 @@ export default function UserManagement() {
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
+              aria-label="Search users by name, email, or ID"
               placeholder="Search name, email, or ID"
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
@@ -683,7 +772,8 @@ export default function UserManagement() {
 
           <button
             type="button"
-            onClick={() => void refreshUsers(true)}
+            onClick={() => void refreshUsers(false)}
+            disabled={refreshing || loading}
             className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-black uppercase text-slate-700"
           >
             <RefreshCw
@@ -697,13 +787,14 @@ export default function UserManagement() {
       </header>
 
       {error && (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">
+        <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">
           {error}
         </div>
       )}
 
-      {successMessage && (
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">
+      {isSuperAdmin && <FeedbackToast message={successMessage} onDismiss={() => setSuccessMessage("")} />}
+      {!isSuperAdmin && successMessage && (
+        <div role="status" className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">
           {successMessage}
         </div>
       )}
@@ -725,7 +816,7 @@ export default function UserManagement() {
         {pendingCount > 0 && (
           <button
             type="button"
-            onClick={() => setActiveTab("pending")}
+            onClick={() => { setActiveTab("pending"); setRoleFilter("all"); onRoleFilterChange?.("all"); setStatusFilter("all"); }}
             className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] font-black uppercase text-amber-700"
           >
             {pendingCount} Pending Account
@@ -744,7 +835,15 @@ export default function UserManagement() {
         ].map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id as typeof activeTab)}
+            type="button"
+            aria-pressed={activeTab === tab.id}
+            onClick={() => {
+              const nextRole = tab.id === "residents" ? "resident" : tab.id === "collectors" ? "collector" : tab.id === "leaders" ? "purok_leader" : "all";
+              setActiveTab(tab.id as typeof activeTab);
+              setRoleFilter(nextRole);
+              onRoleFilterChange?.(nextRole);
+              setStatusFilter("all");
+            }}
             className={`rounded-xl px-4 py-2.5 text-xs font-bold transition-all ${
               activeTab === tab.id
                 ? "bg-white text-slate-900 shadow-sm"
@@ -756,23 +855,60 @@ export default function UserManagement() {
         ))}
       </div>
 
-      <div className="overflow-hidden rounded-[2rem] border border-slate-100 bg-white shadow-sm">
+      <section aria-label="Filter user directory" className="rounded-2xl border border-slate-200 bg-white p-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <label className="text-xs font-bold text-slate-600">Role
+            <select value={roleFilter} onChange={(event) => { setRoleFilter(event.target.value); onRoleFilterChange?.(event.target.value); setActiveTab("all"); }} className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm">
+              <option value="all">All roles</option>
+              {isSuperAdmin && <><option value="super_admin">Municipal Administrator</option><option value="admin">Barangay Captain</option></>}
+              <option value="purok_leader">Purok Leader</option><option value="collector">Collector</option><option value="resident">Resident</option>
+            </select>
+          </label>
+          <label className="text-xs font-bold text-slate-600">Barangay
+            <select value={barangayFilter} onChange={(event) => setBarangayFilter(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm">
+              <option value="all">All barangays</option>
+              {barangays.map((barangay) => <option key={barangay.id} value={barangay.id}>{barangay.name}</option>)}
+            </select>
+          </label>
+          <label className="text-xs font-bold text-slate-600">Account status
+            <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setActiveTab("all"); }} className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm">
+              <option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive / suspended</option><option value="pending">Pending</option>
+            </select>
+          </label>
+          <label className="text-xs font-bold text-slate-600">Sort by
+            <select value={sortBy} onChange={(event) => setSortBy(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm">
+              <option value="priority">Pending approval first</option><option value="name">Name</option><option value="role">Role</option><option value="barangay">Barangay</option><option value="status">Status</option>
+            </select>
+          </label>
+          <label className="text-xs font-bold text-slate-600">Order
+            <select value={sortDirection} disabled={sortBy === "priority"} onChange={(event) => setSortDirection(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm disabled:opacity-50">
+              <option value="asc">A to Z</option><option value="desc">Z to A</option>
+            </select>
+          </label>
+        </div>
+        <div className="mt-3 flex items-center justify-between gap-3 text-xs text-slate-500">
+          <span role="status">{loading ? "Loading accounts..." : `${filteredUsers.length} of ${users.length} accounts`}</span>
+          <button type="button" onClick={resetFilters} className="rounded-lg px-3 py-2 font-bold text-emerald-700 hover:bg-emerald-50">Clear filters</button>
+        </div>
+      </section>
+
+      <div className="hidden overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm md:block">
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead className="border-b border-slate-100 bg-slate-50">
               <tr className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                <th className="px-6 py-5">User Identity</th>
-                <th className="px-6 py-5">LGU Role</th>
-                <th className="px-6 py-5">Assignment</th>
-                <th className="px-6 py-5">Status</th>
-                <th className="px-6 py-5">Actions</th>
+                <th className="px-4 py-3">User Identity</th>
+                <th className="px-4 py-3">LGU Role</th>
+                <th className="hidden px-4 py-3 xl:table-cell">Assignment</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Actions</th>
               </tr>
             </thead>
 
             <tbody className="divide-y divide-slate-50">
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-16 text-center">
+                    <td colSpan={5} className="px-4 py-12 text-center">
                     <Loader2 className="mx-auto h-6 w-6 animate-spin text-emerald-600" />
                     <p className="mt-2 text-sm font-bold text-slate-500">
                       Loading database users...
@@ -783,18 +919,19 @@ export default function UserManagement() {
                 <tr>
                   <td
                     colSpan={5}
-                    className="px-6 py-16 text-center text-sm font-bold text-slate-500"
+                    className="px-4 py-12 text-center text-sm font-bold text-slate-500"
                   >
-                    No matching users found.
+                    <p>No matching accounts found.</p>
+                    <button type="button" onClick={resetFilters} className="mt-3 rounded-lg px-3 py-2 font-bold text-emerald-700 hover:bg-emerald-50">Clear filters and search</button>
                   </td>
                 </tr>
               ) : (
-                filteredUsers.map((user) => (
+                visibleUsers.map((user) => (
                   <tr key={user.id} className="hover:bg-slate-50">
-                    <td className="px-6 py-5">
-                      <div className="flex items-center gap-4">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
-                          <User className="h-5 w-5" />
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-700">
+                          <User className="h-4 w-4" />
                         </div>
                         <div>
                           <p className="text-sm font-bold text-slate-900">
@@ -807,13 +944,13 @@ export default function UserManagement() {
                       </div>
                     </td>
 
-                    <td className="px-6 py-5">
+                    <td className="px-4 py-3">
                       <span className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-slate-700">
                         {roleLabel(user.role)}
                       </span>
                     </td>
 
-                    <td className="px-6 py-5">
+                    <td className="hidden px-4 py-3 xl:table-cell">
                       <p className="text-xs font-bold text-slate-700">
                         {user.barangay_name || "No barangay"}
                       </p>
@@ -825,7 +962,7 @@ export default function UserManagement() {
                       </p>
                     </td>
 
-                    <td className="px-6 py-5">
+                    <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <span
                           className={`h-2 w-2 rounded-full ${statusClass(
@@ -840,7 +977,7 @@ export default function UserManagement() {
                       </div>
                     </td>
 
-                    <td className="px-6 py-5">
+                    <td className="px-4 py-3">
                      {user.role === "admin" || user.role === "super_admin" ? (
                         <span className="text-[10px] font-bold text-slate-400">
                           Protected account
@@ -849,23 +986,25 @@ export default function UserManagement() {
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => openRoleModal(user)}
+                            aria-label={`Edit User: ${user.full_name}`}
                             disabled={
-                              !canAdminModifyAccount(user)
+                              saving || !canAdminModifyAccount(user)
                             }
                             className="rounded-xl p-2 text-slate-400 transition-all hover:bg-white hover:text-emerald-600 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-400 disabled:hover:shadow-none"
                             title={
                               !canAdminModifyAccount(user)
                                 ? "Email verification and required profile details are needed first"
-                                : "Change LGU role"
+                                : "Edit User"
                             }
                           >
                             <Edit2 className="h-4 w-4" />
                           </button>
 
                           <button
-                            onClick={() => toggleStatus(user)}
+                            onClick={() => setStatusConfirmation(user)}
+                            aria-label={`${user.status === "active" ? "Suspend Account" : "Activate Account"}: ${user.full_name}`}
                             disabled={
-                              !canAdminModifyAccount(user)
+                              saving || !canAdminModifyAccount(user)
                             }
                             className={`rounded-xl p-2 transition-all hover:bg-white hover:shadow-md ${
                               user.status === "active"
@@ -874,14 +1013,14 @@ export default function UserManagement() {
                             } disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:shadow-none`}
                             title={
                               user.status === "active"
-                                ? "Deactivate account"
+                                ? "Suspend Account"
                                 : user.status === "pending"
                                   ? isPendingApproval(user)
                                     ? "Approve and activate account"
                                     : "Email verification and required profile details are needed first"
                                   : !canAdminModifyAccount(user)
                                     ? "Email verification is required before activation"
-                                  : "Activate account"
+                                  : "Activate Account"
                             }
                           >
                             {user.status === "active" ? (
@@ -900,6 +1039,162 @@ export default function UserManagement() {
           </table>
         </div>
       </div>
+
+      <div className="space-y-3 md:hidden">
+        {loading ? (
+          <div className="rounded-2xl border border-slate-100 bg-white px-4 py-12 text-center shadow-sm">
+            <Loader2 className="mx-auto h-6 w-6 animate-spin text-emerald-600" />
+            <p className="mt-2 text-sm font-bold text-slate-500">
+              Loading database users...
+            </p>
+          </div>
+        ) : filteredUsers.length === 0 ? (
+          <div className="rounded-2xl border border-slate-100 bg-white px-4 py-12 text-center text-sm font-bold text-slate-500 shadow-sm">
+            <p>No matching accounts found.</p>
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="mt-3 rounded-lg px-3 py-2 font-bold text-emerald-700 hover:bg-emerald-50"
+            >
+              Clear filters and search
+            </button>
+          </div>
+        ) : (
+          visibleUsers.map((user) => (
+            <article
+              key={user.id}
+              className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
+                    <User className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-slate-900">
+                      {user.full_name}
+                    </p>
+                    <p className="truncate text-[10px] font-medium text-slate-400">
+                      {user.email} · ID {user.id}
+                    </p>
+                  </div>
+                </div>
+                <span className="shrink-0 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-slate-700">
+                  {roleLabel(user.role)}
+                </span>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 text-xs">
+                <div>
+                  <p className="text-[9px] font-black uppercase tracking-wide text-slate-400">
+                    Assignment
+                  </p>
+                  <p className="mt-1 truncate font-bold text-slate-700">
+                    {user.barangay_name || "No barangay"}
+                  </p>
+                  <p className="truncate text-[10px] text-slate-400">
+                    {user.purok_name ||
+                      (user.role === "collector"
+                        ? "Barangay-wide"
+                        : "No purok")}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black uppercase tracking-wide text-slate-400">
+                    Status
+                  </p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span
+                      className={`h-2 w-2 rounded-full ${statusClass(
+                        user.status,
+                      )}`}
+                    />
+                    <span className="text-[10px] font-bold capitalize text-slate-600">
+                      {user.status === "pending" &&
+                      !isPendingApproval(user)
+                        ? "Awaiting verification"
+                        : user.status}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 flex items-center justify-end gap-2">
+                {user.role === "admin" ||
+                user.role === "super_admin" ? (
+                  <span className="text-[10px] font-bold text-slate-400">
+                    Protected account
+                  </span>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => openRoleModal(user)}
+                      disabled={
+                        saving || !canAdminModifyAccount(user)
+                      }
+                      className="flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 px-3 text-[10px] font-black uppercase text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+                      title={
+                        !canAdminModifyAccount(user)
+                          ? "Email verification and required profile details are needed first"
+                          : "Edit user"
+                      }
+                    >
+                      <Edit2 className="h-3.5 w-3.5" />
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setStatusConfirmation(user)
+                      }
+                      disabled={
+                        saving || !canAdminModifyAccount(user)
+                      }
+                      className={`flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-[10px] font-black uppercase text-white disabled:cursor-not-allowed disabled:opacity-40 ${
+                        user.status === "active"
+                          ? "bg-amber-600"
+                          : "bg-emerald-700"
+                      }`}
+                      title={
+                        user.status === "active"
+                          ? "Suspend account"
+                          : "Activate account"
+                      }
+                    >
+                      {user.status === "active" ? (
+                        <ShieldAlert className="h-3.5 w-3.5" />
+                      ) : (
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                      )}
+                      {user.status === "active"
+                        ? "Suspend"
+                        : "Activate"}
+                    </button>
+                  </>
+                )}
+              </div>
+            </article>
+          ))
+        )}
+      </div>
+
+      {!loading && filteredUsers.length > 0 && (
+        <div className="rounded-2xl border border-slate-100 bg-white px-4 pb-3 shadow-sm">
+          <Pagination
+            page={userPage}
+            pageSize={userPageSize}
+            totalItems={filteredUsers.length}
+            itemLabel="accounts"
+            compact
+            onPageChange={setUserPage}
+            onPageSizeChange={(nextPageSize) => {
+              setUserPageSize(nextPageSize);
+              setUserPage(1);
+            }}
+          />
+        </div>
+      )}
 
 
       {showCaptainModal && (
@@ -1101,10 +1396,10 @@ export default function UserManagement() {
             <div className="mb-6 flex items-start justify-between gap-4">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">
-                  Barangay Captain Action
+                  {isSuperAdmin ? "Municipal Administrator Action" : "Barangay Captain Action"}
                 </p>
                 <h2 className="text-2xl font-black text-slate-900">
-                  Assign LGU Role
+                  Edit User Assignment
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
                   {selectedUser.full_name}
@@ -1113,6 +1408,8 @@ export default function UserManagement() {
 
               <button
                 onClick={closeRoleModal}
+                aria-label="Close user assignment"
+                disabled={saving}
                 className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"
               >
                 <X className="h-5 w-5" />
@@ -1132,7 +1429,7 @@ export default function UserManagement() {
                   >
                     <option value="resident">Resident</option>
                     <option value="purok_leader">Purok Leader</option>
-                    <option value="collector">Garbage Collector</option>
+                    <option value="collector">Collector</option>
                   </select>
                   <ChevronDown className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-slate-400" />
                 </div>
@@ -1185,10 +1482,12 @@ export default function UserManagement() {
                 {selectedRole === "purok_leader" &&
                   "The Purok Leader will manage the selected purok's bins, inspections, members, and complaints."}
                 {selectedRole === "collector" &&
-                  "The Garbage Collector will serve the selected barangay and receive assigned collection or complaint tasks."}
+                  "The Collector will serve the selected barangay and receive assigned collection or complaint tasks."}
                 {selectedRole === "resident" &&
                   "The account will return to Resident access and retain its selected residential purok."}
               </div>
+              <p className="text-xs text-slate-500">Saving this assignment also activates the account.</p>
+              {error && <p role="alert" className="rounded-xl bg-rose-50 p-3 text-sm font-bold text-rose-700">{error}</p>}
             </div>
 
             <div className="mt-6 flex gap-3">
@@ -1200,8 +1499,8 @@ export default function UserManagement() {
                 Cancel
               </button>
               <button
-                onClick={saveRole}
-                disabled={saving}
+                onClick={() => setRoleConfirmation(true)}
+                disabled={saving || !selectedBarangayId || (selectedRole !== "collector" && !selectedPurokId)}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white disabled:opacity-50"
               >
                 {saving && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -1211,6 +1510,25 @@ export default function UserManagement() {
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={!!statusConfirmation}
+        title={statusConfirmation?.status === "active" ? "Suspend Account?" : "Activate Account?"}
+        description={statusConfirmation ? `${statusConfirmation.status === "active" ? "Suspend" : "Activate"} the account for ${statusConfirmation.full_name} (${statusConfirmation.email})? ${statusConfirmation.status === "active" ? "They will lose access until the account is activated again." : "They will be able to access the system with their assigned role."}` : ""}
+        confirmLabel={statusConfirmation?.status === "active" ? "Suspend Account" : "Activate Account"}
+        destructive={statusConfirmation?.status === "active"}
+        busy={saving}
+        onCancel={() => setStatusConfirmation(null)}
+        onConfirm={() => { if (statusConfirmation) void toggleStatus(statusConfirmation); }}
+      />
+      <ConfirmDialog
+        open={roleConfirmation && !!selectedUser}
+        title="Save account assignment?"
+        description={`Assign ${selectedUser?.full_name || "this account"} as ${roleLabel(selectedRole)} in ${barangays.find((barangay) => String(barangay.id) === selectedBarangayId)?.name || "the selected barangay"}? This updates their permissions and activates their account.`}
+        confirmLabel="Save Assignment"
+        busy={saving}
+        onCancel={() => setRoleConfirmation(false)}
+        onConfirm={() => void saveRole()}
+      />
       </div>
     </>
   );

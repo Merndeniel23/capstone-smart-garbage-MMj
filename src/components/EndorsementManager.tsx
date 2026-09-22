@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import { 
   Award, 
   CheckCircle, 
@@ -21,6 +21,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useAppState } from '../context/AppStateContext';
 import { notifyAdminActionCountsChanged } from '../hooks/useAdminActionCounts';
 import cordovaSeal from '../assets/images/Municipality_of_Cordova_Official_Seal.png';
+import ConfirmDialog from './ConfirmDialog';
+import FeedbackToast from './FeedbackToast';
+import Pagination, { DEFAULT_PAGE_SIZE } from './Pagination';
 
 type EndorsementType = 
   | 'Barangay Service Endorsement';
@@ -293,6 +296,11 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
   const [selectedRequest, setSelectedRequest] = useState<EndorsementRequest | null>(null);
   const [adminMemoInput, setAdminMemoInput] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'pending_leader' | 'leader_endorsed' | 'approved'>('all');
+  const [endorsementSearch, setEndorsementSearch] = useState('');
+  const [endorsementPage, setEndorsementPage] = useState(1);
+  const [endorsementPageSize, setEndorsementPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null);
+  const [pendingWithdrawal, setPendingWithdrawal] = useState<EndorsementRequest | null>(null);
   
   // Printing/release document modal reference
   const [activeCertificate, setActiveCertificate] = useState<EndorsementRequest | null>(null);
@@ -367,26 +375,25 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
   const showNotification = (message: string) => {
     setNotification(message);
-    window.setTimeout(() => setNotification(''), 4000);
   };
 
   const handleRequest = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!purok || !barangay) {
-      alert(
+      setErrorMessage(
         'Your registered Barangay and Purok are required. Please complete your Profile address first.',
       );
       return;
     }
 
     if (requestedService.trim().length < 2) {
-      alert('Please specify the barangay service or document you need.');
+      setErrorMessage('Please specify the barangay service or document you need.');
       return;
     }
 
     if (desc.trim().length < 10) {
-      alert('Please describe your request justification using at least 10 characters.');
+      setErrorMessage('Please describe your request justification using at least 10 characters.');
       return;
     }
 
@@ -488,17 +495,16 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
     void reviewRequest(request, reviewer, 'reject');
   };
 
-  const handleDelete = async (
+  const requestWithdrawal = (
     request: EndorsementRequest,
     e: React.MouseEvent,
   ) => {
     e.stopPropagation();
+    setPendingWithdrawal(request);
+  };
 
-    if (
-      !window.confirm(
-        `Withdraw request ${request.id}? The audit record will be retained.`,
-      )
-    ) {
+  const handleDelete = async () => {
+    if (!pendingWithdrawal) {
       return;
     }
 
@@ -507,12 +513,13 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
     try {
       const data = await endorsementApi(
-        `/${request.databaseId}`,
+        `/${pendingWithdrawal.databaseId}`,
         { method: 'DELETE' },
       );
 
       showNotification(data.message);
       notifyAdminActionCountsChanged();
+      setPendingWithdrawal(null);
       await loadEndorsements(true);
     } catch (error) {
       setErrorMessage(
@@ -520,6 +527,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
           ? error.message
           : 'Unable to withdraw the request.',
       );
+      setPendingWithdrawal(null);
     } finally {
       setActionLoading(false);
     }
@@ -543,13 +551,52 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
     }
   };
 
-  const filteredEndorsements = endorsements.filter((item) => {
-    if (activeTab === 'pending_leader') return item.status === 'Pending Leader Review';
-    if (activeTab === 'leader_endorsed') return item.status === 'Purok Leader Endorsed';
-    if (activeTab === 'approved') return item.status === 'Barangay Approved';
+  const filteredEndorsements = useMemo(() => {
+    const normalizedSearch = endorsementSearch.trim().toLowerCase();
 
-    return true;
-  });
+    return endorsements.filter((item) => {
+      const matchesTab =
+        activeTab === 'all' ||
+        (activeTab === 'pending_leader' && item.status === 'Pending Leader Review') ||
+        (activeTab === 'leader_endorsed' && item.status === 'Purok Leader Endorsed') ||
+        (activeTab === 'approved' && item.status === 'Barangay Approved');
+
+      if (!matchesTab || !normalizedSearch) {
+        return matchesTab;
+      }
+
+      return [
+        item.id,
+        item.householdName,
+        item.purok,
+        item.barangay,
+        item.requestedService,
+        item.status,
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(normalizedSearch));
+    });
+  }, [activeTab, endorsementSearch, endorsements]);
+
+  const endorsementPageCount = Math.max(
+    1,
+    Math.ceil(filteredEndorsements.length / endorsementPageSize),
+  );
+
+  const visibleEndorsements = useMemo(() => {
+    const start = (endorsementPage - 1) * endorsementPageSize;
+    return filteredEndorsements.slice(start, start + endorsementPageSize);
+  }, [endorsementPage, endorsementPageSize, filteredEndorsements]);
+
+  useEffect(() => {
+    setEndorsementPage(1);
+  }, [activeTab, endorsementSearch, endorsementPageSize]);
+
+  useEffect(() => {
+    if (endorsementPage > endorsementPageCount) {
+      setEndorsementPage(endorsementPageCount);
+    }
+  }, [endorsementPage, endorsementPageCount]);
 
   const approvedDocs = filteredEndorsements.filter(item => item.status === 'Barangay Approved');
   const endorsedDocs = filteredEndorsements.filter(item => item.status === 'Purok Leader Endorsed');
@@ -685,13 +732,10 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
         </div>
       </header>
 
-      {/* Real-time Toast Notifications */}
-      {notification && (
-        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-6 py-4 rounded-[1.5rem] flex items-center gap-3 shadow-md animate-bounce">
-          <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0" />
-          <span className="text-sm font-bold">{notification}</span>
-        </div>
-      )}
+      <FeedbackToast
+        message={notification}
+        onDismiss={() => setNotification('')}
+      />
 
       {errorMessage && (
         <div className="bg-rose-50 border border-rose-200 text-rose-800 px-6 py-4 rounded-[1.5rem] flex items-center gap-3 shadow-sm">
@@ -699,6 +743,21 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
           <span className="text-sm font-bold">{errorMessage}</span>
         </div>
       )}
+
+      <ConfirmDialog
+        open={Boolean(pendingWithdrawal)}
+        title="Withdraw endorsement request?"
+        description={
+          pendingWithdrawal
+            ? <>Request <strong>{pendingWithdrawal.id}</strong> will be withdrawn. The audit record remains available to staff.</>
+            : ''
+        }
+        confirmLabel="Withdraw request"
+        busy={actionLoading}
+        destructive
+        onConfirm={() => void handleDelete()}
+        onCancel={() => setPendingWithdrawal(null)}
+      />
 
       {/* Main Multi-Grid Dashboard Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
@@ -1021,53 +1080,83 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
             </div>
           )}
           
-          {/* Filtering tabs */}
-          <div className="flex flex-col sm:flex-row gap-3 sm:items-center justify-between">
-            <h2 className="text-lg font-black text-slate-800">
-              {role === 'household'
-                ? 'Your Applications'
-                : role === 'leader'
-                  ? 'Assigned Purok Submissions'
-                  : role === 'admin'
-                    ? 'Barangay Submissions'
-                  : 'Barangay Submissions'}
-            </h2>
-            
-            <div className="flex p-0.5 bg-slate-100 rounded-xl max-w-fit overflow-x-auto">
-              <button 
-                onClick={() => setActiveTab('all')}
-                className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
-                  activeTab === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-400 hover:text-slate-600'
-                }`}
-              >
-                All
-              </button>
-              <button 
-                onClick={() => setActiveTab('pending_leader')}
-                className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
-                  activeTab === 'pending_leader' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-400 hover:text-slate-600'
-                }`}
-              >
-                Pending
-              </button>
-              <button 
-                onClick={() => setActiveTab('leader_endorsed')}
-                className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
-                  activeTab === 'leader_endorsed' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-400 hover:text-slate-600'
-                }`}
-              >
-                Endorsed
-              </button>
-              <button 
-                onClick={() => setActiveTab('approved')}
-                className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
-                  activeTab === 'approved' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-400 hover:text-slate-600'
-                }`}
-              >
-                Signed
-              </button>
+          {/* Search and status filters keep long endorsement queues navigable. */}
+          <section aria-label="Endorsement filters" className="sg-list-toolbar space-y-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-black text-slate-800">
+                  {role === 'household'
+                    ? 'Your Applications'
+                    : role === 'leader'
+                      ? 'Assigned Purok Submissions'
+                      : 'Barangay Submissions'}
+                </h2>
+                <p className="mt-0.5 text-[10px] font-semibold text-slate-400">
+                  {filteredEndorsements.length} matching request{filteredEndorsements.length === 1 ? '' : 's'}
+                </p>
+              </div>
+
+              <div className="relative w-full sm:max-w-xs">
+                <label htmlFor="endorsement-search" className="sr-only">
+                  Search endorsement requests
+                </label>
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  id="endorsement-search"
+                  type="search"
+                  value={endorsementSearch}
+                  onChange={(event) => setEndorsementSearch(event.target.value)}
+                  placeholder="Search resident, service, area, or ID"
+                  className="min-h-10 w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs font-semibold text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10"
+                />
+              </div>
             </div>
-          </div>
+
+            <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
+              <span className="flex shrink-0 items-center gap-1 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                <Filter className="h-3.5 w-3.5" />
+                Status
+              </span>
+              <div className="flex min-w-max p-0.5 bg-slate-100 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('all')}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
+                    activeTab === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('pending_leader')}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
+                    activeTab === 'pending_leader' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  Pending
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('leader_endorsed')}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
+                    activeTab === 'leader_endorsed' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  Endorsed
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('approved')}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
+                    activeTab === 'approved' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  Signed
+                </button>
+              </div>
+            </div>
+          </section>
 
           {/* Endorsement list rendering */}
           <div className="space-y-4">
@@ -1077,7 +1166,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
               </div>
             )}
 
-            {filteredEndorsements.map((item) => (
+            {visibleEndorsements.map((item) => (
               <div 
                 key={item.id} 
                 onClick={() => {
@@ -1086,13 +1175,13 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                     setAdminMemoInput(item.adminMemo || '');
                   }
                 }}
-                className={`p-6 rounded-3xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 select-none ${
+                className={`p-4 rounded-2xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 select-none ${
                   selectedRequest?.id === item.id 
                     ? 'bg-slate-50 border-emerald-500/50 shadow-md ring-1 ring-emerald-500/20' 
                     : 'bg-white border-slate-100 shadow-xs hover:border-slate-200 hover:shadow'
                 } ${role !== 'household' ? 'cursor-pointer' : ''}`}
               >
-                <div className="space-y-3 flex-1">
+                <div className="min-w-0 flex-1 space-y-2">
                   
                   {/* Badge Row */}
                   <div className="flex items-center gap-2 flex-wrap">
@@ -1116,9 +1205,8 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                         <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
                       )}
                     </h4>
-                    <p className="text-xs text-slate-400 line-clamp-1 mb-1 font-medium">{getSubtextFromType(item.type)}</p>
-                    <p className="text-xs font-bold text-slate-600">Requested: {item.requestedService || 'Barangay service or document'}</p>
-                    <p className="text-xs text-slate-500 leading-relaxed italic">"{item.description}"</p>
+                    <p className="mb-1 line-clamp-1 text-xs font-medium text-slate-400">{getSubtextFromType(item.type)}</p>
+                    <p className="truncate text-xs font-bold text-slate-600">Requested: {item.requestedService || 'Barangay service or document'}</p>
                   </div>
 
                   {role === 'admin' && item.outstandingPaymentCount > 0 && (
@@ -1127,10 +1215,21 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                     </p>
                   )}
 
-                  {item.adminMemo && (
-                    <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-[10px] text-slate-500">
-                      <span className="font-black text-slate-700 uppercase block mb-0.5">Municipal Registry Memo:</span>
-                      {item.adminMemo}
+                  {expandedRequestId === item.id && (
+                    <div
+                      id={`endorsement-details-${item.databaseId}`}
+                      className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs leading-relaxed text-slate-600"
+                    >
+                      <p>
+                        <span className="font-black text-slate-700">Request details: </span>
+                        {item.description || 'No additional request details provided.'}
+                      </p>
+                      {item.adminMemo && (
+                        <p className="mt-2 border-t border-slate-200 pt-2">
+                          <span className="font-black text-slate-700">Registry memo: </span>
+                          {item.adminMemo}
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1146,6 +1245,18 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                   </span>
 
                   <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setExpandedRequestId((current) => current === item.id ? null : item.id);
+                      }}
+                      aria-expanded={expandedRequestId === item.id}
+                      aria-controls={`endorsement-details-${item.databaseId}`}
+                      className="rounded-lg px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+                    >
+                      {expandedRequestId === item.id ? 'Hide details' : 'Details'}
+                    </button>
                     
                     {role !== 'household' && item.status === 'Pending Leader Review' && (
                       <span className="text-[9px] text-slate-400 italic">Reviewing...</span>
@@ -1170,7 +1281,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                     {role === 'household' && item.status === 'Pending Leader Review' && (
                       <button
                         disabled={actionLoading}
-                        onClick={(e) => void handleDelete(item, e)}
+                        onClick={(e) => requestWithdrawal(item, e)}
                         className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all disabled:opacity-50"
                         title="Withdraw request"
                       >
@@ -1189,6 +1300,21 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                 <p className="font-extrabold text-slate-500 text-sm">No Barangay Service Requests</p>
                 <p className="text-slate-400 text-xs mt-1">Submit your first barangay service request above.</p>
               </div>
+            )}
+
+            {!recordsLoading && filteredEndorsements.length > 0 && (
+              <Pagination
+                page={endorsementPage}
+                pageSize={endorsementPageSize}
+                totalItems={filteredEndorsements.length}
+                onPageChange={setEndorsementPage}
+                onPageSizeChange={(pageSize) => {
+                  setEndorsementPageSize(pageSize);
+                  setEndorsementPage(1);
+                }}
+                itemLabel="endorsement requests"
+                compact
+              />
             )}
           </div>
         </div>

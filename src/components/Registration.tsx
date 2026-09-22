@@ -950,8 +950,11 @@ const handleResetPasswordSubmit = async (
                 </div>
               </form>
             ) : (
-            <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
-              <div className="space-y-1">
+            <form onSubmit={handleRegisterSubmit} className="sg-compact-form">
+              <fieldset className="sg-form-section">
+                <legend className="sg-form-section-title">Contact details</legend>
+                <div className="sg-form-grid sg-form-grid--two">
+              <div className="space-y-1 sm:col-span-2">
                 <label className="text-[10px] uppercase font-bold tracking-widest text-stone-500 block ml-1">
                   Full Name
                 </label>
@@ -1011,11 +1014,21 @@ const handleResetPasswordSubmit = async (
                 </div>
               </div>
 
+                </div>
+              </fieldset>
+
+              <fieldset className="sg-form-section">
+                <legend className="sg-form-section-title">Service area and account security</legend>
+                <p className="-mt-1 text-[10px] font-semibold leading-relaxed text-stone-400">
+                  Choose the barangay and purok where this household receives service.
+                </p>
+                <div className="sg-form-grid">
+
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold tracking-widest text-stone-500 block ml-1">
                   Assigned Communal Zone (Barangay & Purok)
                 </label>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="relative flex items-center">
                     <MapPin className="absolute left-4 w-4 h-4 text-stone-400" />
                     <select
@@ -1108,6 +1121,9 @@ const handleResetPasswordSubmit = async (
                   {showPassword ? 'Hide Passwords' : 'Show Passwords'}
                 </button>
               </div>
+
+                </div>
+              </fieldset>
 
               <button
                 type="submit"

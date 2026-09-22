@@ -81,6 +81,9 @@ interface AdminDashboardProps {
   adminActionCounts: AdminActionCounts;
 }
 
+const DASHBOARD_QUEUE_PREVIEW_LIMIT = 4;
+const ANALYTICS_PREVIEW_LIMIT = 8;
+
 export default function AdminDashboard({
   setCurrentScreen,
   adminActionCounts,
@@ -331,6 +334,14 @@ export default function AdminDashboard({
       ),
     [payments],
   );
+  const pendingPaymentPreview = useMemo(
+    () => pendingPayments.slice(0, DASHBOARD_QUEUE_PREVIEW_LIMIT),
+    [pendingPayments],
+  );
+  const pendingCollectorPreview = useMemo(
+    () => pendingCollectors.slice(0, DASHBOARD_QUEUE_PREVIEW_LIMIT),
+    [pendingCollectors],
+  );
 
   const completedRevenue = useMemo(
     () =>
@@ -370,13 +381,6 @@ export default function AdminDashboard({
         completed: Number(item.completed || 0),
       })),
     [analytics.collectionsPerMonth],
-  );
-
-  const maxAnalyticsValue = Math.max(
-    1,
-    ...complaintsChart.map((item) => item.value),
-    ...registrationsChart.map((item) => item.value),
-    ...collectionChart.map((item) => item.value),
   );
 
   const systemMetrics = [
@@ -423,13 +427,13 @@ export default function AdminDashboard({
   ];
 
   return (
-    <div className="min-w-0 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-20 md:pb-0">
+    <div className="sg-page min-w-0 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-20 md:pb-0">
       <header className="flex flex-col gap-2">
         <div className="flex items-center gap-2 text-emerald-600 font-black text-[10px] uppercase tracking-[0.2em]">
           <Shield className="w-3 h-3" />
           System Control Panel
         </div>
-        <h1 className="text-4xl font-black text-slate-900 tracking-tight">Barangay Dashboard</h1>
+        <h1 className="text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">Barangay Dashboard</h1>
       </header>
 
       {summaryError && (
@@ -452,7 +456,7 @@ export default function AdminDashboard({
           adminActionCounts.pendingPayments > 0) && (
           <section
             aria-live="polite"
-            className="rounded-[2rem] border border-amber-200 bg-amber-50 p-5 shadow-sm"
+            className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm"
           >
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -501,28 +505,28 @@ export default function AdminDashboard({
         )}
 
       {/* Global Metrics Grid */}
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
         {systemMetrics.map((m, i) => (
-          <div key={i} className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col justify-between">
-            <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-2xl ${m.iconClass}`}>
-              <m.icon className="h-6 w-6" />
+          <div key={i} className="flex flex-col justify-between rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+            <div className={`mb-3 flex h-10 w-10 items-center justify-center rounded-xl ${m.iconClass}`}>
+              <m.icon className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-3xl font-black text-slate-900 leading-none">{m.value}</p>
-              <div className="flex items-center justify-between mt-2">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{m.label}</p>
-                <p className={`text-[10px] font-black ${m.trendClass}`}>{m.trend}</p>
+              <p className="text-2xl font-black leading-none text-slate-900">{m.value}</p>
+              <div className="mt-2 flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">{m.label}</p>
+                <p className={`text-[9px] font-black ${m.trendClass}`}>{m.trend}</p>
               </div>
             </div>
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* Live Analytics */}
-        <div className="lg:col-span-2 space-y-6">
-          <div className="overflow-hidden rounded-[2.5rem] border border-slate-100 bg-white shadow-sm">
-            <div className="flex flex-col gap-3 border-b border-slate-100 p-6 sm:flex-row sm:items-center sm:justify-between sm:p-8">
+          <div className="space-y-5 lg:col-span-2">
+           <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+             <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
               <div>
                 <div className="flex items-center gap-2 text-emerald-600">
                   <BarChart3 className="h-4 w-4" />
@@ -561,18 +565,17 @@ export default function AdminDashboard({
               </div>
             )}
 
-            <div className="p-6 sm:p-8">
+             <div className="p-4 sm:p-5">
               {analyticsLoading ? (
                 <div className="flex min-h-64 items-center justify-center gap-2 rounded-[2rem] bg-slate-50 text-slate-500">
                   <LoaderCircle className="h-5 w-5 animate-spin" />
                   <span className="text-sm font-bold">Loading analytics...</span>
                 </div>
               ) : (
-                <div className="space-y-8">
+                <div className="space-y-6">
                   <AnalyticsBarChart
                     title="Complaints per Month"
                     items={complaintsChart}
-                    maxValue={maxAnalyticsValue}
                     emptyMessage={
                       analyticsUnavailable.includes('complaintsPerMonth')
                         ? 'Complaint analytics are currently unavailable.'
@@ -584,7 +587,6 @@ export default function AdminDashboard({
                   <AnalyticsBarChart
                     title="User Registrations per Month"
                     items={registrationsChart}
-                    maxValue={maxAnalyticsValue}
                     emptyMessage={
                       analyticsUnavailable.includes('registrationsPerMonth')
                         ? 'Registration analytics are currently unavailable.'
@@ -596,7 +598,6 @@ export default function AdminDashboard({
                   <AnalyticsBarChart
                     title="Collection Requests per Month"
                     items={collectionChart}
-                    maxValue={maxAnalyticsValue}
                     emptyMessage={
                       analyticsUnavailable.includes('collectionsPerMonth')
                         ? 'Collection analytics are currently unavailable.'
@@ -609,7 +610,7 @@ export default function AdminDashboard({
             </div>
           </div>
 
-          <div className="grid gap-6 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-2">
             <AnalyticsBreakdown
               title="Users by Role"
               emptyMessage={
@@ -646,7 +647,7 @@ export default function AdminDashboard({
             />
           </div>
 
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-3 gap-3">
             <button 
               onClick={() => setCurrentScreen('user-management')}
               className="flex flex-col items-center gap-2 rounded-2xl border border-transparent bg-white p-4 shadow-sm transition-colors hover:border-emerald-100 hover:bg-emerald-50"
@@ -727,8 +728,8 @@ export default function AdminDashboard({
               {!operationalLoading && !endorsementError && pendingAdminSign.length > 0 && (
                 <div className="space-y-1.5 pt-1.5 border-t border-white/10">
                   <span className="text-[8px] font-black uppercase tracking-wider text-emerald-200 block">Queue Highlights</span>
-                  <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
-                    {pendingAdminSign.map((req) => (
+                   <div className="space-y-1">
+                     {pendingAdminSign.slice(0, DASHBOARD_QUEUE_PREVIEW_LIMIT).map((req) => (
                       <div key={req.id} className="flex justify-between items-center text-[10px] bg-white/10 px-2.5 py-1.5 rounded-lg">
                         <span className="font-extrabold truncate max-w-[120px]">{req.requester_name_snapshot}</span>
                         <span className="font-mono text-[8px] bg-emerald-500/30 px-1 rounded-sm">{req.purok_name_snapshot}</span>
@@ -800,16 +801,21 @@ export default function AdminDashboard({
               )}
 
               {!operationalLoading && !paymentError && pendingPayments.length > 0 && (
-                <div className="space-y-1.5 pt-1.5 border-t border-white/5">
+                <div className="space-y-1.5 border-t border-white/5 pt-1.5">
                   <span className="text-[8px] font-black uppercase tracking-wider text-slate-400 block">Pending Receipts</span>
-                  <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
-                    {pendingPayments.map((payment) => (
+                  <div className="space-y-1">
+                    {pendingPaymentPreview.map((payment) => (
                       <div key={payment.id} className="flex justify-between items-center text-[10px] bg-white/5 px-2.5 py-1.5 rounded-lg border border-white/5">
                         <span className="font-extrabold truncate max-w-[120px]">{payment.resident_name}</span>
                         <span className="font-mono text-[8px] bg-amber-500/10 text-amber-300 px-1 rounded-sm">{payment.purok_name}</span>
                       </div>
                     ))}
                   </div>
+                  {pendingPayments.length > pendingPaymentPreview.length && (
+                    <p className="text-[9px] font-bold text-slate-400">
+                      Showing {pendingPaymentPreview.length} of {pendingPayments.length} pending receipts
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -852,12 +858,12 @@ export default function AdminDashboard({
            )}
 
            {collectorLoading ? (
-             <div className="flex items-center justify-center gap-2 rounded-[2rem] border border-slate-100 bg-white p-6 text-slate-500 shadow-sm">
+              <div className="flex items-center justify-center gap-2 rounded-2xl border border-slate-100 bg-white p-5 text-slate-500 shadow-sm">
                <LoaderCircle className="h-4 w-4 animate-spin" />
                <span className="text-[11px] font-bold">Loading registrations...</span>
              </div>
            ) : pendingCollectors.length === 0 ? (
-             <div className="rounded-[2rem] border border-emerald-100 bg-emerald-50/60 p-6 shadow-sm">
+              <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-5 shadow-sm">
                <div className="flex items-center gap-2 text-emerald-700">
                  <CheckCircle className="h-4 w-4" />
                  <span className="text-xs font-black">
@@ -865,15 +871,15 @@ export default function AdminDashboard({
                  </span>
                </div>
              </div>
-           ) : (
-             <div className="space-y-4">
-               {pendingCollectors.map((collector) => {
+            ) : (
+              <div className="space-y-3">
+                {pendingCollectorPreview.map((collector) => {
                  const isReviewing = reviewingId === collector.id;
 
                  return (
                    <div
                      key={collector.id}
-                     className="rounded-[2rem] border border-amber-100 bg-amber-50/50 p-6 shadow-sm"
+                      className="rounded-2xl border border-amber-100 bg-amber-50/50 p-4 shadow-sm"
                    >
                      <div className="mb-3 flex items-start justify-between gap-3">
                        <div className="min-w-0">
@@ -889,7 +895,7 @@ export default function AdminDashboard({
                        </span>
                      </div>
 
-                     <div className="mb-4 space-y-1 text-[10px] text-slate-500">
+                      <div className="mb-3 space-y-1 text-[10px] text-slate-500">
                        <p>
                          Collector ID:{' '}
                          <span className="font-mono font-bold">
@@ -937,8 +943,17 @@ export default function AdminDashboard({
                      </div>
                    </div>
                  );
-               })}
-             </div>
+                })}
+                {pendingCollectors.length > pendingCollectorPreview.length && (
+                  <button
+                    type="button"
+                    onClick={() => setCurrentScreen('user-management')}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-[10px] font-black uppercase tracking-wide text-slate-700 hover:bg-slate-50"
+                  >
+                    View all {pendingCollectors.length} collector approvals
+                  </button>
+                )}
+              </div>
            )}
         </div>
       </div>
@@ -949,22 +964,24 @@ export default function AdminDashboard({
 function AnalyticsBarChart({
   title,
   items,
-  maxValue,
   emptyMessage,
   barClass,
 }: {
   title: string;
   items: Array<{ label: string; value: number }>;
-  maxValue: number;
   emptyMessage: string;
   barClass: string;
 }) {
+  const visibleItems = items.slice(-ANALYTICS_PREVIEW_LIMIT);
+  const hasAdditionalItems = items.length > visibleItems.length;
+  const chartMaxValue = Math.max(1, ...visibleItems.map((item) => item.value));
+
   return (
     <section>
       <div className="mb-4 flex items-center justify-between">
         <h3 className="text-lg font-black text-slate-800">{title}</h3>
-        <span className="text-sm font-black uppercase tracking-widest text-slate-400">
-          Database Records
+        <span className="text-[10px] font-black uppercase tracking-wide text-slate-400">
+          {hasAdditionalItems ? `Latest ${visibleItems.length} periods` : 'Database Records'}
         </span>
       </div>
 
@@ -973,32 +990,32 @@ function AnalyticsBarChart({
           {emptyMessage}
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-[1.5rem] border border-slate-200/80 bg-slate-50 px-6 pb-5 pt-6">
-          <div className="mx-auto flex h-56 min-w-max items-end justify-center gap-8">
-            {items.map((item) => {
+        <div className="rounded-2xl border border-slate-200/80 bg-slate-50 p-3 sm:p-4">
+          <div className="grid grid-cols-4 gap-x-2 gap-y-4 sm:grid-cols-8 sm:gap-x-3">
+            {visibleItems.map((item) => {
               const height = Math.max(
                 item.value > 0 ? 12 : 4,
-                (item.value / maxValue) * 100,
+                (item.value / chartMaxValue) * 100,
               );
 
               return (
                 <div
                   key={`${title}-${item.label}`}
-                  className="flex h-full w-16 shrink-0 flex-col items-center"
+                  className="flex h-32 min-w-0 flex-col items-center sm:h-40"
                 >
-                  <span className="mb-2 flex-none text-lg font-black text-slate-700">
+                  <span className="mb-1.5 flex-none text-sm font-black text-slate-700">
                     {item.value}
                   </span>
 
                   <div className="flex min-h-0 w-full flex-1 items-end justify-center border-b border-slate-200/80">
                     <div
-                      className={`w-12 rounded-t-xl shadow-sm transition-all duration-500 ${barClass}`}
+                      className={`w-full max-w-8 rounded-t-lg shadow-sm transition-all duration-500 ${barClass}`}
                       style={{ height: `${height}%` }}
                       title={`${item.label}: ${item.value}`}
                     />
                   </div>
 
-                  <span className="mt-3 flex-none whitespace-nowrap text-sm font-bold text-slate-400">
+                  <span className="mt-2 flex-none truncate text-center text-[9px] font-bold text-slate-400" title={item.label}>
                     {item.label}
                   </span>
                 </div>
@@ -1023,7 +1040,7 @@ function AnalyticsBreakdown({
   const total = items.reduce((sum, item) => sum + item.value, 0);
 
   return (
-    <section className="rounded-[2rem] border border-slate-100 bg-white p-6 shadow-sm">
+    <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
       <h3 className="text-lg font-black text-slate-800">{title}</h3>
 
       {items.length === 0 ? (
@@ -1031,7 +1048,7 @@ function AnalyticsBreakdown({
           {emptyMessage}
         </p>
       ) : (
-        <div className="mt-5 space-y-4">
+        <div className="mt-3 space-y-3">
           {items.map((item) => {
             const percentage =
               total > 0 ? Math.round((item.value / total) * 100) : 0;

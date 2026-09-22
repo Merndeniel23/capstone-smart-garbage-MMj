@@ -81,6 +81,8 @@ type DashboardComplaint = {
   resolutionRemark?: string;
 };
 
+const DASHBOARD_PREVIEW_LIMIT = 3;
+
 
 
 const formatDate = (value: string) => {
@@ -229,6 +231,9 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
     assignedTo: complaint.assigned_collector_name || undefined,
     resolutionRemark: complaint.resolution_remark || undefined,
   }));
+  const schedulePreview = schedules.slice(0, DASHBOARD_PREVIEW_LIMIT);
+  const complaintPreview = userComplaints.slice(0, DASHBOARD_PREVIEW_LIMIT);
+  const paymentPreview = payments.slice(0, DASHBOARD_PREVIEW_LIMIT);
 
   const triggerNotification = (msg: string) => {
     setAlertText(msg);
@@ -324,7 +329,7 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500 pb-16">
+    <div className="sg-page space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500 pb-16">
       
       {/* Title */}
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -364,7 +369,7 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
       {/* Interactive Quick Actions */}
       <section className="space-y-4">
         <h3 className="text-lg font-black text-slate-800 ml-1 uppercase tracking-wider text-xs">Quick Action Shortcuts</h3>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
           {[
             { label: 'View Schedule', icon: CalendarIcon, color: 'text-emerald-500', bg: 'bg-emerald-50', action: () => handleAction('schedule') },
             { label: 'Report Issue', icon: AlertTriangle, color: 'text-amber-500', bg: 'bg-amber-50', action: () => { setModalError(''); setActiveModal('complaint'); } },
@@ -375,10 +380,10 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
               key={i}
               whileHover={{ y: -4 }}
               onClick={action.action}
-              className="bg-white p-6 rounded-[2.2rem] border border-slate-100 shadow-sm hover:shadow-md transition-all flex flex-col items-center justify-center gap-4 group cursor-pointer w-full text-center focus:outline-none"
+              className="group flex w-full flex-col items-center justify-center gap-2.5 rounded-2xl border border-slate-100 bg-white p-3.5 text-center shadow-sm transition-all hover:shadow-md focus:outline-none sm:p-4"
             >
-              <div className={`p-4 rounded-2xl ${action.bg} transition-transform group-hover:scale-110`}>
-                <action.icon className={`w-8 h-8 ${action.color}`} />
+              <div className={`rounded-xl p-2.5 ${action.bg} transition-transform group-hover:scale-110`}>
+                <action.icon className={`h-6 w-6 ${action.color}`} />
               </div>
               <span className="font-black text-slate-700 text-xs uppercase tracking-wider">{action.label}</span>
             </motion.button>
@@ -387,21 +392,21 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
       </section>
 
       {/* Bottom Grid Rows */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
         
         {/* Recent Schedules Panel */}
-        <div className="flex flex-col h-full bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden">
-          <div className="bg-[#05BC8F] text-white p-5 font-black uppercase text-xs tracking-wider flex items-center gap-2">
+        <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+          <div className="flex items-center gap-2 bg-[#05BC8F] p-4 text-xs font-black uppercase tracking-wider text-white">
             <CalendarIcon className="w-5 h-5" />
             Official Weekly Collection Schedule
           </div>
-          <div className="p-6 flex-1 flex flex-col justify-between">
-            <div className="space-y-3">
-              {schedules.slice(0, 3).map((item) => (
-                <div key={item.id} className="p-4 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-between gap-3 text-xs">
+          <div className="flex flex-1 flex-col justify-between p-4">
+            <div className="space-y-2">
+              {schedulePreview.map((item) => (
+                <div key={item.id} className="flex flex-col gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold shrink-0">
-                      <Clock className="w-5 h-5" />
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 font-bold text-emerald-600">
+                      <Clock className="h-4 w-4" />
                     </div>
                     <div className="min-w-0">
                       <p className="font-extrabold text-slate-800 truncate">{item.notes || 'Weekly Garbage Collection'}</p>
@@ -410,8 +415,8 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1 truncate max-w-[100px]" title={displayZone}>
+                  <div className="flex items-center gap-2 self-start sm:self-auto">
+                    <span className="flex max-w-[160px] items-center gap-1 truncate text-[10px] font-bold text-slate-400" title={displayZone}>
                       <MapPin className="w-3 h-3" />
                       {item.barangay_name}
                     </span>
@@ -422,7 +427,7 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
                 </div>
               ))}
               {!loading && schedules.length === 0 && (
-                <div className="text-center py-12">
+                  <div className="py-8 text-center">
                   <p className="text-slate-400 font-extrabold uppercase text-[10px]">No active barangay schedule has been published.</p>
                 </div>
               )}
@@ -430,7 +435,7 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
             
             <button 
               onClick={() => handleAction('schedule')}
-              className="mt-4 w-full py-3 bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-1 cursor-pointer transition-colors"
+              className="mt-3 flex w-full items-center justify-center gap-1 rounded-xl border border-slate-200 bg-slate-50 py-2.5 text-xs font-black uppercase tracking-widest text-slate-700 transition-colors hover:bg-slate-100"
             >
               View Shared Schedule →
             </button>
@@ -438,8 +443,8 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
         </div>
 
         {/* Recent Complaints Tracker Panel */}
-        <div className="flex flex-col h-full bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden">
-          <div className="bg-[#A18105] text-white p-5 font-black uppercase text-xs tracking-wider flex items-center justify-between gap-2">
+        <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+          <div className="flex items-center justify-between gap-2 bg-[#A18105] p-4 text-xs font-black uppercase tracking-wider text-white">
             <span className="flex items-center gap-2">
               <MessageSquare className="w-5 h-5" />
               Recent Sanitation Issues
@@ -453,14 +458,14 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
               </button>
             )}
           </div>
-          <div className="p-4 flex-1 flex flex-col justify-between">
-            <div className="overflow-x-auto">
+          <div className="flex flex-1 flex-col justify-between p-4">
+            <div className="min-w-0">
               {userComplaints.length === 0 ? (
-                <div className="py-12 text-center">
+                <div className="py-8 text-center">
                   <p className="text-slate-400 font-extrabold uppercase text-[10px]">No sanitation issues logged.</p>
                 </div>
               ) : (
-                <table className="w-full text-left text-xs">
+                <table className="hidden w-full table-fixed text-left text-xs sm:table">
                   <thead>
                     <tr className="text-[10px] font-black text-slate-400 border-b border-slate-100 uppercase tracking-widest bg-slate-50">
                       <th className="px-4 py-3">Type</th>
@@ -470,7 +475,7 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
                     </tr>
                   </thead>
                   <tbody className="font-semibold divide-y divide-slate-100">
-                    {userComplaints.slice(0, 3).map((item) => (
+                    {complaintPreview.map((item) => (
                       <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
                         <td className="px-4 py-3.5 text-slate-850 font-extrabold truncate max-w-[140px]" title={item.type}>{item.type}</td>
                         <td className="px-4 py-3.5 text-slate-500 font-mono">{item.date}</td>
@@ -496,11 +501,39 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
                   </tbody>
                 </table>
               )}
+              {userComplaints.length > 0 && (
+                <div className="space-y-2 sm:hidden">
+                  {complaintPreview.map((item) => (
+                    <article key={item.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-extrabold text-slate-800" title={item.type}>{item.type}</p>
+                          <p className="mt-1 text-[10px] font-medium text-slate-500">{item.date}</p>
+                        </div>
+                        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-black uppercase ${
+                          item.status === 'Resolved'
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+                            : 'border-amber-200 bg-amber-50 text-amber-600'
+                        }`}>
+                          {item.status}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => openTracker(item)}
+                        className="mt-2 text-[10px] font-black uppercase tracking-wide text-amber-700"
+                      >
+                        Track issue →
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              )}
             </div>
 
             <button 
               onClick={() => handleAction('complaints')}
-              className="mt-4 w-full py-3 bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-1 cursor-pointer transition-colors"
+              className="mt-3 flex w-full items-center justify-center gap-1 rounded-xl border border-slate-200 bg-slate-50 py-2.5 text-xs font-black uppercase tracking-widest text-slate-700 transition-colors hover:bg-slate-100"
             >
               Report New Sanitation Concern →
             </button>
@@ -508,8 +541,8 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
         </div>
 
         {/* Recent Payments Panel */}
-        <div className="flex flex-col h-full bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden lg:col-span-2">
-          <div className="bg-indigo-600 text-white p-5 font-black uppercase text-xs tracking-wider flex items-center justify-between gap-2">
+        <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm lg:col-span-2">
+          <div className="flex items-center justify-between gap-2 bg-indigo-600 p-4 text-xs font-black uppercase tracking-wider text-white">
             <span className="flex items-center gap-2">
               <CreditCard className="w-5 h-5" />
               Recent Payment Submissions
@@ -521,13 +554,13 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
               Full History →
             </button>
           </div>
-          <div className="p-4 overflow-x-auto">
+          <div className="p-4">
             {!loading && payments.length === 0 ? (
-              <div className="py-10 text-center">
+                <div className="py-8 text-center">
                 <p className="text-slate-400 font-extrabold uppercase text-[10px]">No payment submissions yet.</p>
               </div>
             ) : (
-              <table className="w-full text-left text-xs">
+              <table className="hidden w-full table-fixed text-left text-xs sm:table">
                 <thead>
                   <tr className="text-[10px] font-black text-slate-400 border-b border-slate-100 uppercase tracking-widest bg-slate-50">
                     <th className="px-4 py-3">Category</th>
@@ -538,7 +571,7 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
                   </tr>
                 </thead>
                 <tbody className="font-semibold divide-y divide-slate-100">
-                  {payments.slice(0, 3).map((payment) => (
+                  {paymentPreview.map((payment) => (
                     <tr key={payment.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="px-4 py-3.5 text-slate-800">
                         <span className="block font-extrabold">{paymentCategoryLabel(payment.category)}</span>
@@ -566,6 +599,30 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
                   ))}
                 </tbody>
               </table>
+            )}
+            {payments.length > 0 && (
+              <div className="space-y-2 sm:hidden">
+                {paymentPreview.map((payment) => (
+                  <article key={payment.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-extrabold text-slate-800">{paymentCategoryLabel(payment.category)}</p>
+                        <p className="mt-1 text-[10px] text-slate-500">{payment.billing_period} · {formatDate(payment.created_at)}</p>
+                      </div>
+                      <p className="shrink-0 text-xs font-black text-slate-800">₱{Number(payment.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                    </div>
+                    <span className={`mt-2 inline-flex rounded-full border px-2 py-0.5 text-[9px] font-black uppercase ${
+                      payment.status === 'completed'
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+                        : payment.status === 'rejected_by_leader' || payment.status === 'discrepancy'
+                          ? 'border-rose-200 bg-rose-50 text-rose-600'
+                          : 'border-amber-200 bg-amber-50 text-amber-600'
+                    }`}>
+                      {titleCaseStatus(payment.status)}
+                    </span>
+                  </article>
+                ))}
+              </div>
             )}
           </div>
         </div>

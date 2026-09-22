@@ -7,8 +7,10 @@ import {
   Loader2,
   MapPin,
   RefreshCw,
+  Search,
   Truck,
 } from "lucide-react";
+import Pagination, { DEFAULT_PAGE_SIZE } from "./Pagination";
 
 type CollectionRunHistory = {
   id: number;
@@ -90,6 +92,11 @@ export default function CollectorPickupLog() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [expandedRunId, setExpandedRunId] = useState<number | null>(null);
 
   const loadHistory = async (manualRefresh = false) => {
     if (manualRefresh) {
@@ -144,6 +151,43 @@ export default function CollectorPickupLog() {
     () => runs.filter((run) => run.status === "in_progress").length,
     [runs],
   );
+
+  const statusOptions = useMemo(
+    () => Array.from(new Set(runs.map((run) => run.status))).sort(),
+    [runs],
+  );
+
+  const filteredRuns = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    return runs.filter((run) => {
+      const matchesStatus = statusFilter === "all" || run.status === statusFilter;
+      const matchesSearch = !query || [
+        run.id,
+        run.barangay_name,
+        run.truck_code,
+        run.plate_number,
+        run.collection_date,
+      ].some((value) => String(value || "").toLowerCase().includes(query));
+
+      return matchesStatus && matchesSearch;
+    });
+  }, [runs, search, statusFilter]);
+
+  const pageCount = Math.max(1, Math.ceil(filteredRuns.length / pageSize));
+  const safePage = Math.min(page, pageCount);
+  const paginatedRuns = useMemo(
+    () => filteredRuns.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [filteredRuns, pageSize, safePage],
+  );
+
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, statusFilter]);
 
   return (
     <div className="min-h-full bg-slate-50 px-5 py-8 md:px-8 lg:px-10">
@@ -222,6 +266,35 @@ export default function CollectorPickupLog() {
           </div>
         )}
 
+        <section className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:grid-cols-[1fr_180px]" aria-label="Pickup history filters">
+          <label className="text-xs font-bold text-slate-600">
+            Search history
+            <span className="relative mt-1 block">
+              <Search aria-hidden="true" className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Run, barangay, truck, or plate"
+                className="min-h-10 w-full rounded-xl border border-slate-200 py-2 pl-9 pr-3 text-sm font-normal"
+              />
+            </span>
+          </label>
+          <label className="text-xs font-bold text-slate-600">
+            Status
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              className="mt-1 min-h-10 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal"
+            >
+              <option value="all">All statuses</option>
+              {statusOptions.map((status) => (
+                <option key={status} value={status}>{formatStatus(status)}</option>
+              ))}
+            </select>
+          </label>
+        </section>
+
         <section className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
             <div>
@@ -233,7 +306,7 @@ export default function CollectorPickupLog() {
               </p>
             </div>
             <span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-700">
-              {runs.length} record{runs.length === 1 ? "" : "s"}
+              {filteredRuns.length} record{filteredRuns.length === 1 ? "" : "s"}
             </span>
           </div>
 
@@ -242,24 +315,26 @@ export default function CollectorPickupLog() {
               <Loader2 className="h-5 w-5 animate-spin" />
               <span className="text-sm font-bold">Loading pickup history...</span>
             </div>
-          ) : runs.length === 0 ? (
+          ) : filteredRuns.length === 0 ? (
             <div className="flex min-h-72 flex-col items-center justify-center px-6 text-center">
               <div className="rounded-3xl bg-slate-100 p-5 text-slate-400">
                 <History className="h-9 w-9" />
               </div>
               <h3 className="mt-5 text-lg font-black text-slate-800">
-                No collection runs recorded yet
+                {runs.length === 0 ? "No collection runs recorded yet" : "No pickup runs match these filters"}
               </h3>
               <p className="mt-1 max-w-md text-sm text-slate-500">
-                Start a scheduled barangay collection from Collection Tasks. Its run history will appear here automatically.
+                {runs.length === 0
+                  ? "Start a scheduled barangay collection from Collection Tasks. Its run history will appear here automatically."
+                  : "Try another status or clear the search phrase."}
               </p>
             </div>
           ) : (
             <div className="divide-y divide-slate-200">
-              {runs.map((run) => (
+              {paginatedRuns.map((run) => (
                 <article
                   key={run.id}
-                  className="grid gap-5 px-6 py-5 transition hover:bg-slate-50 lg:grid-cols-[1.2fr_1fr_1fr_auto] lg:items-center"
+                  className="grid gap-4 px-4 py-4 transition hover:bg-slate-50 lg:grid-cols-[1.2fr_1fr_1fr_auto] lg:items-center"
                 >
                   <div className="flex items-start gap-4">
                     <div className="mt-0.5 rounded-2xl bg-emerald-50 p-3 text-emerald-600">
@@ -305,25 +380,48 @@ export default function CollectorPickupLog() {
                     </p>
                   </div>
 
-                  <div className="min-w-[190px] rounded-2xl bg-slate-50 px-4 py-3">
-                    <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500">
-                      <Clock3 className="h-3.5 w-3.5" />
-                      Started: {formatDateTime(run.started_at)}
-                    </div>
-                    <div className="mt-2 flex items-center gap-2 text-[10px] font-bold text-slate-500">
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                      Completed: {formatDateTime(run.completed_at)}
-                    </div>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedRunId(expandedRunId === run.id ? null : run.id)}
+                    aria-expanded={expandedRunId === run.id}
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-emerald-700 transition hover:bg-emerald-50"
+                  >
+                    {expandedRunId === run.id ? "Hide details" : "View details"}
+                  </button>
 
-                  {run.notes && (
-                    <div className="lg:col-span-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
-                      <span className="font-black text-slate-700">Notes:</span>{" "}
-                      {run.notes}
+                  {expandedRunId === run.id && (
+                    <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600 sm:grid-cols-2 lg:col-span-4">
+                      <div className="flex items-center gap-2 font-bold">
+                        <Clock3 className="h-3.5 w-3.5" />
+                        Started: {formatDateTime(run.started_at)}
+                      </div>
+                      <div className="flex items-center gap-2 font-bold">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Completed: {formatDateTime(run.completed_at)}
+                      </div>
+                      {run.notes && (
+                        <p className="sm:col-span-2"><span className="font-black text-slate-700">Notes:</span>{" "}{run.notes}</p>
+                      )}
                     </div>
                   )}
                 </article>
               ))}
+            </div>
+          )}
+          {!loading && filteredRuns.length > 0 && (
+            <div className="px-6 pb-5">
+              <Pagination
+                page={safePage}
+                pageSize={pageSize}
+                totalItems={filteredRuns.length}
+                onPageChange={setPage}
+                onPageSizeChange={(nextPageSize) => {
+                  setPageSize(nextPageSize);
+                  setPage(1);
+                }}
+                compact
+                itemLabel="pickup records"
+              />
             </div>
           )}
         </section>

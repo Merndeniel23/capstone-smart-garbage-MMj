@@ -21,6 +21,7 @@ interface HeaderProps {
     role: AppRole,
   ) => void;
   profilePhoto?: string | null;
+  pageTitle?: string;
 }
 
 const THEME_STORAGE_KEY =
@@ -122,6 +123,7 @@ export default function Header({
   onLogout,
   userRole,
   profilePhoto,
+  pageTitle,
 }: HeaderProps) {
   const RoleIcon =
     getRoleIcon(userRole);
@@ -229,10 +231,10 @@ export default function Header({
         }
       `}</style>
 
-      <header className="sticky top-0 z-10 flex shrink-0 flex-col gap-3 border-b border-slate-200 bg-white px-4 py-4 shadow-sm md:flex-row md:items-center md:justify-between md:px-6">
+      <header className={`sticky top-0 z-10 flex shrink-0 flex-col gap-3 border-b border-slate-200 bg-white px-4 py-4 shadow-sm md:flex-row md:items-center md:justify-between md:px-6 ${userRole === "super_admin" ? "md:flex-wrap xl:flex-nowrap" : ""}`}>
         <div className="flex w-full items-center justify-between md:hidden">
           <h1 className="whitespace-nowrap text-base font-black text-slate-800">
-            {formatPageTitle(
+            {pageTitle || formatPageTitle(
               activeTab,
             )}
           </h1>
@@ -244,7 +246,7 @@ export default function Header({
           </p>
 
           <h2 className="mt-0.5 text-lg font-black tracking-tight text-slate-800">
-            {formatPageTitle(
+            {pageTitle || formatPageTitle(
               activeTab,
             )}
           </h2>
@@ -310,7 +312,7 @@ export default function Header({
           <button
             type="button"
             onClick={onLogout}
-            className="flex cursor-pointer items-center gap-1.5 rounded-xl border border-slate-200 px-3.5 py-2 text-xs font-black text-slate-600 transition-all hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+            className={`flex cursor-pointer items-center gap-1.5 rounded-xl border border-slate-200 px-3.5 py-2 text-xs font-black text-slate-600 transition-all hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 ${userRole === "super_admin" ? "shrink-0 whitespace-nowrap" : ""}`}
           >
             <LogOut className="h-3.5 w-3.5" />
             <span>Sign Out</span>

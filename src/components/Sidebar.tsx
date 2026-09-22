@@ -10,6 +10,7 @@ import {
   FileText,
   KeyRound,
   LayoutDashboard,
+  LogOut,
   Map,
   MapPinned,
   MessageSquare,
@@ -34,6 +35,8 @@ interface SidebarProps {
   onLogout?: () => void;
   role: AppRole;
   adminActionCounts: AdminActionCounts;
+  directoryRoleFilter?: string;
+  onOpenDirectory?: (role: string) => void;
 }
 
 interface MenuItem {
@@ -41,6 +44,7 @@ interface MenuItem {
   icon: any;
   label: string;
   count?: number;
+  directoryRole?: string;
 }
 
 export default function Sidebar({
@@ -48,6 +52,9 @@ export default function Sidebar({
   onTabChange,
   role,
   adminActionCounts,
+  onLogout,
+  directoryRoleFilter = "all",
+  onOpenDirectory,
 }: SidebarProps) {
   const {
     userProfile,
@@ -392,15 +399,22 @@ export default function Sidebar({
       label: "Municipal Dashboard",
     },
     {
-      id: "user-management",
+      id: "captain-accounts",
       icon: UserCog,
       label: "Barangay Captains",
+      directoryRole: "admin",
       count: unreadAccounts,
+    },
+    {
+      id: "user-management",
+      icon: Users,
+      label: "User Directory",
+      directoryRole: "all",
     },
     {
       id: "members-list",
       icon: Users,
-      label: "User Directory",
+      label: "Household Directory",
     },
     {
       id: "garbage-bins",
@@ -578,6 +592,7 @@ export default function Sidebar({
       )}
 
       <nav
+        aria-label="Main navigation"
         className={`min-h-0 flex-1 space-y-1 overflow-y-auto pb-4 pt-4 ${
           collapsed
             ? "px-3"
@@ -586,8 +601,9 @@ export default function Sidebar({
       >
         {menuItems.map((item) => {
           const Icon = item.icon;
-          const isActive =
-            activeTab === item.id;
+          const isActive = item.directoryRole
+            ? activeTab === "user-management" && (item.directoryRole === "admin" ? directoryRoleFilter === "admin" : directoryRoleFilter !== "admin")
+            : activeTab === item.id;
 
           return (
             <button
@@ -599,9 +615,10 @@ export default function Sidebar({
                   : undefined
               }
               aria-label={item.label}
-              onClick={() =>
-                onTabChange(item.id)
-              }
+              aria-current={isActive ? "page" : undefined}
+              onClick={() => item.directoryRole && onOpenDirectory
+                ? onOpenDirectory(item.directoryRole)
+                : onTabChange(item.id === "captain-accounts" ? "user-management" : item.id)}
               className={`group relative flex w-full items-center rounded-xl py-3 transition-all duration-200 ${
                 collapsed
                   ? "justify-center px-0"
@@ -653,6 +670,11 @@ export default function Sidebar({
             : "px-5 py-4"
         }`}
       >
+        {role === "super_admin" && onLogout && (
+          <button type="button" onClick={onLogout} title="Sign Out" aria-label="Sign Out" className={`mb-3 flex min-h-11 w-full items-center rounded-xl text-sm font-bold text-white/80 hover:bg-white/10 ${collapsed ? "justify-center" : "gap-3 px-3"}`}>
+            <LogOut className="h-5 w-5 shrink-0" />{!collapsed && "Sign Out"}
+          </button>
+        )}
         {!collapsed ? (
           <p className="text-center text-[9px] font-bold uppercase tracking-[0.18em] text-white/35 dark:text-emerald-100/30">
             Smart Garbage Monitoring

@@ -58,3 +58,96 @@
 .animate-pulse-slide {
   animation: pulse-slide 2s ease-in-out infinite;
 }
+
+/* Municipal usability refinements stay within the existing shared layout. */
+.municipal-admin :is(button, a, input, select, textarea):focus-visible,
+dialog :is(button, input, select, textarea):focus-visible {
+  outline: 3px solid #10b981;
+  outline-offset: 3px;
+}
+
+.municipal-admin button:not(:disabled) { cursor: pointer; }
+.municipal-admin button:disabled { cursor: not-allowed; }
+.municipal-admin aside nav { scrollbar-width: thin; scrollbar-color: #53846b transparent; }
+.municipal-admin aside nav::-webkit-scrollbar { display: block; width: 5px; }
+.municipal-admin aside nav::-webkit-scrollbar-thumb { background: #53846b; border-radius: 8px; }
+.municipal-skip-link { position: fixed; top: -5rem; left: 1rem; z-index: 100; padding: .75rem 1rem; border-radius: .75rem; background: #14532d; color: white; }
+.municipal-skip-link:focus { top: 1rem; }
+
+html.sg-dark .municipal-admin :is(.text-emerald-600, .text-emerald-700, .text-emerald-800, .text-emerald-900) {
+  color: #6ee7b7;
+}
+html.sg-dark .municipal-admin :is(.bg-emerald-50, .bg-emerald-100) {
+  background-color: #12372f;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .municipal-admin *, .municipal-admin *::before, .municipal-admin *::after {
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+/* Shared scalable page primitives. Individual screens opt in so registration
+   and role-specific flows retain their established layouts. */
+.sg-page {
+  padding-bottom: 5rem;
+}
+
+.sg-list-toolbar {
+  position: sticky;
+  top: .75rem;
+  z-index: 5;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 1rem;
+  background: color-mix(in srgb, white 94%, transparent);
+  padding: .75rem;
+  box-shadow: 0 1px 2px rgb(15 23 42 / .04);
+  backdrop-filter: blur(8px);
+}
+
+.sg-compact-form {
+  display: grid;
+  gap: .875rem;
+}
+
+.sg-form-section {
+  border: 1px solid rgb(226 232 240);
+  border-radius: 1rem;
+  padding: .875rem;
+}
+
+.sg-form-section > legend,
+.sg-form-section-title {
+  padding: 0 .25rem;
+  font-size: .75rem;
+  font-weight: 800;
+  color: rgb(30 41 59);
+}
+
+.sg-form-grid {
+  display: grid;
+  gap: .75rem;
+}
+
+.sg-compact-row {
+  min-height: 3.25rem;
+}
+
+.sg-mobile-list-card {
+  display: none;
+}
+
+@media (min-width: 640px) {
+  .sg-form-grid--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 767px) {
+  .sg-list-toolbar { position: static; }
+  .sg-desktop-table { display: none; }
+  .sg-mobile-list-card { display: block; }
+}
+
+@media print {
+  .sg-list-toolbar, [aria-label$="pagination"] { display: none !important; }
+}

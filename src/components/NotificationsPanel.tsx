@@ -7,15 +7,19 @@ import {
   AlertTriangle,
   Bell,
   Check,
+  ChevronDown,
+  ChevronUp,
   Loader2,
   Megaphone,
   Plus,
   RefreshCw,
+  Search,
   Send,
   ShieldAlert,
   Trash2,
   X,
 } from "lucide-react";
+import ConfirmDialog from "./ConfirmDialog";
 
 interface NotificationsPanelProps {
   role:
@@ -53,6 +57,8 @@ type NotificationItem = {
   read_at?: string | null;
   created_at: string;
 };
+
+const NOTIFICATIONS_PER_PAGE = 10;
 
 function getToken(): string {
   return (
@@ -179,6 +185,21 @@ export default function NotificationsPanel({
       "all" | "unread" | "emergency"
     >("all");
 
+  const [searchTerm, setSearchTerm] =
+    useState("");
+
+  const [visibleCount, setVisibleCount] =
+    useState(NOTIFICATIONS_PER_PAGE);
+
+  const [expandedNotificationId, setExpandedNotificationId] =
+    useState<number | null>(null);
+
+  const [notificationToDelete, setNotificationToDelete] =
+    useState<NotificationItem | null>(null);
+
+  const [deletingNotificationId, setDeletingNotificationId] =
+    useState<number | null>(null);
+
   const [title, setTitle] =
     useState("");
 
@@ -269,37 +290,95 @@ export default function NotificationsPanel({
     };
   }, []);
 
-  const filteredNotifications =
-    useMemo(() => {
-      return notifications.filter(
-        (item) => {
-          if (
-            activeFilter === "unread" &&
-            Boolean(Number(item.is_read))
-          ) {
-            return false;
-          }
+  const filterCounts = useMemo(
+    () => ({
+      all: notifications.length,
+      unread: notifications.filter(
+        (item) => !Boolean(Number(item.is_read)),
+      ).length,
+      emergency: notifications.filter(
+        (item) => item.priority === "emergency",
+      ).length,
+    }),
+    [notifications],
+  );
 
-          if (
-            activeFilter === "emergency" &&
-            item.priority !== "emergency"
-          ) {
-            return false;
-          }
+  const filteredNotifications = useMemo(() => {
+    const normalizedSearch =
+      searchTerm.trim().toLocaleLowerCase();
 
-          return true;
-        },
+    return notifications.filter((item) => {
+      if (
+        activeFilter === "unread" &&
+        Boolean(Number(item.is_read))
+      ) {
+        return false;
+      }
+
+      if (
+        activeFilter === "emergency" &&
+        item.priority !== "emergency"
+      ) {
+        return false;
+      }
+
+      if (!normalizedSearch) return true;
+
+      return [
+        item.title,
+        item.message,
+        item.created_by_name || "",
+        item.barangay_name || "",
+        item.purok_name || "",
+        item.recipient_role || "",
+        item.notification_type,
+        `notif-${item.id}`,
+      ].some((value) =>
+        value
+          .toLocaleLowerCase()
+          .includes(normalizedSearch),
       );
-    }, [
-      notifications,
-      activeFilter,
-    ]);
+    });
+  }, [
+    activeFilter,
+    notifications,
+    searchTerm,
+  ]);
 
-  const unreadCount =
-    notifications.filter(
-      (item) =>
-        !Boolean(Number(item.is_read)),
-    ).length;
+  useEffect(() => {
+    setVisibleCount(NOTIFICATIONS_PER_PAGE);
+  }, [activeFilter, searchTerm]);
+
+  const visibleNotifications =
+    filteredNotifications.slice(0, visibleCount);
+
+  const unreadCount = filterCounts.unread;
+
+  const notificationFilters: Array<{
+    id: typeof activeFilter;
+    label: string;
+    count: number;
+  }> = [
+    {
+      id: "all",
+      label: "All alerts",
+      count: filterCounts.all,
+    },
+    {
+      id: "unread",
+      label: "Unread",
+      count: filterCounts.unread,
+    },
+    {
+      id: "emergency",
+      label: "Emergency",
+      count: filterCounts.emergency,
+    },
+  ];
+
+  const hasMoreNotifications =
+    visibleNotifications.length <
+    filteredNotifications.length;
 
   const unreadEmergency =
     notifications.find(
@@ -459,14 +538,8 @@ export default function NotificationsPanel({
   const deleteNotification = async (
     notificationId: number,
   ) => {
-    const confirmed =
-      window.confirm(
-        "Delete this notification?",
-      );
-
-    if (!confirmed) return;
-
     setError("");
+    setDeletingNotificationId(notificationId);
 
     try {
       await apiRequest(
@@ -482,25 +555,34 @@ export default function NotificationsPanel({
             item.id !== notificationId,
         ),
       );
+      setExpandedNotificationId((current) =>
+        current === notificationId
+          ? null
+          : current,
+      );
+      setNotificationToDelete(null);
     } catch (requestError) {
       setError(
         requestError instanceof Error
           ? requestError.message
           : "Unable to delete notification.",
       );
+      setNotificationToDelete(null);
+    } finally {
+      setDeletingNotificationId(null);
     }
   };
 
   return (
-    <div className="space-y-6 pb-20 md:pb-0">
-      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+    <div className="space-y-4 pb-20 md:pb-0">
+      <header className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">
             <Megaphone className="h-4 w-4" />
             Real-Time Notification Center
           </div>
 
-          <h1 className="mt-1 text-3xl font-black tracking-tight text-slate-900">
+          <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-900 md:text-3xl">
             System Alerts & Notices
           </h1>
 
@@ -516,7 +598,7 @@ export default function NotificationsPanel({
             onClick={() =>
               void loadNotifications()
             }
-            className="flex items-center gap-2 rounded-xl border bg-white px-4 py-3 text-xs font-black uppercase text-slate-700"
+            className="flex h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black uppercase text-slate-700 transition hover:bg-slate-50"
           >
             <RefreshCw
               className={`h-4 w-4 ${
@@ -530,12 +612,13 @@ export default function NotificationsPanel({
 
           <button
             type="button"
+            disabled={unreadCount === 0}
             onClick={() =>
               void markAllRead()
             }
-            className="rounded-xl border bg-white px-4 py-3 text-xs font-black uppercase text-slate-700"
+            className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black uppercase text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Mark All Read
+            Mark all read
           </button>
 
           {canBroadcast && (
@@ -544,7 +627,7 @@ export default function NotificationsPanel({
               onClick={() =>
                 setShowCompose(true)
               }
-              className="flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 text-xs font-black uppercase text-white"
+              className="flex h-11 items-center gap-2 rounded-xl bg-emerald-700 px-3 text-xs font-black uppercase text-white transition hover:bg-emerald-800"
             >
               <Plus className="h-4 w-4" />
               Broadcast
@@ -554,24 +637,24 @@ export default function NotificationsPanel({
       </header>
 
       {unreadEmergency && (
-        <div className="rounded-[2rem] bg-gradient-to-r from-rose-700 to-red-600 p-6 text-white shadow-xl">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-start gap-3">
-              <span className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/15">
-                <span className="absolute inset-0 animate-ping rounded-2xl bg-white/10" />
-                <AlertTriangle className="relative h-7 w-7" />
+        <div className="rounded-2xl bg-gradient-to-r from-rose-700 to-red-600 p-4 text-white shadow-lg">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15">
+                <span className="absolute inset-0 animate-ping rounded-xl bg-white/10" />
+                <AlertTriangle className="relative h-5 w-5" />
               </span>
 
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-rose-100">
-                  Active Emergency Alert
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-rose-100">
+                  Active emergency alert
                 </p>
 
-                <h2 className="mt-1 text-xl font-black">
+                <h2 className="mt-0.5 truncate text-base font-black sm:text-lg">
                   {unreadEmergency.title}
                 </h2>
 
-                <p className="mt-2 max-w-3xl text-sm font-semibold text-white/90">
+                <p className="mt-1 line-clamp-2 text-sm font-semibold text-white/90">
                   {unreadEmergency.message}
                 </p>
               </div>
@@ -584,56 +667,115 @@ export default function NotificationsPanel({
                   unreadEmergency.id,
                 )
               }
-              className="shrink-0 rounded-xl bg-white px-5 py-3 text-xs font-black uppercase text-rose-700"
+              className="h-10 shrink-0 rounded-xl bg-white px-4 text-xs font-black uppercase text-rose-700 transition hover:bg-rose-50"
             >
-              Acknowledge Alert
+              Acknowledge
             </button>
           </div>
         </div>
       )}
 
       {error && (
-        <div className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-bold text-rose-700">
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-700"
+        >
           <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" />
           {error}
         </div>
       )}
 
       {successMessage && (
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-700">
+        <div
+          role="status"
+          className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-700"
+        >
           {successMessage}
         </div>
       )}
 
-      <div className="flex w-fit gap-2 rounded-2xl bg-slate-100 p-1">
-        {[
-          ["all", "All Alerts"],
-          ["unread", "Unread"],
-          ["emergency", "Emergency"],
-        ].map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() =>
-              setActiveFilter(
-                id as typeof activeFilter,
-              )
-            }
-            className={`rounded-xl px-4 py-2 text-xs font-black ${
-              activeFilter === id
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <section
+        aria-label="Notification filters"
+        className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
+      >
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex max-w-full gap-1 overflow-x-auto rounded-xl bg-slate-100 p-1">
+            {notificationFilters.map(
+              ({ id, label, count }) => (
+                <button
+                  key={id}
+                  type="button"
+                  aria-pressed={activeFilter === id}
+                  onClick={() =>
+                    setActiveFilter(id)
+                  }
+                  className={`flex h-9 shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs font-black transition ${
+                    activeFilter === id
+                      ? "bg-white text-slate-900 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  {label}
+                  <span className="rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600">
+                    {count}
+                  </span>
+                </button>
+              ),
+            )}
+          </div>
 
-      <section className="space-y-4">
+          <div className="relative w-full lg:max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="search"
+              value={searchTerm}
+              onChange={(event) =>
+                setSearchTerm(event.target.value)
+              }
+              aria-label="Search notifications"
+              className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-9 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white"
+              placeholder="Search alerts, sender, or area"
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() =>
+                  setSearchTerm("")
+                }
+                className="absolute right-2 top-1/2 rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Clear notification search"
+                title="Clear search"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section
+        aria-label="Notifications"
+        className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+      >
+        <div className="flex min-h-12 items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+          <p className="text-xs font-semibold text-slate-500">
+            Showing {visibleNotifications.length} of{" "}
+            {filteredNotifications.length} matching alert
+            {filteredNotifications.length === 1
+              ? ""
+              : "s"}
+          </p>
+
+          {loading && notifications.length > 0 && (
+            <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wide text-emerald-700">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Updating
+            </span>
+          )}
+        </div>
         {loading &&
           notifications.length === 0 && (
-            <div className="rounded-[2rem] border bg-white p-12 text-center shadow-sm">
+            <div className="p-10 text-center">
               <Loader2 className="mx-auto h-7 w-7 animate-spin text-emerald-700" />
               <p className="mt-3 text-sm font-bold text-slate-500">
                 Loading notifications...
@@ -644,15 +786,31 @@ export default function NotificationsPanel({
         {!loading &&
           filteredNotifications.length ===
             0 && (
-            <div className="rounded-[2rem] border bg-white p-12 text-center shadow-sm">
-              <Bell className="mx-auto h-10 w-10 text-slate-300" />
+            <div className="p-10 text-center">
+              <Bell className="mx-auto h-9 w-9 text-slate-300" />
               <p className="mt-3 font-black text-slate-700">
-                No notifications found
+                {searchTerm || activeFilter !== "all"
+                  ? "No notifications match the selected filters."
+                  : "No notifications found."}
               </p>
+              {(searchTerm ||
+                activeFilter !== "all") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchTerm("");
+                    setActiveFilter("all");
+                  }}
+                  className="mt-3 text-xs font-black uppercase text-emerald-700 hover:text-emerald-800"
+                >
+                  Clear filters
+                </button>
+              )}
             </div>
           )}
 
-        {filteredNotifications.map(
+        <div className="divide-y divide-slate-100">
+        {visibleNotifications.map(
           (item) => {
             const style =
               priorityStyle(
@@ -664,19 +822,26 @@ export default function NotificationsPanel({
                 Number(item.is_read),
               );
 
+            const isExpanded =
+              expandedNotificationId === item.id;
+
             return (
               <article
                 key={item.id}
-                className={`relative rounded-[2rem] border p-6 shadow-sm ${style.container}`}
+                className={`relative border-l-4 p-4 transition-colors ${style.container}`}
               >
                 {!isRead && (
-                  <span className="absolute left-4 top-4 h-2.5 w-2.5 rounded-full bg-emerald-500">
+                  <span
+                    className="absolute left-2 top-3 h-2 w-2 rounded-full bg-emerald-500"
+                    aria-label="Unread notification"
+                    title="Unread notification"
+                  >
                     <span className="absolute inset-0 animate-ping rounded-full bg-emerald-400" />
                   </span>
                 )}
 
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0 pl-3">
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+                  <div className="min-w-0 pl-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <span
                         className={`rounded-lg px-2.5 py-1 text-[9px] font-black uppercase ${style.badge}`}
@@ -689,15 +854,22 @@ export default function NotificationsPanel({
                       </span>
                     </div>
 
-                    <h2 className="mt-3 text-lg font-black text-slate-900">
+                    <h2 className="mt-2 truncate text-sm font-black text-slate-900 sm:text-base">
                       {item.title}
                     </h2>
 
-                    <p className="mt-2 max-w-4xl text-sm leading-relaxed text-slate-600">
+                    <p
+                      id={`notification-details-${item.id}`}
+                      className={`mt-1 text-sm leading-relaxed text-slate-600 ${
+                        isExpanded
+                          ? ""
+                          : "line-clamp-2"
+                      }`}
+                    >
                       {item.message}
                     </p>
 
-                    <p className="mt-4 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                    <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">
                       Issued by{" "}
                       {item.created_by_name ||
                         "System"}
@@ -720,7 +892,34 @@ export default function NotificationsPanel({
                     )}
                   </div>
 
-                  <div className="flex shrink-0 gap-2">
+                  <div className="flex shrink-0 items-center gap-1.5 md:justify-end">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedNotificationId((current) =>
+                          current === item.id
+                            ? null
+                            : item.id,
+                        )
+                      }
+                      aria-expanded={isExpanded}
+                      aria-controls={`notification-details-${item.id}`}
+                      aria-label={`${
+                        isExpanded ? "Hide" : "Show"
+                      } notification details`}
+                      title={`${
+                        isExpanded ? "Hide" : "Show"
+                      } details`}
+                      className="flex h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-[10px] font-black uppercase text-slate-600 transition hover:bg-slate-50"
+                    >
+                      {isExpanded ? (
+                        <ChevronUp className="h-4 w-4" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4" />
+                      )}
+                      Details
+                    </button>
+
                     {!isRead && (
                       <button
                         type="button"
@@ -729,7 +928,8 @@ export default function NotificationsPanel({
                             item.id,
                           )
                         }
-                        className="flex items-center gap-1 rounded-xl bg-white px-3 py-2 text-[10px] font-black uppercase text-emerald-700 shadow-sm"
+                        className="flex h-9 items-center gap-1 rounded-lg bg-white px-2.5 text-[10px] font-black uppercase text-emerald-700 shadow-sm transition hover:bg-emerald-50"
+                        title="Mark as read"
                       >
                         <Check className="h-4 w-4" />
                         Read
@@ -740,11 +940,10 @@ export default function NotificationsPanel({
                       <button
                         type="button"
                         onClick={() =>
-                          void deleteNotification(
-                            item.id,
-                          )
+                          setNotificationToDelete(item)
                         }
-                        className="rounded-xl bg-white p-2 text-rose-600 shadow-sm"
+                        className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-rose-600 shadow-sm transition hover:bg-rose-50"
+                        aria-label={`Delete notification ${item.title}`}
                         title="Delete notification"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -756,19 +955,46 @@ export default function NotificationsPanel({
             );
           },
         )}
+        </div>
+
+        {hasMoreNotifications && (
+          <div className="flex flex-col items-center gap-2 border-t border-slate-100 p-3 sm:flex-row sm:justify-between">
+            <p className="text-xs text-slate-500">
+              {filteredNotifications.length -
+                visibleNotifications.length} more alert
+              {filteredNotifications.length -
+                visibleNotifications.length ===
+              1
+                ? ""
+                : "s"}
+            </p>
+            <button
+              type="button"
+              onClick={() =>
+                setVisibleCount((current) =>
+                  current + NOTIFICATIONS_PER_PAGE,
+                )
+              }
+              className="flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black uppercase text-slate-700 transition hover:bg-slate-50"
+            >
+              <ChevronDown className="h-4 w-4" />
+              Load 10 more
+            </button>
+          </div>
+        )}
       </section>
 
       {showCompose && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
-          <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-[2rem] bg-white p-6 shadow-2xl md:p-8">
-            <div className="flex items-start justify-between">
+          <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl md:p-6">
+            <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">
                   Authorized Broadcast
                 </p>
 
-                <h2 className="text-2xl font-black text-slate-900">
-                  Create Notification
+                <h2 className="mt-1 text-xl font-black text-slate-900">
+                  Create notification
                 </h2>
               </div>
 
@@ -777,7 +1003,9 @@ export default function NotificationsPanel({
                 onClick={() =>
                   setShowCompose(false)
                 }
-                className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"
+                className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Close notification form"
+                title="Close"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -785,22 +1013,24 @@ export default function NotificationsPanel({
 
             <form
               onSubmit={submitBroadcast}
-              className="mt-6 space-y-4"
+              className="mt-5 space-y-3"
             >
               <label className="block text-xs font-bold text-slate-600">
                 Title
                 <input
+                  required
                   value={title}
                   onChange={(event) =>
                     setTitle(
                       event.target.value,
                     )
                   }
-                  className="mt-2 w-full rounded-xl border bg-slate-50 p-3 text-sm"
+                  className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-800 outline-none transition focus:border-emerald-500 focus:bg-white"
                   placeholder="Notification title"
                 />
               </label>
 
+              <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-xs font-bold text-slate-600">
                 Priority
                 <select
@@ -811,7 +1041,7 @@ export default function NotificationsPanel({
                         .value as NotificationPriority,
                     )
                   }
-                  className="mt-2 w-full rounded-xl border bg-white p-3 text-sm"
+                  className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-emerald-500"
                 >
                   <option value="notice">
                     Official Notice
@@ -834,7 +1064,7 @@ export default function NotificationsPanel({
                       event.target.value,
                     )
                   }
-                  className="mt-2 w-full rounded-xl border bg-white p-3 text-sm"
+                  className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-emerald-500"
                 >
                   <option value="">
                     Everyone in allowed area
@@ -853,30 +1083,32 @@ export default function NotificationsPanel({
                   </option>
                 </select>
               </label>
+              </div>
 
               <label className="block text-xs font-bold text-slate-600">
                 Message
                 <textarea
-                  rows={5}
+                  required
+                  rows={4}
                   value={message}
                   onChange={(event) =>
                     setMessage(
                       event.target.value,
                     )
                   }
-                  className="mt-2 w-full rounded-xl border bg-slate-50 p-3 text-sm"
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800 outline-none transition focus:border-emerald-500 focus:bg-white"
                   placeholder="Write the notification message..."
                 />
               </label>
 
-              <div className="flex gap-3 pt-3">
+              <div className="flex gap-3 pt-2">
                 <button
                   type="button"
                   onClick={() =>
                     setShowCompose(false)
                   }
                   disabled={saving}
-                  className="flex-1 rounded-xl border px-4 py-3 text-sm font-black text-slate-600"
+                  className="h-11 flex-1 rounded-xl border border-slate-200 px-4 text-sm font-black text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Cancel
                 </button>
@@ -884,7 +1116,7 @@ export default function NotificationsPanel({
                 <button
                   type="submit"
                   disabled={saving}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 text-sm font-black text-white disabled:opacity-50"
+                  className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 text-sm font-black text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {saving ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -898,6 +1130,34 @@ export default function NotificationsPanel({
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={Boolean(notificationToDelete)}
+        title="Delete notification?"
+        description={
+          notificationToDelete
+            ? `Delete “${notificationToDelete.title}”? This cannot be undone.`
+            : ""
+        }
+        confirmLabel="Delete notification"
+        destructive
+        busy={
+          deletingNotificationId ===
+          notificationToDelete?.id
+        }
+        onCancel={() => {
+          if (!deletingNotificationId) {
+            setNotificationToDelete(null);
+          }
+        }}
+        onConfirm={() => {
+          if (notificationToDelete) {
+            void deleteNotification(
+              notificationToDelete.id,
+            );
+          }
+        }}
+      />
     </div>
   );
 }

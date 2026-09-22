@@ -2,6 +2,7 @@ import {
   Calendar as CalendarIcon,
   ChevronRight,
   Clock,
+  Eye,
   Loader2,
   MapPin,
   Plus,
@@ -18,6 +19,7 @@ import {
   useState,
 } from "react";
 import { apiRequest } from "../services/api";
+import Pagination, { DEFAULT_PAGE_SIZE } from "./Pagination";
 
 const DAYS = [
   "Monday",
@@ -113,6 +115,16 @@ function roleLabel(role: string): string {
 
 export default function Schedule() {
   const today = new Date();
+  const [selectedDate, setSelectedDate] = useState(() => new Date());
+  const [view, setView] = useState<"calendar" | "week">("calendar");
+  const [barangayFilter, setBarangayFilter] = useState("");
+  const [scheduleSearch, setScheduleSearch] = useState("");
+  const [timelinePage, setTimelinePage] = useState(1);
+  const [timelinePageSize, setTimelinePageSize] =
+    useState(DEFAULT_PAGE_SIZE);
+  const [selectedDatePage, setSelectedDatePage] = useState(1);
+  const [selectedDatePageSize, setSelectedDatePageSize] =
+    useState(DEFAULT_PAGE_SIZE);
   const [visibleMonth, setVisibleMonth] = useState(
     () =>
       new Date(
@@ -145,6 +157,73 @@ export default function Schedule() {
   const canManage =
     currentUser?.role === "admin" &&
     Boolean(currentUser.barangay_id);
+  const isMunicipal = currentUser?.role === "super_admin";
+
+  const barangays = useMemo(() => {
+    const values = new Map<number, string>();
+    schedules.forEach((schedule) => values.set(schedule.barangay_id, schedule.barangay_name));
+    return [...values.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [schedules]);
+  const normalizedScheduleSearch = scheduleSearch.trim().toLowerCase();
+  const visibleSchedules = useMemo(
+    () =>
+      schedules.filter((schedule) => {
+        const matchesBarangay =
+          !isMunicipal ||
+          !barangayFilter ||
+          String(schedule.barangay_id) === barangayFilter;
+
+        if (!matchesBarangay || !normalizedScheduleSearch) return matchesBarangay;
+
+        return [
+          schedule.barangay_name,
+          schedule.day_of_week,
+          schedule.notes || "",
+          formatTimeRange(schedule.start_time, schedule.end_time),
+        ].some((value) => value.toLowerCase().includes(normalizedScheduleSearch));
+      }),
+    [
+      schedules,
+      isMunicipal,
+      barangayFilter,
+      normalizedScheduleSearch,
+    ],
+  );
+  const selectedWeekday = DAYS[(selectedDate.getDay() + 6) % 7];
+  const selectedDateSchedules = useMemo(
+    () =>
+      visibleSchedules.filter(
+        (schedule) => schedule.day_of_week === selectedWeekday,
+      ),
+    [visibleSchedules, selectedWeekday],
+  );
+  const timelinePageCount = Math.max(
+    1,
+    Math.ceil(visibleSchedules.length / timelinePageSize),
+  );
+  const selectedDatePageCount = Math.max(
+    1,
+    Math.ceil(selectedDateSchedules.length / selectedDatePageSize),
+  );
+  const safeTimelinePage = Math.min(timelinePage, timelinePageCount);
+  const safeSelectedDatePage = Math.min(
+    selectedDatePage,
+    selectedDatePageCount,
+  );
+  const paginatedTimelineSchedules = useMemo(() => {
+    const start = (safeTimelinePage - 1) * timelinePageSize;
+    return visibleSchedules.slice(start, start + timelinePageSize);
+  }, [visibleSchedules, safeTimelinePage, timelinePageSize]);
+  const paginatedSelectedDateSchedules = useMemo(() => {
+    const start = (safeSelectedDatePage - 1) * selectedDatePageSize;
+    return selectedDateSchedules.slice(start, start + selectedDatePageSize);
+  }, [
+    selectedDateSchedules,
+    safeSelectedDatePage,
+    selectedDatePageSize,
+  ]);
+  const weekStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - ((today.getDay() + 6) % 7));
+  const dateForWeekday = (day: DayOfWeek) => new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + DAYS.indexOf(day));
 
   const scopeLabel =
     currentUser?.role === "super_admin"
@@ -178,11 +257,11 @@ export default function Schedule() {
   const scheduledWeekdays = useMemo(
     () =>
       new Set(
-        schedules.map(
+        visibleSchedules.map(
           (schedule) => schedule.day_of_week,
         ),
       ),
-    [schedules],
+    [visibleSchedules],
   );
 
   const loadData = async (quiet = false) => {
@@ -228,6 +307,27 @@ export default function Schedule() {
   useEffect(() => {
     void loadData();
   }, []);
+
+  useEffect(() => {
+    setTimelinePage(1);
+    setSelectedDatePage(1);
+  }, [barangayFilter, scheduleSearch]);
+
+  useEffect(() => {
+    setSelectedDatePage(1);
+  }, [selectedWeekday]);
+
+  useEffect(() => {
+    if (timelinePage > timelinePageCount) {
+      setTimelinePage(timelinePageCount);
+    }
+  }, [timelinePage, timelinePageCount]);
+
+  useEffect(() => {
+    if (selectedDatePage > selectedDatePageCount) {
+      setSelectedDatePage(selectedDatePageCount);
+    }
+  }, [selectedDatePage, selectedDatePageCount]);
 
   const isToday = (day: number) =>
     today.getFullYear() === visibleMonth.getFullYear() &&
@@ -392,7 +492,7 @@ export default function Schedule() {
   }
 
   return (
-    <div className="space-y-6 pb-20">
+    <div className="sg-page space-y-5 pb-20">
       <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">
@@ -408,7 +508,7 @@ export default function Schedule() {
             type="button"
             onClick={() => void loadData(true)}
             disabled={refreshing}
-            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex min-h-11 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <RefreshCw
               className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
@@ -420,7 +520,7 @@ export default function Schedule() {
             <button
               type="button"
               onClick={openNewForm}
-              className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700"
+              className="inline-flex min-h-11 items-center gap-2 rounded-full bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700"
             >
               <Plus className="h-4 w-4" />
               Add Schedule
@@ -430,13 +530,13 @@ export default function Schedule() {
       </header>
 
       {error && (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
+        <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
           {error}
         </div>
       )}
 
       {notice && (
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+        <div role="status" className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
           {notice}
         </div>
       )}
@@ -450,6 +550,52 @@ export default function Schedule() {
         </span>
       </div>
 
+      {isMunicipal && (
+        <>
+          <div className="flex gap-3 rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+            <Eye className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+            <div>
+              <p className="text-sm font-bold text-emerald-900">Municipal monitoring · Read-only</p>
+              <p className="mt-1 text-sm leading-relaxed text-emerald-700">Municipal Administrators can monitor schedules across all barangays. Each Barangay Captain manages the collection schedule for their assigned barangay.</p>
+            </div>
+          </div>
+          <section
+            aria-label="Schedule controls"
+            className="sg-list-toolbar flex flex-col justify-between gap-3 sm:flex-row sm:items-end"
+          >
+            <div className="flex flex-wrap gap-2" aria-label="Schedule view">
+              <button type="button" onClick={() => { const date = new Date(); setSelectedDate(date); setVisibleMonth(new Date(date.getFullYear(), date.getMonth(), 1)); setView("calendar"); }}
+                className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700">Today</button>
+              <button type="button" aria-pressed={view === "week"} onClick={() => setView("week")}
+                className={`min-h-11 rounded-xl border px-4 py-2.5 text-sm font-semibold ${view === "week" ? "border-emerald-600 bg-emerald-600 text-white" : "border-slate-200 bg-white text-slate-700"}`}>This Week</button>
+              <button type="button" aria-pressed={view === "calendar"} onClick={() => setView("calendar")}
+                className={`min-h-11 rounded-xl border px-4 py-2.5 text-sm font-semibold ${view === "calendar" ? "border-emerald-600 bg-emerald-600 text-white" : "border-slate-200 bg-white text-slate-700"}`}>Calendar</button>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="text-xs font-semibold text-slate-600">
+                <span className="sr-only">Search schedules</span>
+                <input
+                  type="search"
+                  value={scheduleSearch}
+                  onChange={(event) => setScheduleSearch(event.target.value)}
+                  placeholder="Search schedules"
+                  className="block min-h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400"
+                />
+              </label>
+              <label className="text-xs font-semibold text-slate-600">
+                <span className="sr-only">Filter by barangay</span>
+                <select value={barangayFilter} onChange={(event) => setBarangayFilter(event.target.value)}
+                  className="block min-h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800">
+                  <option value="">All barangays</option>
+                  {barangays.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                </select>
+              </label>
+            </div>
+          </section>
+        </>
+      )}
+
+      {(!isMunicipal || view === "calendar") && <>
       <div className="overflow-hidden rounded-3xl border border-slate-100 bg-white p-4 shadow-sm">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-sm font-bold text-slate-900">
@@ -517,11 +663,19 @@ export default function Schedule() {
 
             const todayCell = isToday(day);
             const scheduledCell = hasScheduleOnDay(day);
+            const selectedCell = isMunicipal && selectedDate.getFullYear() === visibleMonth.getFullYear() && selectedDate.getMonth() === visibleMonth.getMonth() && selectedDate.getDate() === day;
+            const dayLabel = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+            const CalendarDay = isMunicipal ? "button" : "div";
 
             return (
-              <div
+              <CalendarDay
+                type={isMunicipal ? "button" : undefined}
                 key={`${visibleMonth.getFullYear()}-${visibleMonth.getMonth()}-${day}`}
-                className={`relative rounded-xl py-2 text-center text-xs font-medium transition-colors ${
+                onClick={isMunicipal ? () => setSelectedDate(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day)) : undefined}
+                aria-label={`${dayLabel}${scheduledCell ? ", collection scheduled" : ", no scheduled collection"}`}
+                aria-pressed={isMunicipal ? selectedCell : undefined}
+                aria-current={todayCell ? "date" : undefined}
+                className={`relative ${isMunicipal ? "min-h-11" : ""} rounded-xl py-2 text-center text-xs font-medium transition-colors ${selectedCell ? "outline-2 outline-offset-2 outline-emerald-500" : ""} ${
                   todayCell
                     ? "bg-emerald-500 font-bold text-white shadow-sm ring-2 ring-emerald-100"
                     : scheduledCell
@@ -543,7 +697,7 @@ export default function Schedule() {
                     }`}
                   />
                 )}
-              </div>
+              </CalendarDay>
             );
           })}
         </div>
@@ -554,14 +708,52 @@ export default function Schedule() {
         </p>
       </div>
 
+      {isMunicipal && (
+        <section className="space-y-3" aria-label="Selected date collections">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-lg font-bold text-slate-900">{selectedDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</h2>
+            <span role="status" className="text-xs text-slate-500">{selectedDateSchedules.length} published collection {selectedDateSchedules.length === 1 ? "window" : "windows"}</span>
+          </div>
+          <p className="text-xs text-slate-500">Dates follow the recurring weekly plan. Select a collection window to see its published details.</p>
+          {selectedDateSchedules.length ? (
+            <>
+              <div className="grid gap-3 md:grid-cols-2">
+              {paginatedSelectedDateSchedules.map((schedule) => (
+                <button key={schedule.id} type="button" onClick={() => setSelectedSchedule(schedule)}
+                  className="min-w-0 rounded-2xl border border-slate-200 bg-white p-3 text-left transition hover:border-emerald-400">
+                  <div className="flex items-start justify-between gap-2"><p className="font-bold text-slate-900">{schedule.barangay_name}</p><span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">{Number(schedule.is_active) === 1 ? "Active" : "Inactive"}</span></div>
+                  <p className="mt-2 flex items-center gap-2 text-sm text-slate-600"><Clock className="h-4 w-4" />{formatTimeRange(schedule.start_time, schedule.end_time)}</p>
+                  <p className="mt-2 truncate text-xs leading-relaxed text-slate-500">{schedule.notes || "No route notes published."}</p>
+                  <p className="mt-3 flex items-center gap-1 text-xs font-semibold text-emerald-600">View details <ChevronRight className="h-3 w-3" /></p>
+                </button>
+              ))}
+              </div>
+              <Pagination
+                compact
+                page={safeSelectedDatePage}
+                pageSize={selectedDatePageSize}
+                totalItems={selectedDateSchedules.length}
+                onPageChange={setSelectedDatePage}
+                onPageSizeChange={(pageSize) => {
+                  setSelectedDatePageSize(pageSize);
+                  setSelectedDatePage(1);
+                }}
+                itemLabel="collection windows"
+              />
+            </>
+          ) : <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-center text-sm text-slate-500">{error ? "Schedules could not be loaded. Refresh to try again." : "No collection is scheduled for this date in the selected barangay scope."}</div>}
+        </section>
+      )}
+      </>}
+
       <div className="space-y-4">
         <h2 className="flex items-center gap-2 text-lg font-bold text-slate-900">
           <Clock className="h-5 w-5 text-emerald-500" />
-          Weekly Timeline
+          {isMunicipal && view === "week" ? `This Week · ${weekStart.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${dateForWeekday("Sunday").toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "Weekly Timeline"}
         </h2>
 
         <div className="space-y-3">
-          {schedules.map((item) => (
+          {paginatedTimelineSchedules.map((item) => (
             <div
               key={item.id}
               role="button"
@@ -573,19 +765,19 @@ export default function Schedule() {
                   setSelectedSchedule(item);
                 }
               }}
-              className="group flex cursor-pointer flex-col justify-between gap-4 rounded-3xl border border-slate-100 bg-white p-5 shadow-sm transition-colors hover:border-emerald-200 sm:flex-row sm:items-center"
+              className="group flex cursor-pointer flex-col justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm transition-colors hover:border-emerald-200 sm:flex-row sm:items-center"
             >
-              <div className="flex items-start gap-4">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-500 text-white">
-                  <Truck className="h-6 w-6" />
+              <div className="flex min-w-0 items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500 text-white">
+                  <Truck className="h-5 w-5" />
                 </div>
 
-                <div className="space-y-1">
+                <div className="min-w-0 space-y-1">
                   <span className="text-xs font-bold uppercase tracking-tight text-slate-400">
                     Weekly Garbage Collection
                   </span>
                   <h4 className="text-sm font-bold text-slate-900">
-                    Every {item.day_of_week}
+                    {isMunicipal && view === "week" ? dateForWeekday(item.day_of_week).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" }) : `Every ${item.day_of_week}`}
                   </h4>
                   <p className="text-xs text-slate-500">
                     {formatTimeRange(
@@ -598,7 +790,7 @@ export default function Schedule() {
                     </span>
                   </p>
                   {item.notes && (
-                    <p className="max-w-2xl pt-1 text-xs leading-relaxed text-slate-500">
+                    <p className="max-w-2xl truncate pt-1 text-xs leading-relaxed text-slate-500">
                       {item.notes}
                     </p>
                   )}
@@ -629,14 +821,14 @@ export default function Schedule() {
             </div>
           ))}
 
-          {schedules.length === 0 && (
+          {visibleSchedules.length === 0 && (
             <div className="rounded-3xl border border-dashed border-slate-200 bg-white px-6 py-12 text-center">
               <CalendarIcon className="mx-auto h-9 w-9 text-slate-300" />
               <p className="mt-3 text-sm font-bold text-slate-600">
-                No active collection schedule
+                {error ? "Unable to load collection schedules" : "No active collection schedule"}
               </p>
               <p className="mt-1 text-xs text-slate-400">
-                {canManage
+                {error ? "Use Refresh to try again." : isMunicipal ? "No weekly collection plans have been published for the selected barangay scope." : canManage
                   ? "Add the first weekly collection day for your barangay."
                   : "Your Barangay Captain has not published a weekly schedule yet."}
               </p>
@@ -652,6 +844,19 @@ export default function Schedule() {
             </div>
           )}
         </div>
+        {visibleSchedules.length > 0 && (
+          <Pagination
+            page={safeTimelinePage}
+            pageSize={timelinePageSize}
+            totalItems={visibleSchedules.length}
+            onPageChange={setTimelinePage}
+            onPageSizeChange={(pageSize) => {
+              setTimelinePageSize(pageSize);
+              setTimelinePage(1);
+            }}
+            itemLabel="schedule entries"
+          />
+        )}
       </div>
 
       <div className="relative mt-8 overflow-hidden rounded-[40px] border border-emerald-100 bg-emerald-50 p-6">
@@ -662,7 +867,7 @@ export default function Schedule() {
               : "Published Weekly Plan"}
           </h3>
           <p className="mb-4 mt-1 text-xs leading-relaxed text-emerald-700">
-            {canManage
+            {isMunicipal ? "These recurring collection plans are published by the Barangay Captains. Select a date or collection window to review the available time and route notes." : canManage
               ? "Publishing a collection day makes it visible to residents, Purok Leaders, and collectors assigned to your barangay."
               : "This is the official recurring collection plan published by your Barangay Captain."}
           </p>

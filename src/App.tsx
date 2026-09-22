@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 import Registration from "./components/Registration";
@@ -394,6 +394,7 @@ export default function App() {
 }
 
 function AppContent() {
+  const [directoryNavigation, setDirectoryNavigation] = useState({ role: "all", status: "all", createCaptain: false, visit: 0 });
   const {
     isLoggedIn,
     isAuthLoading,
@@ -408,6 +409,25 @@ function AppContent() {
     userRole,
     currentUser?.id,
   );
+
+  const openDirectory = (role = "all", status = "all", createCaptain = false) => {
+    setDirectoryNavigation((previous) => ({ role, status, createCaptain, visit: previous.visit + 1 }));
+    setCurrentScreen("user-management");
+  };
+
+  const municipalPageTitles: Record<string, string> = {
+    "super-admin-dashboard": "Municipal Dashboard",
+    "user-management": directoryNavigation.role === "admin" ? "Barangay Captains" : "User Directory",
+    "members-list": "Household Directory",
+    "garbage-bins": "Municipal Bins",
+    "truck-crew-management": "Truck & Crew",
+    complaints: "All Complaints",
+    payments: "Payment Verification",
+    schedule: "Collection Schedules",
+    notifications: "Municipal Alerts",
+    reports: "Reports",
+    profile: "Recovery & Security",
+  };
 
   useEffect(() => {
     if (!isLoggedIn || currentScreen === "change-initial-password") {
@@ -478,7 +498,8 @@ function AppContent() {
     userRole === "super_admin";
 
   return (
-    <div className="flex min-h-screen min-w-0 flex-col overflow-x-clip bg-[#F8FAFC] font-sans text-slate-900 md:flex-row">
+    <div className={`flex min-h-screen min-w-0 flex-col overflow-x-clip bg-[#F8FAFC] font-sans text-slate-900 md:flex-row ${userRole === "super_admin" ? "municipal-admin" : ""}`}>
+      {userRole === "super_admin" && <a href="#main-content" className="municipal-skip-link">Skip to page content</a>}
       <EmergencyAlertOverlay />
       {userRole === "collector" && (
         <PersistentCollectorLocationTracker />
@@ -489,6 +510,8 @@ function AppContent() {
         onLogout={handleLogout}
         role={userRole}
         adminActionCounts={adminActionCounts}
+        directoryRoleFilter={directoryNavigation.role}
+        onOpenDirectory={(role) => openDirectory(role)}
       />
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-clip bg-[#F1F5F9]/30">
@@ -497,9 +520,10 @@ function AppContent() {
           onLogout={handleLogout}
           userRole={userRole as any}
           profilePhoto={currentUser?.profilePhoto}
+          pageTitle={userRole === "super_admin" ? municipalPageTitles[currentScreen] : undefined}
         />
 
-        <main className="mx-auto min-w-0 w-full max-w-7xl flex-1 overflow-x-clip p-4 md:p-8">
+        <main id="main-content" tabIndex={-1} className={`mx-auto min-w-0 w-full max-w-7xl flex-1 overflow-x-clip p-4 md:p-8 ${userRole === "super_admin" ? "pb-28" : ""}`}>
           <AnimatePresence mode="wait">
             <motion.div
               key={currentScreen}
@@ -539,10 +563,18 @@ function AppContent() {
               {currentScreen === "super-admin-dashboard" && (
                 <SuperAdminDashboard
                   setCurrentScreen={setCurrentScreen as any}
+                  onOpenDirectory={openDirectory}
                 />
               )}
 
-              {currentScreen === "user-management" && <UserManagement />}
+              {currentScreen === "user-management" && <UserManagement
+                key={directoryNavigation.visit}
+                initialRoleFilter={userRole === "super_admin" ? directoryNavigation.role : undefined}
+                initialStatusFilter={userRole === "super_admin" ? directoryNavigation.status : undefined}
+                initialCreateCaptain={userRole === "super_admin" && directoryNavigation.createCaptain}
+                onViewHouseholds={userRole === "super_admin" ? () => setCurrentScreen("members-list") : undefined}
+                onRoleFilterChange={userRole === "super_admin" ? (role) => setDirectoryNavigation((previous) => ({ ...previous, role })) : undefined}
+              />}
               {currentScreen === "members-list" && <MembersList />}
               {currentScreen === "bin-inspections" && <BinInspections />}
               {currentScreen === "garbage-bins" && <ManageGarbageBins />}
@@ -576,12 +608,14 @@ function AppContent() {
         </main>
       </div>
 
-      <div className="md:hidden">
+      <div className={userRole === "super_admin" ? "fixed inset-x-0 bottom-0 z-30 md:hidden" : "md:hidden"}>
         <BottomNav
           activeTab={currentScreen as any}
           onTabChange={(tab: any) => setCurrentScreen(tab)}
           role={userRole as any}
           adminActionCounts={adminActionCounts}
+          directoryRoleFilter={directoryNavigation.role}
+          onOpenDirectory={(role) => openDirectory(role)}
         />
       </div>
 

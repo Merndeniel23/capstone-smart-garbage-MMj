@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { notifyAdminActionCountsChanged } from "../hooks/useAdminActionCounts";
+import FeedbackToast from "./FeedbackToast";
 
 interface PaymentPortalProps {
   role?:
@@ -248,6 +249,8 @@ export default function PaymentPortal({
 
   const [paymentPage, setPaymentPage] =
     useState(1);
+  const [paymentPageSize, setPaymentPageSize] =
+    useState(10);
   const [selectedPayment, setSelectedPayment] = useState<number | null>(null);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -377,7 +380,6 @@ export default function PaymentPortal({
       });
     }, [payments, search, statusFilter, dateFrom, dateTo]);
 
-  const paymentPageSize = 10;
   const paymentPageCount = Math.max(
     1,
     Math.ceil(
@@ -400,6 +402,7 @@ export default function PaymentPortal({
   }, [
     filteredPayments,
     paymentPage,
+    paymentPageSize,
     paymentPageCount,
   ]);
 
@@ -656,7 +659,7 @@ export default function PaymentPortal({
   };
 
   return (
-    <div className="space-y-4 pb-20 md:pb-0">
+    <div className="sg-page space-y-4">
       <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">
@@ -710,13 +713,14 @@ export default function PaymentPortal({
         </div>
       </header>
 
-      {message && (
+      {message?.type === "success" && (
+        <FeedbackToast message={message.text} onDismiss={() => setMessage(null)} />
+      )}
+
+      {message?.type === "error" && (
         <div
-          className={`rounded-2xl border px-5 py-4 text-sm font-bold ${
-            message.type === "success"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-              : "border-rose-200 bg-rose-50 text-rose-700"
-          }`}
+          role="alert"
+          className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-bold text-rose-700"
         >
           {message.text}
         </div>
@@ -745,7 +749,7 @@ export default function PaymentPortal({
       </section>
       <p className="text-xs text-slate-500">Confirmed collections: PHP {completedTotal.toFixed(2)} · Pending accountability: PHP {pendingTotal.toFixed(2)}</p>
 
-      <div className="grid grid-cols-1 items-center gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_190px_auto]">
+      <section aria-label="Payment filters" className="sg-list-toolbar grid grid-cols-1 items-center gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_190px_auto]">
         <div className="relative flex-1">
           <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
@@ -791,12 +795,12 @@ export default function PaymentPortal({
             <option value="completed">Completed</option>
           </select>
         </div>
-      <div className="flex flex-wrap items-center gap-2 sm:col-span-2 xl:col-span-1">
+        <div className="flex flex-wrap items-center gap-2 sm:col-span-2 xl:col-span-1">
         <label className="text-[10px] font-semibold text-slate-500"><span className="sr-only">From</span><input type="date" value={dateFrom} max={dateTo || undefined} onChange={e => setDateFrom(e.target.value)} className="block h-10 w-[125px] rounded-lg border border-slate-200 bg-white px-2 py-2 text-slate-700" /></label>
         <label className="text-[10px] font-semibold text-slate-500"><span className="sr-only">To</span><input type="date" value={dateTo} min={dateFrom || undefined} onChange={e => setDateTo(e.target.value)} className="block h-10 w-[125px] rounded-lg border border-slate-200 bg-white px-2 py-2 text-slate-700" /></label>
         <button type="button" onClick={() => {setSearch(""); setStatusFilter("all"); setDateFrom(""); setDateTo("");}} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-500">Clear</button>
-      </div>
-      </div>
+        </div>
+      </section>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2" aria-label="Payment status filters">
           {(["all", "pending_leader_verification", "pending_remittance", "pending_admin_confirmation", "completed", "rejected_by_leader", "discrepancy"] as const).map(status => <button key={status} type="button" aria-pressed={statusFilter === status} onClick={() => setStatusFilter(status)} className={`rounded-full border px-3 py-2 text-[10px] font-semibold transition ${statusFilter === status ? "border-emerald-500 bg-emerald-500/15 text-emerald-600" : "border-slate-200 text-slate-500 hover:border-emerald-500"}`}>{status === "all" ? "All" : ({pending_leader_verification:"To verify",pending_remittance:"To remit",pending_admin_confirmation:"To confirm",completed:"Completed",rejected_by_leader:"Rejected",discrepancy:"Discrepancy"}[status])} ({payments.filter(p => status === "all" || p.status === status).length.toLocaleString()})</button>)}
@@ -815,20 +819,38 @@ export default function PaymentPortal({
         </div>
       ) : (
         <div className="space-y-1">
-          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-            <table className="w-full min-w-[900px] text-left text-xs">
+          <div className="sg-desktop-table overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <table className="w-full table-fixed text-left text-xs">
               <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500"><tr>{["Date & time","Transaction #","Resident","Purok","Category","Amount","Status","Actions"].map(title => <th key={title} scope="col" className="px-4 py-3 font-bold">{title}</th>)}</tr></thead>
               <tbody className="divide-y divide-slate-100">{visiblePayments.map(payment => <tr key={payment.id} className="transition hover:bg-emerald-500/5">
                 <td className="whitespace-nowrap px-4 py-3 text-slate-700">{new Date(payment.created_at).toLocaleDateString()}<span className="mt-1 block text-[10px] text-slate-400">{new Date(payment.created_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</span></td>
-                <td className="px-4 py-3 font-mono text-[10px] text-slate-700">{payment.transaction_code}</td>
-                <td className="px-4 py-3 font-semibold text-slate-700">{payment.resident_name}</td>
-                <td className="whitespace-nowrap px-4 py-3 text-slate-500">{payment.purok_name}</td>
-                <td className="px-4 py-3 text-slate-500">{categoryLabel(payment.category)}</td>
+                <td className="truncate px-4 py-3 font-mono text-[10px] text-slate-700" title={payment.transaction_code}>{payment.transaction_code}</td>
+                <td className="truncate px-4 py-3 font-semibold text-slate-700" title={payment.resident_name}>{payment.resident_name}</td>
+                <td className="truncate px-4 py-3 text-slate-500" title={payment.purok_name}>{payment.purok_name}</td>
+                <td className="truncate px-4 py-3 text-slate-500" title={categoryLabel(payment.category)}>{categoryLabel(payment.category)}</td>
                 <td className="whitespace-nowrap px-4 py-3 font-bold tabular-nums text-slate-700">₱{Number(payment.amount).toFixed(2)}</td>
                 <td className="px-4 py-3"><span className={`inline-block whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-bold ${statusClasses(payment.status)}`}>{statusLabel(payment.status)}</span></td>
                 <td className="px-4 py-3"><button type="button" aria-label={`View payment ${payment.transaction_code}`} onClick={() => {resetForm(); setSelectedPayment(payment.id);}} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2 py-1.5 text-slate-600 hover:border-emerald-500 hover:text-emerald-600"><Eye className="h-3.5 w-3.5" />View</button></td>
               </tr>)}</tbody>
             </table>
+          </div>
+          <div className="sg-mobile-list-card space-y-2">
+            {visiblePayments.map((payment) => (
+              <article key={payment.id} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-mono text-[10px] font-bold text-slate-700">{payment.transaction_code}</p>
+                    <p className="mt-1 truncate text-sm font-bold text-slate-900">{payment.resident_name}</p>
+                    <p className="mt-1 text-xs text-slate-500">{payment.purok_name} · {new Date(payment.created_at).toLocaleDateString()}</p>
+                  </div>
+                  <span className={`shrink-0 rounded-full border px-2 py-1 text-[9px] font-bold ${statusClasses(payment.status)}`}>{statusLabel(payment.status)}</span>
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
+                  <span className="font-bold tabular-nums text-slate-800">₱{Number(payment.amount).toFixed(2)}</span>
+                  <button type="button" aria-label={`View payment ${payment.transaction_code}`} onClick={() => { resetForm(); setSelectedPayment(payment.id); }} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700">View details</button>
+                </div>
+              </article>
+            ))}
           </div>
           {filteredPayments.length > 0 && (
             <div className="flex flex-col gap-2 px-1 py-2 sm:flex-row sm:items-center sm:justify-between">
@@ -852,6 +874,21 @@ export default function PaymentPortal({
               </p>
 
               <div className="flex items-center gap-2">
+                <label className="sr-only" htmlFor="payment-page-size">Payments per page</label>
+                <select
+                  id="payment-page-size"
+                  value={paymentPageSize}
+                  onChange={(event) => {
+                    setPaymentPageSize(Number(event.target.value));
+                    setPaymentPage(1);
+                  }}
+                  className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-[10px] font-bold text-slate-600"
+                  aria-label="Payments per page"
+                >
+                  <option value={10}>10 / page</option>
+                  <option value={25}>25 / page</option>
+                  <option value={50}>50 / page</option>
+                </select>
                 <button
                   type="button"
                   onClick={() => setPaymentPage((page) => Math.max(1, page - 1))}
@@ -1201,9 +1238,13 @@ export default function PaymentPortal({
         >
           <form
             onSubmit={submitPayment}
-            className="space-y-4"
+            className="sg-compact-form"
           >
+            <fieldset className="sg-form-section">
+              <legend>Payment details</legend>
+              <div className="sg-form-grid sg-form-grid--two">
             <select
+              aria-label="Payment category"
               value={category}
               onChange={(event) => {
                 const selected =
@@ -1223,7 +1264,7 @@ export default function PaymentPortal({
                   );
                 }
               }}
-              className="w-full rounded-xl border p-3 text-sm"
+              className="min-h-11 w-full rounded-xl border px-3 py-2 text-sm"
             >
               {CATEGORY_OPTIONS.map(
                 (item) => (
@@ -1238,6 +1279,7 @@ export default function PaymentPortal({
             </select>
 
             <input
+              aria-label="Billing period"
               value={billingPeriod}
               onChange={(event) =>
                 setBillingPeriod(
@@ -1245,11 +1287,12 @@ export default function PaymentPortal({
                 )
               }
               placeholder="Billing period"
-              className="w-full rounded-xl border p-3 text-sm"
+              className="min-h-11 w-full rounded-xl border px-3 py-2 text-sm"
               required
             />
 
             <input
+              aria-label="Amount in Philippine pesos"
               type="number"
               min="1"
               step="0.01"
@@ -1259,10 +1302,14 @@ export default function PaymentPortal({
                   event.target.value,
                 )
               }
-              className="w-full rounded-xl border p-3 text-sm"
+              className="min-h-11 w-full rounded-xl border px-3 py-2 text-sm"
               required
             />
+              </div>
+            </fieldset>
 
+            <fieldset className="sg-form-section">
+              <legend>Payment method</legend>
             <div className="grid grid-cols-3 gap-2">
               {[
                 ["gcash", "GCash"],
@@ -1291,7 +1338,7 @@ export default function PaymentPortal({
               ))}
             </div>
 
-            <div className="rounded-xl bg-slate-50 p-4 text-xs text-slate-600">
+            <div className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
               {method ===
               "over_the_counter"
                 ? "Pay the Purok Leader in person. Enter the official receipt number and upload a photo of the signed receipt."
@@ -1299,6 +1346,7 @@ export default function PaymentPortal({
             </div>
 
             <input
+              aria-label={method === "over_the_counter" ? "Official receipt number" : "Payment reference number"}
               value={reference}
               onChange={(event) =>
                 setReference(
@@ -1311,7 +1359,7 @@ export default function PaymentPortal({
                   ? "Official receipt number"
                   : "GCash / Maya reference number"
               }
-              className="w-full rounded-xl border p-3 text-sm"
+              className="mt-3 min-h-11 w-full rounded-xl border px-3 py-2 text-sm"
               required
             />
 
@@ -1330,6 +1378,7 @@ export default function PaymentPortal({
                 )
               }
             />
+            </fieldset>
 
             <button
               type="submit"

@@ -1,6 +1,7 @@
 import {
   FormEvent,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -8,7 +9,9 @@ import {
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useAppState } from "../context/AppStateContext";
+import ConfirmDialog from "./ConfirmDialog";
 import MapView from "./MapView";
+import Pagination, { DEFAULT_PAGE_SIZE } from "./Pagination";
 import { isBinPhoto, MAX_BIN_PHOTO_BYTES } from "../../shared/binPhotos";
 
 import {
@@ -18,6 +21,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Search,
   Save,
   Trash2,
   X,
@@ -38,7 +42,99 @@ type GarbageBin = {
   purok_name: string;
   barangay_id?: number | null;
   barangay_name?: string | null;
+  last_inspected_at?: string | null;
+  is_scheduled_today?: number | boolean;
+  schedule_day?: string | null;
+  schedule_start_time?: string | null;
+  schedule_end_time?: string | null;
+  schedule_notes?: string | null;
 };
+
+type BinFilter = "all" | "needs_collection" | "full" | "overflowing" | "scheduled_today";
+
+const BIN_FILTERS: { value: BinFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "needs_collection", label: "Needs Collection" },
+  { value: "full", label: "Full" },
+  { value: "overflowing", label: "Overflowing" },
+  { value: "scheduled_today", label: "Scheduled Today" },
+];
+
+function normalizedStatus(bin: GarbageBin): string {
+  const status = String(bin.current_status || "empty").toLowerCase().replaceAll("-", "_");
+  return status === "overflow" ? "overflowing" : status;
+}
+
+function needsCollection(bin: GarbageBin): boolean {
+  return Number(bin.is_active) === 1 && (
+    ["full", "overflowing"].includes(normalizedStatus(bin)) || Number(bin.is_scheduled_today) === 1
+  );
+}
+
+function matchesBinFilter(bin: GarbageBin, filter: BinFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "needs_collection") return needsCollection(bin);
+  if (Number(bin.is_active) !== 1) return false;
+  return filter === "scheduled_today"
+    ? Number(bin.is_scheduled_today) === 1
+    : normalizedStatus(bin) === filter;
+}
+
+function binPriority(bin: GarbageBin): number {
+  if (Number(bin.is_active) !== 1) return 5;
+  if (normalizedStatus(bin) === "overflowing") return 0;
+  if (normalizedStatus(bin) === "full") return 1;
+  if (Number(bin.is_scheduled_today) === 1) return 2;
+  return 3;
+}
+
+function binStatusLabel(bin: GarbageBin): string {
+  return Number(bin.is_active) === 1 ? normalizedStatus(bin).replaceAll("_", " ") : "Inactive";
+}
+
+function binStatusClass(bin: GarbageBin): string {
+  if (Number(bin.is_active) !== 1) return "bg-slate-100 text-slate-600";
+  if (normalizedStatus(bin) === "overflowing") return "bg-rose-100 text-rose-800";
+  if (normalizedStatus(bin) === "full") return "bg-amber-100 text-amber-800";
+  return "bg-emerald-50 text-emerald-800";
+}
+
+function binMarkerIcon(bin: GarbageBin, selected: boolean): L.DivIcon {
+  const color = Number(bin.is_active) !== 1 ? "#64748b"
+    : normalizedStatus(bin) === "overflowing" ? "#e11d48"
+    : normalizedStatus(bin) === "full" ? "#d97706" : "#047857";
+  return L.divIcon({
+    className: "municipal-bin-marker",
+    html: `<div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:${color};border:3px solid white;border-radius:50%;box-shadow:0 0 0 ${selected ? "4px #0f172a" : "1px rgba(15,23,42,.3)"};color:white"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></div>`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+    popupAnchor: [0, -18],
+  });
+}
+
+function formatBinTime(value?: string | null): string {
+  if (!value) return "";
+  const match = value.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return value;
+  const hour = Number(match[1]);
+  return `${hour % 12 || 12}:${match[2]} ${hour >= 12 ? "PM" : "AM"}`;
+}
+
+function inspectionDate(value?: string | null): string {
+  if (!value) return "No inspection recorded";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Date unavailable" : date.toLocaleString();
+}
+
+function collectionTimeLabel(bin: GarbageBin): string {
+  if (Number(bin.is_scheduled_today) !== 1) return "No collection scheduled today";
+  const start = formatBinTime(bin.schedule_start_time);
+  const end = formatBinTime(bin.schedule_end_time);
+  if (start && end) return `${start} – ${end}`;
+  if (start) return `${start} onward`;
+  if (end) return `Until ${end}`;
+  return "Scheduled; time not specified";
+}
 
 type BinForm = {
   photo: string;
@@ -163,7 +259,6 @@ export default function ManageGarbageBins() {
   const canEditBins = isPurokLeader;
   const canDeactivateBins = isPurokLeader;
 
-  const isAdminView = isBarangayCaptain || isSuperAdmin;
   const canViewCollectorMonitoring =
     isBarangayCaptain ||
     isSuperAdmin ||
@@ -180,9 +275,66 @@ export default function ManageGarbageBins() {
 
   const selectedMarkerRef =
     useRef<L.Marker | null>(null);
+  const markersByIdRef = useRef(new Map<number, L.Marker>());
 
   const [bins, setBins] =
     useState<GarbageBin[]>([]);
+  const [binFilter, setBinFilter] = useState<BinFilter>("all");
+  const [barangayFilter, setBarangayFilter] = useState("");
+  const [search, setSearch] = useState("");
+  const [selectedBinId, setSelectedBinId] = useState<number | null>(null);
+  const [pendingDeactivateId, setPendingDeactivateId] = useState<number | null>(null);
+  const [deactivating, setDeactivating] = useState(false);
+  const [binPage, setBinPage] = useState(1);
+  const [binPageSize, setBinPageSize] = useState(DEFAULT_PAGE_SIZE);
+
+  const scopedBins = useMemo(() => bins.filter(bin => {
+    if (!isSuperAdmin) return true;
+    const matchesBarangay = !barangayFilter || String(bin.barangay_id) === barangayFilter;
+    const query = search.trim().toLowerCase();
+    return matchesBarangay && (!query || [bin.bin_code, bin.location_name, bin.purok_name, bin.barangay_name]
+      .some(value => value?.toLowerCase().includes(query)));
+  }), [bins, isSuperAdmin, barangayFilter, search]);
+
+  const visibleBins = useMemo(() => isSuperAdmin
+    ? scopedBins.filter(bin => matchesBinFilter(bin, binFilter))
+      .sort((left, right) => binPriority(left) - binPriority(right) || left.bin_code.localeCompare(right.bin_code))
+    : bins, [bins, scopedBins, binFilter, isSuperAdmin]);
+
+  const barangayOptions = useMemo(() => Array.from(new Map(bins
+    .filter(bin => bin.barangay_id != null)
+    .map(bin => [String(bin.barangay_id), bin.barangay_name || `Barangay ${bin.barangay_id}`])).entries())
+    .sort((left, right) => left[1].localeCompare(right[1])), [bins]);
+  const binPageCount = Math.max(1, Math.ceil(visibleBins.length / binPageSize));
+  const safeBinPage = Math.min(binPage, binPageCount);
+  const paginatedBins = useMemo(() => visibleBins.slice(
+    (safeBinPage - 1) * binPageSize,
+    safeBinPage * binPageSize,
+  ), [visibleBins, safeBinPage, binPageSize]);
+  const selectedBin = visibleBins.find(bin => bin.id === selectedBinId) || null;
+  const mappedBinCount = visibleBins.filter(hasValidCoordinates).length;
+
+  useEffect(() => {
+    if (binPage > binPageCount) setBinPage(binPageCount);
+  }, [binPage, binPageCount]);
+
+  useEffect(() => {
+    setBinPage(1);
+  }, [binFilter, barangayFilter, search]);
+
+  const focusBin = (bin: GarbageBin) => {
+    setSelectedBinId(bin.id);
+    const binIndex = visibleBins.findIndex((item) => item.id === bin.id);
+    if (binIndex >= 0) {
+      setBinPage(Math.floor(binIndex / binPageSize) + 1);
+    }
+    if (hasValidCoordinates(bin)) {
+      mapRef.current?.flyTo([Number(bin.latitude), Number(bin.longitude)], 18, { animate: false });
+      markersByIdRef.current.get(bin.id)?.openPopup();
+    } else {
+      mapRef.current?.closePopup();
+    }
+  };
 
   const [currentUser, setCurrentUser] =
     useState<CurrentUserProfile | null>(null);
@@ -241,7 +393,7 @@ export default function ManageGarbageBins() {
 
   const [adminView, setAdminView] =
     useState<"bins" | "tracking">(
-      canViewCollectorMonitoring
+      canViewCollectorMonitoring && !isSuperAdmin
         ? "tracking"
         : "bins",
     );
@@ -409,13 +561,17 @@ export default function ManageGarbageBins() {
       },
     );
 
-    setTimeout(() => {
+    const resizeTimer = window.setTimeout(() => {
       map.invalidateSize();
     }, 200);
 
     return () => {
+      window.clearTimeout(resizeTimer);
       map.remove();
       mapRef.current = null;
+      binMarkersRef.current = null;
+      selectedMarkerRef.current = null;
+      markersByIdRef.current.clear();
     };
   }, [canAddBins, adminView]);
 
@@ -423,13 +579,14 @@ export default function ManageGarbageBins() {
     const markerLayer =
       binMarkersRef.current;
 
-    if (!markerLayer) {
+    if (adminView !== "bins" || !markerLayer) {
       return;
     }
 
     markerLayer.clearLayers();
+    markersByIdRef.current.clear();
 
-    bins.forEach((bin) => {
+    visibleBins.forEach((bin) => {
       const latitude =
         Number(bin.latitude);
 
@@ -438,42 +595,50 @@ export default function ManageGarbageBins() {
 
       if (
         !hasValidCoordinates(bin) ||
-        Number(bin.is_active) === 0
+        (!isSuperAdmin && Number(bin.is_active) === 0)
       ) {
         return;
       }
 
-      const marker = L.marker([
-        latitude,
-        longitude,
-      ]).addTo(markerLayer);
+      const marker = L.marker([latitude, longitude], {
+        title: `${bin.bin_code}: ${binStatusLabel(bin)}`,
+        alt: `Select garbage bin ${bin.bin_code}`,
+        ...(isSuperAdmin ? { icon: binMarkerIcon(bin, false) } : {}),
+      }).addTo(markerLayer);
+      markersByIdRef.current.set(bin.id, marker);
 
-      marker.bindPopup(`
-        <div style="min-width: 180px;">
-          ${isBinPhoto(bin.photo_path) ? `<img src="${bin.photo_path}" alt="Garbage bin" style="width:100%;max-width:240px;height:140px;object-fit:cover;border-radius:10px;margin-bottom:8px" />` : ""}
-          <strong>${bin.bin_code}</strong>
-          <br />
-          ${bin.location_name}
-          <br />
-          ${bin.purok_name || "Assigned purok"}
-          <br />
-          Status:
-          ${String(
-            bin.current_status || "empty",
-          ).replaceAll("_", " ")}
-        </div>
-      `);
+      // Render database text as text nodes, so location names cannot become popup HTML.
+      const popup = document.createElement("div");
+      popup.style.minWidth = "180px";
+      if (isBinPhoto(bin.photo_path)) {
+        const photo = document.createElement("img");
+        photo.src = bin.photo_path;
+        photo.alt = `Garbage bin ${bin.bin_code}`;
+        photo.style.cssText = "width:100%;max-width:240px;height:140px;object-fit:cover;border-radius:10px;margin-bottom:8px";
+        popup.append(photo);
+      }
+      const title = document.createElement("strong");
+      title.textContent = bin.bin_code;
+      popup.append(title);
+      for (const value of [bin.location_name, [bin.barangay_name, bin.purok_name].filter(Boolean).join(" · "), `Status: ${binStatusLabel(bin)}`]) {
+        const line = document.createElement("div");
+        line.textContent = value;
+        popup.append(line);
+      }
+      marker.bindPopup(popup);
 
-      if (canEditBins) {
+      if (isSuperAdmin) {
+        marker.on("click", () => focusBin(bin));
+      } else if (canEditBins) {
         marker.on("click", () => {
           openEditForm(bin);
         });
       }
     });
 
-    const activeBins = bins.filter(
+    const activeBins = visibleBins.filter(
       (bin) =>
-        Number(bin.is_active) === 1 &&
+        (isSuperAdmin || Number(bin.is_active) === 1) &&
         hasValidCoordinates(bin),
     );
 
@@ -500,10 +665,20 @@ export default function ManageGarbageBins() {
       );
     }
 
-    window.setTimeout(() => {
+    const resizeTimer = window.setTimeout(() => {
       mapRef.current?.invalidateSize();
     }, 100);
-  }, [bins, canEditBins]);
+    return () => window.clearTimeout(resizeTimer);
+  }, [visibleBins, canEditBins, isSuperAdmin, adminView]);
+
+  useEffect(() => {
+    if (!isSuperAdmin || adminView !== "bins") return;
+    for (const bin of visibleBins) {
+      const marker = markersByIdRef.current.get(bin.id);
+      marker?.setIcon(binMarkerIcon(bin, bin.id === selectedBinId));
+      marker?.setZIndexOffset(bin.id === selectedBinId ? 1000 : 0);
+    }
+  }, [selectedBinId, visibleBins, isSuperAdmin, adminView]);
 
   const removeSelectedMarker = () => {
     if (selectedMarkerRef.current) {
@@ -566,6 +741,7 @@ export default function ManageGarbageBins() {
 
     setSuccessMessage("");
     setErrorMessage("");
+    setDeactivating(true);
 
     photoRequest.current++;
     setPhotoLoading(false);
@@ -709,15 +885,6 @@ export default function ManageGarbageBins() {
       return;
     }
 
-    const confirmed =
-      window.confirm(
-        "Deactivate this garbage bin?",
-      );
-
-    if (!confirmed) {
-      return;
-    }
-
     setSuccessMessage("");
     setErrorMessage("");
 
@@ -741,6 +908,9 @@ export default function ManageGarbageBins() {
           ? error.message
           : "Failed to deactivate garbage bin.",
       );
+    } finally {
+      setDeactivating(false);
+      setPendingDeactivateId(null);
     }
   };
 
@@ -750,6 +920,7 @@ export default function ManageGarbageBins() {
         <div className="flex flex-wrap gap-2 rounded-2xl border bg-white p-2 shadow-sm">
           <button
             type="button"
+            aria-pressed={adminView === "bins"}
             onClick={() => setAdminView("bins")}
             className={`rounded-xl px-4 py-2 text-sm font-black transition ${
               adminView === "bins"
@@ -762,6 +933,7 @@ export default function ManageGarbageBins() {
 
           <button
             type="button"
+            aria-pressed={adminView === "tracking"}
             onClick={() => setAdminView("tracking")}
             className={`rounded-xl px-4 py-2 text-sm font-black transition ${
               adminView === "tracking"
@@ -782,11 +954,13 @@ export default function ManageGarbageBins() {
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-2xl font-black text-slate-900">
-            Garbage Bin Locations
+            {isSuperAdmin ? "Municipal Bins" : "Garbage Bin Locations"}
           </h1>
 
           <p className="text-sm text-slate-500">
-            {isBarangayCaptain
+            {isSuperAdmin
+              ? "Monitor bins across all barangays. Select a map marker or a bin in the list to see its details."
+              : isBarangayCaptain
               ? "Register garbage-bin locations within your assigned barangay and choose the correct purok."
               : "Click the map to register the exact garbage-bin location in your assigned purok."}
           </p>
@@ -796,10 +970,11 @@ export default function ManageGarbageBins() {
           <button
             type="button"
             onClick={loadData}
-            className="flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-bold"
+            disabled={loading}
+            className="flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-bold disabled:opacity-50"
           >
-            <RefreshCw className="h-4 w-4" />
-            Refresh
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            {loading ? "Refreshing..." : "Refresh"}
           </button>
 
           {canAddBins && (
@@ -818,7 +993,42 @@ export default function ManageGarbageBins() {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      {isSuperAdmin ? (
+        <div className="space-y-4 rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="grid gap-3 sm:grid-cols-[1fr_240px]">
+            <label className="block text-xs font-bold text-slate-600">
+              Search bins
+              <div className="relative mt-1">
+                <Search aria-hidden="true" className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                <input type="search" value={search} placeholder="Bin code, location or purok"
+                  onChange={event => { setSearch(event.target.value); setSelectedBinId(null); }}
+                  className="w-full rounded-xl border bg-white py-2.5 pl-9 pr-3 text-sm font-normal" />
+              </div>
+            </label>
+            <label className="block text-xs font-bold text-slate-600">
+              Barangay
+              <select value={barangayFilter} onChange={event => { setBarangayFilter(event.target.value); setSelectedBinId(null); }}
+                className="mt-1 w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-normal">
+                <option value="">All barangays</option>
+                {barangayOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Filter bins by collection status">
+            {BIN_FILTERS.map(filter => (
+              <button key={filter.value} type="button" aria-pressed={binFilter === filter.value}
+                onClick={() => { setBinFilter(filter.value); setSelectedBinId(null); }}
+                className={`rounded-xl border px-3 py-2 text-xs font-bold transition ${binFilter === filter.value
+                  ? "border-emerald-700 bg-emerald-700 text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+                {filter.label} <span className="ml-1 opacity-75">{loading ? "…" : scopedBins.filter(bin => matchesBinFilter(bin, filter.value)).length}</span>
+              </button>
+            ))}
+          </div>
+          <p className="text-xs leading-relaxed text-slate-500">
+            Needs Collection includes active bins that are full, overflowing, or scheduled today. Overflowing and full bins appear first.
+          </p>
+        </div>
+      ) : <div className="grid gap-3 sm:grid-cols-2">
         <div className="rounded-xl border bg-white p-4 shadow-sm">
           <p className="text-xs font-bold uppercase text-slate-500">
             Assigned Barangay
@@ -836,30 +1046,80 @@ export default function ManageGarbageBins() {
             {assignedPurok}
           </p>
         </div>
-      </div>
+      </div>}
 
       {successMessage && (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
+        <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
           {successMessage}
         </div>
       )}
 
       {errorMessage && (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
           {errorMessage}
         </div>
       )}
 
       <div className="grid gap-5 xl:grid-cols-[1.6fr_1fr]">
         <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
+          {isSuperAdmin && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3 text-xs text-slate-500">
+              <span aria-live="polite">{loading ? "Loading bin locations..." : `${mappedBinCount} of ${visibleBins.length} matching bins have coordinates`}</span>
+              <span className="flex gap-3"><span className="text-rose-700">● Overflowing</span><span className="text-amber-700">● Full</span></span>
+            </div>
+          )}
           <div
             ref={mapContainerRef}
-            className="h-[520px] w-full"
+            role="region"
+            aria-label="Garbage bin locations map; bins can also be selected from the list below"
+            className="relative z-0 h-[360px] w-full sm:h-[520px]"
           />
         </div>
 
-        <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          {!canAddBins ? (
+        <div className="rounded-2xl border bg-white p-5 shadow-sm" aria-label={isSuperAdmin ? "Selected bin details" : undefined}>
+          {isSuperAdmin ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="font-black text-slate-900">Bin Details</h2>
+                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">View only</span>
+              </div>
+              {selectedBin ? (
+                <div className="space-y-4" aria-live="polite">
+                  {isBinPhoto(selectedBin.photo_path) && <img src={selectedBin.photo_path} alt={`Garbage bin ${selectedBin.bin_code}`} className="h-40 w-full rounded-xl object-cover" />}
+                  <div>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-xl font-black text-slate-900">{selectedBin.bin_code}</h3>
+                      <span className={`rounded-full px-3 py-1 text-xs font-bold capitalize ${binStatusClass(selectedBin)}`}>{binStatusLabel(selectedBin)}</span>
+                    </div>
+                    <p className="mt-2 text-sm text-slate-600">{selectedBin.location_name || "Location description unavailable"}</p>
+                  </div>
+                  <dl className="grid grid-cols-2 gap-4 text-sm">
+                    <div><dt className="text-xs text-slate-500">Barangay</dt><dd className="mt-1 font-semibold text-slate-800">{selectedBin.barangay_name || "Not assigned"}</dd></div>
+                    <div><dt className="text-xs text-slate-500">Purok</dt><dd className="mt-1 font-semibold text-slate-800">{selectedBin.purok_name || "Not assigned"}</dd></div>
+                    <div><dt className="text-xs text-slate-500">Condition</dt><dd className="mt-1 font-semibold capitalize text-slate-800">{selectedBin.condition_status?.replaceAll("_", " ") || "Not recorded"}</dd></div>
+                    <div><dt className="text-xs text-slate-500">Last inspected</dt><dd className="mt-1 font-semibold text-slate-800">{inspectionDate(selectedBin.last_inspected_at)}</dd></div>
+                  </dl>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs font-bold text-slate-500">Barangay collection today</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-800">{collectionTimeLabel(selectedBin)}</p>
+                    {selectedBin.schedule_notes && <p className="mt-2 text-xs text-slate-500">{selectedBin.schedule_notes}</p>}
+                  </div>
+                  {hasValidCoordinates(selectedBin) ? (
+                    <button type="button" onClick={() => focusBin(selectedBin)} className="flex w-full items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-bold text-emerald-700 hover:bg-emerald-50">
+                      <MapPin className="h-4 w-4" /> Focus on map
+                    </button>
+                  ) : <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">This bin has no valid coordinates. Its record is available in the list.</p>}
+                </div>
+              ) : (
+                <div className="flex min-h-56 flex-col items-center justify-center text-center">
+                  <MapPin className="mb-3 h-10 w-10 text-emerald-700" />
+                  <h3 className="font-bold text-slate-900">{loading ? "Loading bins..." : "Select a bin to inspect"}</h3>
+                  <p className="mt-2 max-w-xs text-sm text-slate-500">Choose a marker on the map or a bin from the list to view its status, location and collection schedule.</p>
+                </div>
+              )}
+              <p className="border-t pt-3 text-xs leading-relaxed text-slate-500">Municipal Administrators monitor bins. Barangay Captains can register bins in their barangay; assigned Purok Leaders maintain their bins.</p>
+            </div>
+          ) : !canAddBins ? (
             <div className="flex h-full min-h-[420px] flex-col items-center justify-center text-center">
               <MapPin className="mb-3 h-10 w-10 text-emerald-700" />
 
@@ -1081,10 +1341,11 @@ export default function ManageGarbageBins() {
                 ? "Garbage Bins in My Barangay"
                 : "Garbage Bins in My Purok"}
           </h2>
+          {isSuperAdmin && <p className="mt-1 text-xs text-slate-500" aria-live="polite">{loading ? "Loading records..." : `${visibleBins.length} of ${bins.length} bins shown`}. Select a bin to view details and focus its marker.</p>}
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[850px] text-left text-sm">
+        <div className="sg-desktop-table overflow-hidden">
+          <table aria-busy={loading} className="w-full table-fixed text-left text-xs">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500">
               <tr>
                 <th className="px-5 py-3">
@@ -1094,9 +1355,9 @@ export default function ManageGarbageBins() {
                   Location
                 </th>
                 <th className="px-3 py-3">
-                  Purok
+                  {isSuperAdmin ? "Barangay / Purok" : "Purok"}
                 </th>
-                <th className="px-3 py-3">
+                <th className="hidden px-3 py-3 xl:table-cell">
                   Coordinates
                 </th>
                 <th className="px-3 py-3">
@@ -1111,41 +1372,41 @@ export default function ManageGarbageBins() {
             </thead>
 
             <tbody>
-              {bins.map((bin) => (
+              {paginatedBins.map((bin) => (
                 <tr
                   key={bin.id}
-                  className="border-t"
+                  onClick={isSuperAdmin ? () => focusBin(bin) : undefined}
+                  className={`border-t transition ${isSuperAdmin ? selectedBinId === bin.id
+                    ? "cursor-pointer bg-emerald-50 ring-1 ring-inset ring-emerald-300"
+                    : "cursor-pointer hover:bg-slate-50" : ""}`}
                 >
-                  <td className="px-5 py-3 font-black">
-                    {bin.bin_code}
+                  <td className="truncate px-5 py-3 font-black" title={bin.bin_code}>
+                    {isSuperAdmin ? <button type="button" aria-pressed={selectedBinId === bin.id}
+                      title={`View details for ${bin.bin_code}`}
+                      onClick={event => { event.stopPropagation(); focusBin(bin); }}
+                      className="rounded text-left text-emerald-700 underline decoration-emerald-200 underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-600">
+                      {bin.bin_code}
+                    </button> : bin.bin_code}
+                    {isSuperAdmin && selectedBinId === bin.id && <span className="mt-1 block text-[10px] font-bold uppercase text-emerald-700">Selected</span>}
                   </td>
 
-                  <td className="px-3 py-3">
+                  <td className="truncate px-3 py-3" title={bin.location_name}>
                     {bin.location_name}
                   </td>
 
                   <td className="px-3 py-3">
+                    {isSuperAdmin && <span className="block font-semibold text-slate-800">{bin.barangay_name || "Not assigned"}</span>}
                     {bin.purok_name ||
                       assignedPurok}
                   </td>
 
-                  <td className="px-3 py-3 text-xs">
-                    {bin.latitude},{" "}
-                    {bin.longitude}
+                  <td className="hidden px-3 py-3 text-xs xl:table-cell">
+                    {isSuperAdmin && !hasValidCoordinates(bin) ? <span className="text-amber-700">No valid coordinates</span> : `${bin.latitude}, ${bin.longitude}`}
                   </td>
 
                   <td className="px-3 py-3 capitalize">
-                    {Number(
-                      bin.is_active,
-                    ) === 1
-                      ? String(
-                          bin.current_status ||
-                            "empty",
-                        ).replaceAll(
-                          "_",
-                          " ",
-                        )
-                      : "Inactive"}
+                    <span className={isSuperAdmin ? `inline-block rounded-full px-2.5 py-1 text-xs font-bold ${binStatusClass(bin)}` : ""}>{binStatusLabel(bin)}</span>
+                    {isSuperAdmin && Number(bin.is_active) === 1 && Number(bin.is_scheduled_today) === 1 && <span className="mt-1 block text-xs text-emerald-700">Scheduled today</span>}
                   </td>
 
                   {canEditBins && (
@@ -1167,11 +1428,7 @@ export default function ManageGarbageBins() {
                         ) === 1 && (
                           <button
                             type="button"
-                            onClick={() =>
-                              handleDeactivate(
-                                bin.id,
-                              )
-                            }
+                            onClick={() => setPendingDeactivateId(bin.id)}
                             className="rounded-lg border p-2 text-rose-600"
                             title="Deactivate garbage bin"
                           >
@@ -1185,15 +1442,22 @@ export default function ManageGarbageBins() {
               ))}
 
               {!loading &&
-                bins.length === 0 && (
+                visibleBins.length === 0 && (
                   <tr>
                     <td
                       colSpan={canEditBins ? 6 : 5}
                       className="p-8 text-center text-slate-500"
                     >
-                      {isBarangayCaptain
+                      {errorMessage ? "Bins could not be loaded. Use Refresh to try again."
+                        : isSuperAdmin ? (bins.length === 0 ? "No garbage bins have been registered yet."
+                          : binFilter === "needs_collection" ? "No bins currently require collection for these filters."
+                          : "No bins match these filters. Try another status, barangay or search.")
+                        : isBarangayCaptain
                         ? "No garbage bins found in your assigned barangay. Use Add Bin to register the first one."
                         : "No garbage bins found in your assigned purok. Click the map to add the first one."}
+                      {isSuperAdmin && !errorMessage && (binFilter !== "all" || barangayFilter || search) && <button type="button"
+                        onClick={() => { setBinFilter("all"); setBarangayFilter(""); setSearch(""); setSelectedBinId(null); }}
+                        className="mx-auto mt-3 block rounded-lg border px-4 py-2 text-sm font-bold text-emerald-700">Clear filters</button>}
                     </td>
                   </tr>
                 )}
@@ -1211,8 +1475,68 @@ export default function ManageGarbageBins() {
             </tbody>
           </table>
         </div>
-      </div>
+        <div className="sg-mobile-list-card space-y-2 p-3">
+          {!loading && paginatedBins.map((bin) => (
+            <article
+              key={bin.id}
+              className={`rounded-xl border bg-white p-3 shadow-sm ${
+                isSuperAdmin && selectedBinId === bin.id
+                  ? "border-emerald-400 ring-1 ring-emerald-200"
+                  : "border-slate-200"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate font-mono text-xs font-black text-slate-800">{bin.bin_code}</p>
+                  <p className="mt-1 truncate text-sm font-bold text-slate-900">{bin.location_name}</p>
+                  <p className="mt-1 truncate text-xs text-slate-500">{[bin.barangay_name, bin.purok_name || assignedPurok].filter(Boolean).join(" / ") || "Area not recorded"}</p>
+                </div>
+                <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold capitalize ${binStatusClass(bin)}`}>{binStatusLabel(bin)}</span>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3 text-xs">
+                <span className={Number(bin.is_scheduled_today) === 1 ? "font-semibold text-emerald-700" : "text-slate-500"}>{collectionTimeLabel(bin)}</span>
+                <div className="flex items-center gap-1">
+                  {isSuperAdmin && <button type="button" onClick={() => focusBin(bin)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 font-bold text-emerald-700" title={`View details for ${bin.bin_code}`}>Details</button>}
+                  {canEditBins && <button type="button" onClick={() => openEditForm(bin)} className="rounded-lg border border-slate-200 p-1.5 text-slate-700" title="Edit garbage bin" aria-label={`Edit ${bin.bin_code}`}><Pencil className="h-4 w-4" /></button>}
+                  {canEditBins && Number(bin.is_active) === 1 && <button type="button" onClick={() => setPendingDeactivateId(bin.id)} className="rounded-lg border border-rose-100 p-1.5 text-rose-600" title="Deactivate garbage bin" aria-label={`Deactivate ${bin.bin_code}`}><Trash2 className="h-4 w-4" /></button>}
+                </div>
+              </div>
+            </article>
+          ))}
+          {!loading && visibleBins.length === 0 && <p className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs text-slate-500">{errorMessage ? "Bins could not be loaded. Use Refresh to try again." : "No garbage bins match the current filters."}</p>}
+          {loading && <p className="rounded-xl border border-slate-200 p-6 text-center text-xs text-slate-500">Loading garbage bins...</p>}
         </div>
+        {!loading && visibleBins.length > 0 && (
+          <div className="px-5 pb-4">
+            <Pagination
+              page={safeBinPage}
+              pageSize={binPageSize}
+              totalItems={visibleBins.length}
+              onPageChange={setBinPage}
+              onPageSizeChange={(pageSize) => {
+                setBinPageSize(pageSize);
+                setBinPage(1);
+              }}
+              compact
+              itemLabel="garbage bins"
+            />
+          </div>
+        )}
+      </div>
+      <ConfirmDialog
+        open={pendingDeactivateId !== null}
+        title="Deactivate this garbage bin?"
+        description="The bin will no longer be active for collection. Its recorded location and history will remain available."
+        confirmLabel="Deactivate Bin"
+        cancelLabel="Keep Active"
+        destructive
+        busy={deactivating}
+        onCancel={() => setPendingDeactivateId(null)}
+        onConfirm={() => {
+          if (pendingDeactivateId !== null) void handleDeactivate(pendingDeactivateId);
+        }}
+      />
+    </div>
       )}
     </div>
   );

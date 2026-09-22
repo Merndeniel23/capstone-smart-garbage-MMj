@@ -10,10 +10,12 @@ import {
   MapPin,
   Plus,
   RefreshCw,
+  Search,
   Trash2,
   X,
 } from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
+import Pagination, { DEFAULT_PAGE_SIZE } from './Pagination';
 
 type DatabaseStatus =
   | 'empty'
@@ -108,6 +110,8 @@ const statusLabel: Record<DatabaseStatus, string> = {
   damaged: 'Damaged',
 };
 
+type InspectionFilter = 'all' | DatabaseStatus;
+
 export default function BinInspections() {
   const { userRole } = useAppState();
   const canCreateInspection = userRole === 'leader';
@@ -120,6 +124,10 @@ export default function BinInspections() {
 
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<InspectionFilter>('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
 
   const loadInspections = async () => {
     setLoading(true);
@@ -164,6 +172,38 @@ export default function BinInspections() {
     }),
     [inspections],
   );
+
+  const filteredInspections = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    return inspections.filter((item) => {
+      const matchesStatus = statusFilter === 'all' || item.status === statusFilter;
+      const matchesSearch = !query || [
+        item.id,
+        item.bin_id,
+        item.bin_code,
+        item.inspector,
+        item.remarks,
+      ].some((value) => String(value || '').toLowerCase().includes(query));
+
+      return matchesStatus && matchesSearch;
+    });
+  }, [inspections, search, statusFilter]);
+
+  const pageCount = Math.max(1, Math.ceil(filteredInspections.length / pageSize));
+  const safePage = Math.min(page, pageCount);
+  const paginatedInspections = useMemo(
+    () => filteredInspections.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [filteredInspections, pageSize, safePage],
+  );
+
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, statusFilter]);
 
   const handleStatusChange = (status: DatabaseStatus) => {
     setForm((previous) => ({
@@ -360,10 +400,39 @@ export default function BinInspections() {
         </div>
       </div>
 
+      <section className="grid gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm sm:grid-cols-[1fr_190px]" aria-label="Inspection record filters">
+        <label className="text-xs font-bold text-slate-600">
+          Search inspections
+          <span className="relative mt-1 block">
+            <Search aria-hidden="true" className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Bin, inspector, remarks, or ID"
+              className="min-h-10 w-full rounded-xl border border-slate-200 py-2 pl-9 pr-3 text-sm font-normal"
+            />
+          </span>
+        </label>
+        <label className="text-xs font-bold text-slate-600">
+          Status
+          <select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value as InspectionFilter)}
+            className="mt-1 min-h-10 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal"
+          >
+            <option value="all">All statuses</option>
+            {Object.entries(statusLabel).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </label>
+      </section>
+
       {canCreateInspection && showForm && (
         <form
           onSubmit={submitInspection}
-          className="bg-white rounded-3xl border border-slate-100 shadow-xl p-6 space-y-4"
+          className="bg-white rounded-2xl border border-slate-100 shadow-xl p-4 space-y-3"
         >
           <div>
             <h2 className="font-black text-xl">
@@ -375,7 +444,7 @@ export default function BinInspections() {
             </p>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-4">
+          <div className="grid md:grid-cols-2 gap-3">
             <label className="text-xs font-bold text-slate-600">
               Numeric Bin ID
 
@@ -391,7 +460,7 @@ export default function BinInspections() {
                     binId: event.target.value,
                   }))
                 }
-                className="mt-2 w-full p-3 rounded-xl border border-slate-200"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5"
               />
             </label>
 
@@ -405,7 +474,7 @@ export default function BinInspections() {
                     event.target.value as DatabaseStatus,
                   )
                 }
-                className="mt-2 w-full p-3 rounded-xl border border-slate-200 bg-white"
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5"
               >
                 <option value="empty">Empty</option>
                 <option value="half_full">Half-full</option>
@@ -430,7 +499,7 @@ export default function BinInspections() {
                     estimatedFillLevel: event.target.value,
                   }))
                 }
-                className="mt-2 w-full p-3 rounded-xl border border-slate-200"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5"
               />
             </label>
 
@@ -447,7 +516,7 @@ export default function BinInspections() {
                     photoPath: event.target.value,
                   }))
                 }
-                className="mt-2 w-full p-3 rounded-xl border border-slate-200"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5"
               />
             </label>
 
@@ -464,7 +533,7 @@ export default function BinInspections() {
                     remarks: event.target.value,
                   }))
                 }
-                className="mt-2 w-full p-3 rounded-xl border border-slate-200"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5"
               />
             </label>
           </div>
@@ -479,43 +548,55 @@ export default function BinInspections() {
         </form>
       )}
 
-      <div className="space-y-3">
+      <section className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+          <div>
+            <h2 className="font-black text-slate-900">Inspection records</h2>
+            <p className="mt-0.5 text-xs text-slate-500">Showing compact records; use the filters to narrow the list.</p>
+          </div>
+          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600">
+            {filteredInspections.length} shown
+          </span>
+        </div>
         {loading ? (
-          <div className="bg-white rounded-3xl border border-slate-100 p-8 text-center text-sm font-bold text-slate-500">
+          <div className="p-8 text-center text-sm font-bold text-slate-500">
             Loading inspection records...
           </div>
-        ) : inspections.length === 0 ? (
-          <div className="bg-white rounded-3xl border border-slate-100 p-8 text-center">
+        ) : filteredInspections.length === 0 ? (
+          <div className="p-8 text-center">
             <ClipboardCheck className="w-10 h-10 text-slate-300 mx-auto mb-3" />
 
             <h3 className="font-black text-slate-700">
-              No inspection records yet
+              {inspections.length === 0 ? 'No inspection records yet' : 'No inspections match these filters'}
             </h3>
 
             <p className="text-sm text-slate-500 mt-1">
-              Click New Inspection to create the first record.
+              {inspections.length === 0
+                ? 'Click New Inspection to create the first record.'
+                : 'Try another status or clear the search phrase.'}
             </p>
           </div>
         ) : (
-          inspections.map((item) => (
+          <div className="divide-y divide-slate-100">
+          {paginatedInspections.map((item) => (
             <article
               key={item.id}
-              className="bg-white rounded-3xl border border-slate-100 p-5 shadow-sm flex flex-col md:flex-row gap-5"
+              className="flex flex-col gap-3 px-4 py-3 sm:flex-row"
             >
               {item.photo_path ? (
                 <img
                   src={item.photo_path}
                   alt="Garbage bin inspection"
-                  className="w-full md:w-32 h-32 rounded-2xl object-cover border border-slate-100"
+                  className="h-24 w-full rounded-xl border border-slate-100 object-cover sm:h-24 sm:w-24"
                 />
               ) : (
-                <div className="w-full md:w-32 h-28 rounded-2xl bg-slate-100 flex items-center justify-center">
+                <div className="flex h-20 w-full items-center justify-center rounded-xl bg-slate-100 sm:h-24 sm:w-24">
                   <Camera className="text-slate-300" />
                 </div>
               )}
 
               <div className="flex-1 min-w-0">
-                <div className="flex flex-wrap items-center gap-2 mb-2">
+                <div className="mb-1 flex flex-wrap items-center gap-2">
                   {renderStatusBadge(item.status)}
 
                   <span className="text-xs font-mono font-bold text-slate-400">
@@ -523,7 +604,7 @@ export default function BinInspections() {
                   </span>
                 </div>
 
-                <h3 className="font-black text-lg">
+                <h3 className="font-black text-base">
                   {item.bin_code || `Bin ID ${item.bin_id || 'Unknown'}`}
                   {' · '}
                   {item.estimated_fill_level ?? 0}% estimated
@@ -534,20 +615,37 @@ export default function BinInspections() {
                   Physical garbage-bin inspection
                 </p>
 
-                <p className="text-sm text-slate-700 mt-3">
+                <p className="mt-2 line-clamp-2 text-sm text-slate-700">
                   {item.remarks || 'No remarks provided.'}
                 </p>
 
-                <p className="text-[11px] text-slate-400 mt-3">
+                <p className="mt-2 text-[11px] text-slate-400">
                   Inspected by {item.inspector || 'Unknown Purok Leader'}
                   {' · '}
                   {formatDate(item.inspected_at)}
                 </p>
               </div>
             </article>
-          ))
+          ))}
+          </div>
         )}
-      </div>
+        {!loading && filteredInspections.length > 0 && (
+          <div className="px-4 pb-4">
+            <Pagination
+              page={safePage}
+              pageSize={pageSize}
+              totalItems={filteredInspections.length}
+              onPageChange={setPage}
+              onPageSizeChange={(nextPageSize) => {
+                setPageSize(nextPageSize);
+                setPage(1);
+              }}
+              compact
+              itemLabel="inspection records"
+            />
+          </div>
+        )}
+      </section>
     </div>
   );
 }

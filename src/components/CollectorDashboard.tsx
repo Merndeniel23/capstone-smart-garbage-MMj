@@ -14,6 +14,7 @@ import {
   User,
 } from "lucide-react";
 import { notifyAdminActionCountsChanged } from "../hooks/useAdminActionCounts";
+import Pagination, { DEFAULT_PAGE_SIZE } from "./Pagination";
 import {
   useEffect,
   useMemo,
@@ -269,6 +270,11 @@ export default function CollectorDashboard({
     successMessage,
     setSuccessMessage,
   ] = useState("");
+
+  const [taskPage, setTaskPage] = useState(1);
+  const [taskPageSize, setTaskPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [complaintPage, setComplaintPage] = useState(1);
+  const [complaintPageSize, setComplaintPageSize] = useState(DEFAULT_PAGE_SIZE);
 
   const [tracking, setTracking] =
     useState(
@@ -549,6 +555,13 @@ export default function CollectorDashboard({
               normal: 1,
             };
 
+            const requestRank = (bin: DashboardBin) => {
+              if (bin.request?.status === "in_progress") return 4;
+              if (["assigned", "approved"].includes(bin.request?.status || "")) return 3;
+              if (bin.request?.status === "pending") return 2;
+              return 1;
+            };
+
             const rank = (
               bin: DashboardBin,
             ) => {
@@ -581,9 +594,7 @@ export default function CollectorDashboard({
               return order.normal;
             };
 
-            return (
-              rank(b) - rank(a)
-            );
+            return requestRank(b) - requestRank(a) || rank(b) - rank(a);
           }),
       [bins, activeRequestByBin],
     );
@@ -602,6 +613,33 @@ export default function CollectorDashboard({
         ),
       [complaints],
     );
+
+  const taskPageCount = Math.max(1, Math.ceil(dashboardBins.length / taskPageSize));
+  const safeTaskPage = Math.min(taskPage, taskPageCount);
+  const paginatedDashboardBins = useMemo(
+    () => dashboardBins.slice(
+      (safeTaskPage - 1) * taskPageSize,
+      safeTaskPage * taskPageSize,
+    ),
+    [dashboardBins, safeTaskPage, taskPageSize],
+  );
+  const complaintPageCount = Math.max(1, Math.ceil(activeComplaints.length / complaintPageSize));
+  const safeComplaintPage = Math.min(complaintPage, complaintPageCount);
+  const paginatedComplaints = useMemo(
+    () => activeComplaints.slice(
+      (safeComplaintPage - 1) * complaintPageSize,
+      safeComplaintPage * complaintPageSize,
+    ),
+    [activeComplaints, safeComplaintPage, complaintPageSize],
+  );
+
+  useEffect(() => {
+    if (taskPage > taskPageCount) setTaskPage(taskPageCount);
+  }, [taskPage, taskPageCount]);
+
+  useEffect(() => {
+    if (complaintPage > complaintPageCount) setComplaintPage(complaintPageCount);
+  }, [complaintPage, complaintPageCount]);
 
   const stats = useMemo(() => {
     const activeBins =
@@ -1233,7 +1271,7 @@ export default function CollectorDashboard({
         </div>
 
         <div className="divide-y">
-          {dashboardBins.map(
+          {paginatedDashboardBins.map(
             (bin) => {
               const busy =
                 updatingId ===
@@ -1245,7 +1283,7 @@ export default function CollectorDashboard({
               return (
                 <article
                   key={bin.id}
-                  className="flex flex-col gap-5 p-6 lg:flex-row lg:items-center lg:justify-between"
+                  className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between"
                 >
                   <div className="flex min-w-0 gap-4">
                     <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
@@ -1419,6 +1457,22 @@ export default function CollectorDashboard({
             </div>
           )}
         </div>
+        {!loading && dashboardBins.length > 0 && (
+          <div className="px-5 pb-4">
+            <Pagination
+              page={safeTaskPage}
+              pageSize={taskPageSize}
+              totalItems={dashboardBins.length}
+              onPageChange={setTaskPage}
+              onPageSizeChange={(nextPageSize) => {
+                setTaskPageSize(nextPageSize);
+                setTaskPage(1);
+              }}
+              compact
+              itemLabel="collection bins"
+            />
+          </div>
+        )}
       </section>
 
       <section className="overflow-hidden rounded-3xl border bg-white shadow-sm">
@@ -1443,7 +1497,7 @@ export default function CollectorDashboard({
         </div>
 
         <div className="divide-y">
-          {activeComplaints.map(
+          {paginatedComplaints.map(
             (complaint) => {
               const busy =
                 updatingComplaintId ===
@@ -1454,7 +1508,7 @@ export default function CollectorDashboard({
                   key={
                     complaint.id
                   }
-                  className="flex flex-col gap-5 p-6 lg:flex-row lg:items-center lg:justify-between"
+                  className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between"
                 >
                   <div className="flex min-w-0 gap-4">
                     <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-50 text-amber-700">
@@ -1606,6 +1660,22 @@ export default function CollectorDashboard({
             </div>
           )}
         </div>
+        {!loading && activeComplaints.length > 0 && (
+          <div className="px-5 pb-4">
+            <Pagination
+              page={safeComplaintPage}
+              pageSize={complaintPageSize}
+              totalItems={activeComplaints.length}
+              onPageChange={setComplaintPage}
+              onPageSizeChange={(nextPageSize) => {
+                setComplaintPageSize(nextPageSize);
+                setComplaintPage(1);
+              }}
+              compact
+              itemLabel="assigned complaints"
+            />
+          </div>
+        )}
       </section>
     </div>
   );
