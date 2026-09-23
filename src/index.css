@@ -13,6 +13,105 @@
   }
 }
 
+/* One theme contract for every role and screen. Components use the slate
+   utilities in light mode; these mappings keep that semantic hierarchy when
+   the shared Header switches the root into dark mode. */
+html.sg-dark,
+html.sg-dark body,
+html.sg-dark #root {
+  background: #0f172a !important;
+  color: #e2e8f0 !important;
+}
+
+html.sg-dark .sg-app-shell [class~="bg-white"],
+html.sg-dark .sg-app-shell [class~="bg-slate-50"],
+html.sg-dark .sg-app-shell [class~="bg-slate-100"],
+html.sg-dark .sg-app-shell [class~="bg-slate-150"],
+html.sg-dark .sg-app-shell [class~="bg-slate-200"],
+html.sg-dark .sg-app-shell [class*="bg-[#F8FAFC]"],
+html.sg-dark .sg-app-shell [class*="bg-[#F1F5F9]"] {
+  background-color: #111827 !important;
+}
+
+html.sg-dark .sg-app-shell [class~="text-slate-950"],
+html.sg-dark .sg-app-shell [class~="text-slate-900"],
+html.sg-dark .sg-app-shell [class~="text-slate-850"],
+html.sg-dark .sg-app-shell [class~="text-slate-800"],
+html.sg-dark .sg-app-shell [class~="text-slate-700"] {
+  color: #f1f5f9 !important;
+}
+
+html.sg-dark .sg-app-shell [class~="text-slate-600"],
+html.sg-dark .sg-app-shell [class~="text-slate-550"],
+html.sg-dark .sg-app-shell [class~="text-slate-500"],
+html.sg-dark .sg-app-shell [class~="text-slate-450"],
+html.sg-dark .sg-app-shell [class~="text-slate-400"],
+html.sg-dark .sg-app-shell [class~="text-slate-350"],
+html.sg-dark .sg-app-shell [class~="text-gray-500"] {
+  color: #cbd5e1 !important;
+}
+
+html.sg-dark .sg-app-shell [class*="hover:bg-white"]:hover,
+html.sg-dark .sg-app-shell [class*="hover:bg-slate-50"]:hover,
+html.sg-dark .sg-app-shell [class*="hover:bg-slate-100"]:hover,
+html.sg-dark .sg-app-shell [class*="hover:bg-slate-200"]:hover,
+html.sg-dark .sg-app-shell [class*="focus:bg-white"]:focus,
+html.sg-dark .sg-app-shell [class*="focus:bg-slate-50"]:focus,
+html.sg-dark .sg-app-shell [class*="focus:bg-slate-100"]:focus,
+html.sg-dark .sg-app-shell [class*="disabled:bg-slate-100"]:disabled {
+  background-color: #1e293b !important;
+}
+
+html.sg-dark .sg-app-shell [class*="hover:text-slate-800"]:hover,
+html.sg-dark .sg-app-shell [class*="hover:text-slate-700"]:hover,
+html.sg-dark .sg-app-shell [class*="hover:text-slate-600"]:hover {
+  color: #f1f5f9 !important;
+}
+
+html.sg-dark .sg-app-shell [class*="hover:text-slate-400"]:hover,
+html.sg-dark .sg-app-shell [class*="hover:text-slate-300"]:hover,
+html.sg-dark .sg-app-shell [class*="disabled:text-slate-500"]:disabled,
+html.sg-dark .sg-app-shell [class*="disabled:text-slate-400"]:disabled {
+  color: #94a3b8 !important;
+}
+
+html.sg-dark .sg-app-shell [class~="border-slate-100"],
+html.sg-dark .sg-app-shell [class~="border-slate-150"],
+html.sg-dark .sg-app-shell [class~="border-slate-200"],
+html.sg-dark .sg-app-shell [class~="border-slate-300"],
+html.sg-dark .sg-app-shell [class~="border"],
+html.sg-dark .sg-app-shell [class*="hover:border-slate-200"]:hover {
+  border-color: #334155 !important;
+}
+
+html.sg-dark .sg-app-shell input,
+html.sg-dark .sg-app-shell textarea,
+html.sg-dark .sg-app-shell select {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+  border-color: #475569 !important;
+}
+
+html.sg-dark .sg-app-shell input::placeholder,
+html.sg-dark .sg-app-shell textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+html.sg-dark .sg-app-shell table,
+html.sg-dark .sg-app-shell thead,
+html.sg-dark .sg-app-shell tbody,
+html.sg-dark .sg-app-shell tr,
+html.sg-dark .sg-app-shell td,
+html.sg-dark .sg-app-shell th {
+  border-color: #334155;
+}
+
+html.sg-dark .sg-app-shell .leaflet-popup-content-wrapper,
+html.sg-dark .sg-app-shell .leaflet-popup-tip {
+  background: #111827;
+  color: #e2e8f0;
+}
+
 /* Custom Hide Scrollbar for general elements, but restore styled scrollbars for horizontal overflow */
 ::-webkit-scrollbar {
   display: none;
@@ -106,6 +205,12 @@ html.sg-dark .municipal-admin :is(.bg-emerald-50, .bg-emerald-100) {
   backdrop-filter: blur(8px);
 }
 
+html.sg-dark .sg-app-shell .sg-list-toolbar {
+  border-color: #334155;
+  background: color-mix(in srgb, #111827 94%, transparent);
+  box-shadow: 0 1px 2px rgb(2 6 23 / .45);
+}
+
 .sg-compact-form {
   display: grid;
   gap: .875rem;
@@ -117,12 +222,21 @@ html.sg-dark .municipal-admin :is(.bg-emerald-50, .bg-emerald-100) {
   padding: .875rem;
 }
 
+html.sg-dark .sg-app-shell .sg-form-section {
+  border-color: #334155;
+}
+
 .sg-form-section > legend,
 .sg-form-section-title {
   padding: 0 .25rem;
   font-size: .75rem;
   font-weight: 800;
   color: rgb(30 41 59);
+}
+
+html.sg-dark .sg-app-shell .sg-form-section > legend,
+html.sg-dark .sg-app-shell .sg-form-section-title {
+  color: #f1f5f9;
 }
 
 .sg-form-grid {
@@ -150,4 +264,223 @@ html.sg-dark .municipal-admin :is(.bg-emerald-50, .bg-emerald-100) {
 
 @media print {
   .sg-list-toolbar, [aria-label$="pagination"] { display: none !important; }
+}
+
+/* Authentication keeps its own relaxed control scale. Dashboard pages opt into
+   the compact sg-* primitives above, while these scoped classes keep entry
+   flows comfortable on every screen size. */
+.auth-page {
+  isolation: isolate;
+  /* Auth stays light even when a dashboard leaves its dark theme on <html>. */
+  color-scheme: only light;
+  color: #1c1917;
+}
+
+.auth-container {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(.75rem, 2dvh, 1.25rem);
+  width: min(100%, 30rem);
+}
+
+/* Fit the entry card and footer to laptop-height viewports without shrinking
+   controls. Taller registration flows use the document's normal scrolling. */
+.auth-entry-page {
+  padding-block: clamp(1rem, 2.5dvh, 2rem);
+}
+
+.auth-entry-page .auth-card {
+  padding-block: clamp(1.25rem, 3dvh, 2rem);
+}
+
+.auth-entry-page .auth-tabs {
+  margin-bottom: 1rem;
+}
+
+.auth-entry-page .auth-switch {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+}
+
+@media (max-height: 720px) {
+  .auth-entry-page {
+    padding-block: .75rem;
+  }
+
+  .auth-entry-page .auth-container {
+    gap: .75rem;
+  }
+
+  .auth-entry-page .auth-logo {
+    width: 3rem;
+    height: 3rem;
+  }
+
+  .auth-entry-page .auth-brand {
+    row-gap: .5rem;
+  }
+
+  .auth-entry-page .auth-form--login {
+    gap: .75rem;
+  }
+
+  .auth-entry-page .auth-form--login .auth-field {
+    gap: .375rem;
+  }
+
+  .auth-entry-page .auth-tabs {
+    margin-bottom: .875rem;
+    padding-bottom: .25rem;
+  }
+
+  .auth-entry-page .auth-switch {
+    margin-top: 1rem;
+    padding-top: .75rem;
+  }
+}
+
+.auth-card {
+  padding: 1.75rem;
+}
+
+.auth-tabs {
+  gap: .5rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: .625rem;
+}
+
+.auth-tab {
+  min-height: 2.75rem;
+}
+
+.auth-form {
+  display: grid;
+  gap: 1.125rem;
+}
+
+.auth-form--register {
+  gap: 1.25rem;
+}
+
+.auth-field {
+  display: grid;
+  gap: .5rem;
+}
+
+.auth-form-section {
+  min-inline-size: 0;
+  border: 1px solid rgb(231 229 228);
+  border-radius: 1rem;
+  padding: 1.125rem;
+}
+
+.auth-form-section-title {
+  padding: 0 .25rem;
+  color: rgb(68 64 60);
+  font-size: .75rem;
+  font-weight: 800;
+}
+
+.auth-form-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.auth-form-section > .auth-form-grid {
+  margin-top: 1rem;
+}
+
+.auth-form-section-intro {
+  margin-top: .5rem;
+}
+
+.auth-form-section-intro + .auth-form-grid {
+  margin-top: .875rem;
+}
+
+.auth-input {
+  min-height: 3rem;
+}
+
+.auth-login-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+}
+
+.auth-primary-action {
+  min-height: 3rem;
+}
+
+.auth-divider {
+  /* The form grid already supplies spacing above and below this divider. */
+  margin-block: 0;
+}
+
+.auth-google {
+  display: flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-google > div {
+  display: flex;
+  max-width: 100%;
+  justify-content: center;
+}
+
+.auth-google iframe {
+  max-width: 100%;
+}
+
+.auth-switch {
+  margin-top: 1.75rem;
+  padding-top: 1.25rem;
+}
+
+.auth-modal-backdrop {
+  overflow-y: auto;
+}
+
+.auth-modal-card {
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+.auth-modal-actions {
+  display: flex;
+  gap: .75rem;
+  padding-top: .25rem;
+}
+
+.auth-modal-actions > button {
+  min-height: 2.875rem;
+}
+
+@media (min-width: 640px) {
+  .auth-card {
+    padding: 2.25rem;
+  }
+
+  .auth-modal-card {
+    padding: 2rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .auth-login-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .auth-modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .auth-modal-actions > button {
+    width: 100%;
+  }
 }

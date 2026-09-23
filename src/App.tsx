@@ -481,11 +481,7 @@ function AppContent() {
   }
 
   if (!isLoggedIn) {
-    return (
-      <div className="relative flex min-h-screen w-full items-center justify-center overflow-y-auto bg-[#F8FAFC] font-sans text-slate-900">
-        <Registration />
-      </div>
-    );
+    return <Registration />;
   }
 
   if (currentScreen === "change-initial-password") {
@@ -498,7 +494,7 @@ function AppContent() {
     userRole === "super_admin";
 
   return (
-    <div className={`flex min-h-screen min-w-0 flex-col overflow-x-clip bg-[#F8FAFC] font-sans text-slate-900 md:flex-row ${userRole === "super_admin" ? "municipal-admin" : ""}`}>
+    <div className={`sg-app-shell flex min-h-screen min-w-0 flex-col overflow-x-clip bg-[#F8FAFC] font-sans text-slate-900 md:flex-row ${userRole === "super_admin" ? "municipal-admin" : ""}`}>
       {userRole === "super_admin" && <a href="#main-content" className="municipal-skip-link">Skip to page content</a>}
       <EmergencyAlertOverlay />
       {userRole === "collector" && (

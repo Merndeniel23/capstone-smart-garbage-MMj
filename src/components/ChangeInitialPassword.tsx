@@ -153,56 +153,56 @@ export default function ChangeInitialPassword() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-100 p-4">
-      <div className="w-full max-w-md rounded-[2rem] border border-slate-200 bg-white p-6 shadow-xl sm:p-8">
-        <div className="mb-5 flex justify-center">
+    <div className="auth-page auth-shell flex min-h-[100dvh] items-center justify-center bg-slate-100 px-4 py-8 sm:px-6 sm:py-12">
+      <div className="auth-card w-full max-w-[30rem] rounded-[2rem] border border-slate-200 bg-white p-6 shadow-xl sm:p-8 lg:p-9">
+        <div className="mb-6 flex justify-center">
           <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700">
             <ShieldCheck className="h-8 w-8" />
           </div>
         </div>
 
         <div className="text-center">
-          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">
+          <p className="auth-accent text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">
             Account Security
           </p>
 
-          <h1 className="mt-1 text-2xl font-black text-slate-900">
+          <h1 className="mt-2 text-2xl font-black text-slate-900 sm:text-[1.7rem]">
             Change Temporary Password
           </h1>
 
-          <p className="mt-2 text-sm leading-relaxed text-slate-500">
+          <p className="mt-3 text-sm leading-relaxed text-slate-500">
             You must replace your temporary password before accessing your
             dashboard.
           </p>
         </div>
 
         {error && (
-          <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">
+          <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">
             {error}
           </div>
         )}
 
         {successMessage && (
-          <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">
+          <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">
             {successMessage}
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-          <label className="block">
+        <form onSubmit={handleSubmit} className="auth-form mt-8">
+          <label className="auth-field">
             <span className="text-xs font-bold text-slate-600">
               Temporary Password
             </span>
 
-            <div className="relative mt-2">
-              <Lock className="absolute left-4 top-3.5 h-4 w-4 text-slate-400" />
+            <div className="relative">
+              <Lock className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
               <input
                 type={showCurrentPassword ? "text" : "password"}
                 value={currentPassword}
                 onChange={(event) => setCurrentPassword(event.target.value)}
                 autoComplete="current-password"
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-11 pr-11 text-sm font-semibold text-slate-800 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/10"
+                className="auth-input h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-11 text-sm font-semibold text-slate-800 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/10"
                 placeholder="Enter temporary password"
               />
 
@@ -211,7 +211,7 @@ export default function ChangeInitialPassword() {
                 onClick={() =>
                   setShowCurrentPassword((current) => !current)
                 }
-                className="absolute right-3 top-3 rounded-lg p-1 text-slate-400 hover:text-slate-700"
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-1 text-slate-400 hover:text-slate-700"
                 aria-label={
                   showCurrentPassword
                     ? "Hide temporary password"
@@ -227,13 +227,13 @@ export default function ChangeInitialPassword() {
             </div>
           </label>
 
-          <label className="block">
+          <label className="auth-field">
             <span className="text-xs font-bold text-slate-600">
               New Password
             </span>
 
-            <div className="relative mt-2">
-              <Lock className="absolute left-4 top-3.5 h-4 w-4 text-slate-400" />
+            <div className="relative">
+              <Lock className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
               <input
                 type={showNewPassword ? "text" : "password"}
@@ -241,14 +241,14 @@ export default function ChangeInitialPassword() {
                 onChange={(event) => setNewPassword(event.target.value)}
                 autoComplete="new-password"
                 minLength={8}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-11 pr-11 text-sm font-semibold text-slate-800 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/10"
+                className="auth-input h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-11 text-sm font-semibold text-slate-800 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/10"
                 placeholder="At least 8 characters"
               />
 
               <button
                 type="button"
                 onClick={() => setShowNewPassword((current) => !current)}
-                className="absolute right-3 top-3 rounded-lg p-1 text-slate-400 hover:text-slate-700"
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-1 text-slate-400 hover:text-slate-700"
                 aria-label={
                   showNewPassword ? "Hide new password" : "Show new password"
                 }
@@ -262,13 +262,13 @@ export default function ChangeInitialPassword() {
             </div>
           </label>
 
-          <label className="block">
+          <label className="auth-field">
             <span className="text-xs font-bold text-slate-600">
               Confirm New Password
             </span>
 
-            <div className="relative mt-2">
-              <Lock className="absolute left-4 top-3.5 h-4 w-4 text-slate-400" />
+            <div className="relative">
+              <Lock className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
               <input
                 type={showConfirmPassword ? "text" : "password"}
@@ -276,7 +276,7 @@ export default function ChangeInitialPassword() {
                 onChange={(event) => setConfirmPassword(event.target.value)}
                 autoComplete="new-password"
                 minLength={8}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-11 pr-11 text-sm font-semibold text-slate-800 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/10"
+                className="auth-input h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-11 text-sm font-semibold text-slate-800 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/10"
                 placeholder="Repeat new password"
               />
 
@@ -285,7 +285,7 @@ export default function ChangeInitialPassword() {
                 onClick={() =>
                   setShowConfirmPassword((current) => !current)
                 }
-                className="absolute right-3 top-3 rounded-lg p-1 text-slate-400 hover:text-slate-700"
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-1 text-slate-400 hover:text-slate-700"
                 aria-label={
                   showConfirmPassword
                     ? "Hide confirmation password"
@@ -301,23 +301,25 @@ export default function ChangeInitialPassword() {
             </div>
           </label>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="mt-2 w-full rounded-xl bg-emerald-700 px-4 py-3 text-sm font-black text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {loading ? "Changing Password..." : "Change Password"}
-          </button>
+          <div className="auth-actions space-y-3 pt-1">
+            <button
+              type="submit"
+              disabled={loading}
+              className="h-12 w-full rounded-xl bg-emerald-700 px-4 text-sm font-black text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loading ? "Changing Password..." : "Change Password"}
+            </button>
 
-          <button
-            type="button"
-            onClick={handleBackToLogin}
-            disabled={loading}
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <LogOut className="h-4 w-4" />
-            Back to Login
-          </button>
+            <button
+              type="button"
+              onClick={handleBackToLogin}
+              disabled={loading}
+              className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <LogOut className="h-4 w-4" />
+              Back to Login
+            </button>
+          </div>
         </form>
       </div>
     </div>

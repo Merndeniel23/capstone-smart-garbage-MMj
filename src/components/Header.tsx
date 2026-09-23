@@ -166,71 +166,6 @@ export default function Header({
   }, [isDarkMode]);
 
   return (
-    <>
-      <style>{`
-        html.sg-dark,
-        html.sg-dark body,
-        html.sg-dark #root {
-          background: #0f172a !important;
-          color: #e2e8f0 !important;
-        }
-
-        html.sg-dark [class~="bg-white"],
-        html.sg-dark [class~="bg-slate-50"],
-        html.sg-dark [class~="bg-slate-100"],
-        html.sg-dark [class*="bg-[#F8FAFC]"],
-        html.sg-dark [class*="bg-[#F1F5F9]"] {
-          background-color: #111827 !important;
-        }
-
-        html.sg-dark [class~="text-slate-900"],
-        html.sg-dark [class~="text-slate-800"],
-        html.sg-dark [class~="text-slate-700"] {
-          color: #f1f5f9 !important;
-        }
-
-        html.sg-dark [class~="text-slate-600"],
-        html.sg-dark [class~="text-slate-500"],
-        html.sg-dark [class~="text-slate-400"] {
-          color: #cbd5e1 !important;
-        }
-
-        html.sg-dark [class~="border-slate-100"],
-        html.sg-dark [class~="border-slate-200"],
-        html.sg-dark [class~="border-slate-300"],
-        html.sg-dark [class~="border"] {
-          border-color: #334155 !important;
-        }
-
-        html.sg-dark input,
-        html.sg-dark textarea,
-        html.sg-dark select {
-          background-color: #0f172a !important;
-          color: #f8fafc !important;
-          border-color: #475569 !important;
-        }
-
-        html.sg-dark input::placeholder,
-        html.sg-dark textarea::placeholder {
-          color: #94a3b8 !important;
-        }
-
-        html.sg-dark table,
-        html.sg-dark thead,
-        html.sg-dark tbody,
-        html.sg-dark tr,
-        html.sg-dark td,
-        html.sg-dark th {
-          border-color: #334155;
-        }
-
-        html.sg-dark .leaflet-popup-content-wrapper,
-        html.sg-dark .leaflet-popup-tip {
-          background: #111827;
-          color: #e2e8f0;
-        }
-      `}</style>
-
       <header className={`sticky top-0 z-10 flex shrink-0 flex-col gap-3 border-b border-slate-200 bg-white px-4 py-4 shadow-sm md:flex-row md:items-center md:justify-between md:px-6 ${userRole === "super_admin" ? "md:flex-wrap xl:flex-nowrap" : ""}`}>
         <div className="flex w-full items-center justify-between md:hidden">
           <h1 className="whitespace-nowrap text-base font-black text-slate-800">
@@ -319,6 +254,5 @@ export default function Header({
           </button>
         </div>
       </header>
-    </>
   );
 }

@@ -677,57 +677,59 @@ const handleResetPasswordSubmit = async (
 };
 
   return (
-    <div className="min-h-screen w-full bg-[#FAFBF9] flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8 font-sans text-stone-900 relative">
+    <div className="auth-page auth-shell auth-entry-page relative flex min-h-[100dvh] w-full flex-col items-center justify-center bg-[#FAFBF9] px-4 font-sans text-stone-900 sm:px-6 lg:px-8">
       {/* Absolute top decoration */}
       <div className="absolute top-0 inset-x-0 h-2 bg-emerald-700" />
       
       {/* Decorative blurred spots */}
-      <div className="absolute top-[15%] left-[10%] w-[350px] h-[350px] bg-emerald-700/5 rounded-full blur-[100px] pointer-events-none" />
-      <div className="absolute bottom-[15%] right-[10%] w-[350px] h-[350px] bg-emerald-700/5 rounded-full blur-[100px] pointer-events-none" />
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute top-[15%] left-[10%] w-[350px] h-[350px] bg-emerald-700/5 rounded-full blur-[100px]" />
+        <div className="absolute bottom-[15%] right-[10%] w-[350px] h-[350px] bg-emerald-700/5 rounded-full blur-[100px]" />
+      </div>
 
-      <div className="w-full max-w-md z-10 space-y-6">
+      <div className="auth-container z-10 w-full max-w-[30rem]">
         {/* APP LOGO & HEADER */}
-        <div className="flex flex-col items-center text-center space-y-3">
-          <div className="w-14 h-14 bg-emerald-700 rounded-2xl flex items-center justify-center shadow-md shadow-emerald-700/20">
+        <div className="auth-brand flex flex-col items-center gap-3 text-center">
+          <div className="auth-logo w-14 h-14 bg-emerald-700 rounded-2xl flex items-center justify-center shadow-md shadow-emerald-700/20">
             <Leaf className="w-7 h-7 text-white" />
           </div>
           <div>
             <h1 className="text-xl font-black text-stone-850 tracking-tight leading-none uppercase">
               Smart Garbage
             </h1>
-            <p className="text-[10px] font-extrabold tracking-[0.25em] text-emerald-700 uppercase mt-1">
+            <p className="auth-accent mt-1 text-[10px] font-extrabold uppercase tracking-[0.25em] text-emerald-700">
               Monitoring System
             </p>
           </div>
         </div>
 
         {/* MAIN AUTH CONTAINER */}
-        <div className="bg-white rounded-3xl border border-stone-200/60 shadow-xl overflow-hidden p-6 sm:p-8 transition-all">
+        <div className="auth-card overflow-hidden rounded-3xl border border-stone-200/60 bg-white p-6 shadow-xl transition-all sm:p-8">
           
           {/* TAB SEGMENT */}
-          <div className="flex border-b border-stone-100 pb-5 mb-6">
+          <div className="auth-tabs flex border-b border-stone-100 pb-5 mb-6">
             <button
               type="button"
               onClick={() => { setActiveTab('login'); setRegistrationVerificationStep(false); setError(''); setSuccessMessage(''); }}
-              className={`flex-1 text-center pb-2 text-xs uppercase font-extrabold tracking-wider transition-all relative ${
-                activeTab === 'login' ? 'text-emerald-700' : 'text-stone-400 hover:text-stone-600'
+              className={`auth-tab relative flex-1 pb-2 text-center text-xs font-extrabold uppercase tracking-wider transition-all ${
+                activeTab === 'login' ? 'auth-accent text-emerald-700' : 'text-stone-400 hover:text-stone-600'
               }`}
             >
               Sign In
               {activeTab === 'login' && (
-                <motion.div layoutId="authUnderline" className="absolute bottom-0 inset-x-0 h-0.5 bg-emerald-700" />
+                <motion.div layoutId="authUnderline" className="auth-active-underline absolute bottom-0 inset-x-0 h-0.5 bg-emerald-700" />
               )}
             </button>
             <button
               type="button"
               onClick={() => { setActiveTab('register'); setError(''); setSuccessMessage(''); }}
-              className={`flex-1 text-center pb-2 text-xs uppercase font-extrabold tracking-wider transition-all relative ${
-                activeTab === 'register' ? 'text-emerald-700' : 'text-stone-400 hover:text-stone-600'
+              className={`auth-tab relative flex-1 pb-2 text-center text-xs font-extrabold uppercase tracking-wider transition-all ${
+                activeTab === 'register' ? 'auth-accent text-emerald-700' : 'text-stone-400 hover:text-stone-600'
               }`}
             >
               Create Account
               {activeTab === 'register' && (
-                <motion.div layoutId="authUnderline" className="absolute bottom-0 inset-x-0 h-0.5 bg-emerald-700" />
+                <motion.div layoutId="authUnderline" className="auth-active-underline absolute bottom-0 inset-x-0 h-0.5 bg-emerald-700" />
               )}
             </button>
           </div>
@@ -762,9 +764,9 @@ const handleResetPasswordSubmit = async (
           {/* FORMS */}
           {activeTab === 'login' ? (
             /* LOGIN SCREEN */
-            <form onSubmit={handleLoginSubmit} className="space-y-4">
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold tracking-widest text-stone-500 block ml-1">
+            <form onSubmit={handleLoginSubmit} className="auth-form auth-form--login">
+              <div className="auth-field">
+                <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
                   Email or Household ID
                 </label>
                 <div className="relative flex items-center">
@@ -776,13 +778,13 @@ const handleResetPasswordSubmit = async (
                     placeholder="enter email or household ID"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
-                    className="w-full pl-11 pr-4 py-3 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
+                    className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] py-3 pl-11 pr-4 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
                   />
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold tracking-widest text-stone-500 block ml-1">
+              <div className="auth-field">
+                <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
                   Password
                 </label>
                 <div className="relative flex items-center">
@@ -793,7 +795,7 @@ const handleResetPasswordSubmit = async (
                     placeholder="Enter account password"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
-                    className="w-full pl-11 pr-11 py-3 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
+                    className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] py-3 pl-11 pr-11 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
                   />
                   <button
                     type="button"
@@ -805,7 +807,7 @@ const handleResetPasswordSubmit = async (
                 </div>
               </div>
 
-              <div className="flex items-center justify-between pt-1">
+              <div className="auth-actions auth-login-actions pt-1">
                 <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input
                     type="checkbox"
@@ -830,7 +832,7 @@ const handleResetPasswordSubmit = async (
                     setError('');
                     setSuccessMessage('');
                   }}
-                  className="text-[11px] font-bold text-emerald-700 hover:underline cursor-pointer"
+                  className="auth-accent cursor-pointer text-[11px] font-bold text-emerald-700 hover:underline"
                 >
                   Forgot Password?
                 </button>
@@ -839,18 +841,18 @@ const handleResetPasswordSubmit = async (
              <>
   <button
     type="submit"
-    className="w-full mt-4 py-3 bg-emerald-700 hover:bg-emerald-800 active:scale-[0.98] text-white font-extrabold uppercase text-[10px] tracking-widest rounded-2xl shadow-lg shadow-emerald-800/10 transition-all cursor-pointer border-none"
+    className="auth-primary-action mt-1 w-full cursor-pointer rounded-2xl border-none bg-emerald-700 py-3 text-[10px] font-extrabold uppercase tracking-widest text-white shadow-lg shadow-emerald-800/10 transition-all hover:bg-emerald-800 active:scale-[0.98]"
   >
     Authenticate & Enter Console
   </button>
 
-  <div className="flex items-center my-4">
+  <div className="auth-divider flex items-center">
     <div className="flex-1 border-t border-gray-300"></div>
     <span className="px-3 text-xs text-gray-500 font-semibold">OR</span>
     <div className="flex-1 border-t border-gray-300"></div>
   </div>
 
-  <div className="flex justify-center">
+  <div className="auth-google">
     <GoogleLogin
       onSuccess={async (credentialResponse) => {
         setError('');
@@ -899,9 +901,9 @@ const handleResetPasswordSubmit = async (
           ) : (
             /* REGISTRATION SCREEN */
             registrationVerificationStep ? (
-              <form onSubmit={handleRegistrationVerification} className="space-y-4">
+              <form onSubmit={handleRegistrationVerification} className="auth-form">
                 <div className="text-center space-y-2">
-                  <Mail className="w-10 h-10 text-emerald-700 mx-auto" />
+                  <Mail className="auth-accent mx-auto h-10 w-10 text-emerald-700" />
                   <h2 className="text-sm font-extrabold text-stone-800">Verify your email</h2>
                   <p className="text-xs text-stone-500">
                     Enter the 6-digit code sent to <strong>{registrationVerificationEmail}</strong>.
@@ -916,21 +918,21 @@ const handleResetPasswordSubmit = async (
                   value={registrationOtp}
                   onChange={(e) => setRegistrationOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
                   placeholder="Enter 6-digit code"
-                  className="w-full px-4 py-3 bg-[#FAFBF9] border border-stone-200 rounded-2xl text-center tracking-[0.4em] font-bold text-stone-800"
+                  className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] px-4 py-3 text-center font-bold tracking-[0.4em] text-stone-800"
                 />
                 <button
                   type="submit"
                   disabled={registrationVerificationLoading}
-                  className="w-full py-3 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white font-extrabold uppercase text-[10px] tracking-widest rounded-2xl"
+                  className="auth-primary-action w-full rounded-2xl bg-emerald-700 py-3 text-[10px] font-extrabold uppercase tracking-widest text-white hover:bg-emerald-800 disabled:opacity-60"
                 >
                   {registrationVerificationLoading ? 'Verifying...' : 'Verify Email'}
                 </button>
-                <div className="flex items-center justify-between text-[11px]">
+                <div className="auth-actions auth-login-actions text-[11px]">
                   <button
                     type="button"
                     disabled={registrationVerificationLoading || registrationResendCountdown > 0}
                     onClick={resendRegistrationVerification}
-                    className="text-emerald-700 font-bold disabled:text-stone-400"
+                    className="auth-accent text-emerald-700 font-bold disabled:text-stone-400"
                   >
                     {registrationResendCountdown > 0 ? `Resend in ${registrationResendCountdown}s` : 'Resend code'}
                   </button>
@@ -950,12 +952,12 @@ const handleResetPasswordSubmit = async (
                 </div>
               </form>
             ) : (
-            <form onSubmit={handleRegisterSubmit} className="sg-compact-form">
-              <fieldset className="sg-form-section">
-                <legend className="sg-form-section-title">Contact details</legend>
-                <div className="sg-form-grid sg-form-grid--two">
-              <div className="space-y-1 sm:col-span-2">
-                <label className="text-[10px] uppercase font-bold tracking-widest text-stone-500 block ml-1">
+            <form onSubmit={handleRegisterSubmit} className="auth-form auth-form--register">
+              <fieldset className="auth-form-section">
+                <legend className="auth-form-section-title">Contact details</legend>
+                <div className="auth-form-grid">
+              <div className="auth-field">
+                <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
                   Full Name
                 </label>
                 <div className="relative flex items-center">
@@ -967,13 +969,13 @@ const handleResetPasswordSubmit = async (
                     placeholder="Enter full name"
                     value={regFullName}
                     onChange={(e) => setRegFullName(e.target.value)}
-                    className="w-full pl-11 pr-4 py-2.5 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
+                    className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] py-2.5 pl-11 pr-4 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
                   />
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold tracking-widest text-stone-500 block ml-1">
+              <div className="auth-field">
+                <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
                   Email Address
                 </label>
                 <div className="relative flex items-center">
@@ -985,13 +987,13 @@ const handleResetPasswordSubmit = async (
                     placeholder="Enter email address"
                     value={regEmail}
                     onChange={(e) => setRegEmail(e.target.value)}
-                    className="w-full pl-11 pr-4 py-2.5 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
+                    className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] py-2.5 pl-11 pr-4 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
                   />
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold tracking-widest text-stone-500 block ml-1">
+              <div className="auth-field">
+                <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
                   Mobile Number
                 </label>
                 <div className="relative flex items-center">
@@ -1009,7 +1011,7 @@ const handleResetPasswordSubmit = async (
                         e.target.value.replace(/[^0-9+\s()-]/g, ''),
                       )
                     }
-                    className="w-full pl-11 pr-4 py-2.5 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
+                    className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] py-2.5 pl-11 pr-4 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
                   />
                 </div>
               </div>
@@ -1017,18 +1019,18 @@ const handleResetPasswordSubmit = async (
                 </div>
               </fieldset>
 
-              <fieldset className="sg-form-section">
-                <legend className="sg-form-section-title">Service area and account security</legend>
-                <p className="-mt-1 text-[10px] font-semibold leading-relaxed text-stone-400">
+              <fieldset className="auth-form-section">
+                <legend className="auth-form-section-title">Service area and account security</legend>
+                <p className="auth-form-section-intro text-[11px] font-semibold leading-relaxed text-stone-400">
                   Choose the barangay and purok where this household receives service.
                 </p>
-                <div className="sg-form-grid">
+                <div className="auth-form-grid">
 
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold tracking-widest text-stone-500 block ml-1">
+              <div className="auth-field">
+                <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
                   Assigned Communal Zone (Barangay & Purok)
                 </label>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="auth-form-grid">
                   <div className="relative flex items-center">
                     <MapPin className="absolute left-4 w-4 h-4 text-stone-400" />
                     <select
@@ -1039,7 +1041,7 @@ const handleResetPasswordSubmit = async (
                       }}
                       disabled={locationsLoading}
                       required
-                      className="w-full pl-11 pr-10 py-2.5 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800 appearance-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+                      className="auth-input w-full cursor-pointer appearance-none rounded-2xl border border-stone-200 bg-[#FAFBF9] py-2.5 pl-11 pr-10 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <option value="">
                         {locationsLoading ? 'Loading...' : 'Select barangay'}
@@ -1060,7 +1062,7 @@ const handleResetPasswordSubmit = async (
                       onChange={(e) => setRegPurokId(e.target.value)}
                       disabled={!regBarangayId || locationsLoading}
                       required
-                      className="w-full pl-11 pr-10 py-2.5 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800 appearance-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+                      className="auth-input w-full cursor-pointer appearance-none rounded-2xl border border-stone-200 bg-[#FAFBF9] py-2.5 pl-11 pr-10 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <option value="">
                         {!regBarangayId ? 'Select barangay first' : 'Select purok'}
@@ -1076,9 +1078,9 @@ const handleResetPasswordSubmit = async (
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold tracking-widest text-stone-500 block ml-1">
+              <div className="auth-form-grid">
+                <div className="auth-field">
+                  <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
                     Password
                   </label>
                   <div className="relative flex items-center">
@@ -1089,13 +1091,13 @@ const handleResetPasswordSubmit = async (
                       placeholder="8+ chars, upper/lower/number"
                       value={regPassword}
                       onChange={(e) => setRegPassword(e.target.value)}
-                      className="w-full px-4 py-2.5 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
+                      className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] px-4 py-2.5 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
                     />
                   </div>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold tracking-widest text-stone-500 block ml-1">
+                <div className="auth-field">
+                  <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
                     Confirm Password
                   </label>
                   <div className="relative flex items-center">
@@ -1106,7 +1108,7 @@ const handleResetPasswordSubmit = async (
                       placeholder="Confirm"
                       value={regConfirmPassword}
                       onChange={(e) => setRegConfirmPassword(e.target.value)}
-                      className="w-full px-4 py-2.5 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
+                      className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] px-4 py-2.5 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
                     />
                   </div>
                 </div>
@@ -1127,7 +1129,7 @@ const handleResetPasswordSubmit = async (
 
               <button
                 type="submit"
-                className="w-full mt-2 py-3 bg-emerald-750 hover:bg-emerald-800 active:scale-[0.98] text-white font-extrabold uppercase text-[10px] tracking-widest rounded-2xl shadow-lg shadow-emerald-800/10 transition-all cursor-pointer border-none bg-emerald-700"
+                className="auth-primary-action mt-1 w-full cursor-pointer rounded-2xl border-none bg-emerald-700 py-3 text-[10px] font-extrabold uppercase tracking-widest text-white shadow-lg shadow-emerald-800/10 transition-all hover:bg-emerald-800 active:scale-[0.98]"
               >
                 Register & Join Network
               </button>
@@ -1136,14 +1138,14 @@ const handleResetPasswordSubmit = async (
           )}
 
           {/* TOGGLE BOTTOM LINK */}
-          <div className="mt-6 pt-5 border-t border-stone-100 text-center">
+          <div className="auth-switch mt-6 border-t border-stone-100 pt-5 text-center">
             {activeTab === 'login' ? (
               <p className="text-[11px] text-stone-500 font-semibold">
                 Don't have an account?{' '}
                 <button
                   type="button"
                   onClick={() => { setActiveTab('register'); setRegistrationVerificationStep(false); setError(''); setSuccessMessage(''); }}
-                  className="text-emerald-700 font-bold hover:underline"
+                  className="auth-accent text-emerald-700 font-bold hover:underline"
                 >
                   Register here
                 </button>
@@ -1154,7 +1156,7 @@ const handleResetPasswordSubmit = async (
                 <button
                   type="button"
                   onClick={() => { setActiveTab('login'); setRegistrationVerificationStep(false); setError(''); setSuccessMessage(''); }}
-                  className="text-emerald-700 font-bold hover:underline"
+                  className="auth-accent text-emerald-700 font-bold hover:underline"
                 >
                   Sign In
                 </button>
@@ -1166,15 +1168,15 @@ const handleResetPasswordSubmit = async (
 
 
         {/* FOOTER */}
-        <p className="text-[9px] font-extrabold tracking-widest text-stone-400 uppercase text-center">
+        <p className="auth-footer text-center text-[9px] font-extrabold uppercase tracking-widest text-stone-400">
           Barangay Environmental Sinks System • MMJ group • 2026 • All Rights Reserved
         </p>
       </div>
 
       {/* FORGOT PASSWORD MODAL */}
       {showForgotModal && (
-        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl border border-stone-200 p-6 sm:p-8 max-w-sm w-full space-y-4 shadow-2xl">
+        <div className="auth-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-stone-900/60 p-4 backdrop-blur-sm">
+          <div className="auth-modal-card w-full max-w-md space-y-5 rounded-3xl border border-stone-200 bg-white p-6 shadow-2xl sm:p-8">
             <div className="flex items-center gap-3">
               <span className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-700">
                 <HelpCircle className="w-5 h-5" />
@@ -1191,28 +1193,28 @@ const handleResetPasswordSubmit = async (
             </p>
 
             {forgotStep === 'email' ? (
-              <form onSubmit={handleForgotPasswordSubmit} className="space-y-3.5">
+              <form onSubmit={handleForgotPasswordSubmit} className="auth-form">
                 <input
                   type="email"
                   required
                   placeholder="Enter your email address"
                   value={forgotPasswordEmail}
                   onChange={(e) => setForgotPasswordEmail(e.target.value)}
-                  className="w-full px-4 py-3 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
+                  className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] px-4 py-3 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
                 />
 
-                <div className="flex gap-2.5 pt-1">
+                <div className="auth-modal-actions">
                   <button
                     type="button"
                     onClick={resetForgotPasswordState}
-                    className="flex-1 py-2.5 border border-stone-200 rounded-xl text-[10px] font-extrabold text-stone-500 hover:bg-stone-50 transition-colors uppercase tracking-wider"
+                    className="auth-secondary-action flex-1 rounded-xl border border-stone-200 py-2.5 text-[10px] font-extrabold uppercase tracking-wider text-stone-500 transition-colors hover:bg-stone-50"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={forgotLoading}
-                    className="flex flex-1 items-center justify-center gap-2 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-[10px] font-extrabold transition-colors uppercase tracking-wider border-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+                    className="auth-primary-action flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl border-none bg-emerald-700 py-2.5 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {forgotLoading && (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -1222,7 +1224,7 @@ const handleResetPasswordSubmit = async (
                 </div>
               </form>
             ) : (
-              <form onSubmit={handleResetPasswordSubmit} className="space-y-3.5">
+              <form onSubmit={handleResetPasswordSubmit} className="auth-form">
                 <input
                   type="text"
                   inputMode="numeric"
@@ -1231,10 +1233,10 @@ const handleResetPasswordSubmit = async (
                   placeholder="Enter 6-digit OTP"
                   value={forgotOtp}
                   onChange={(e) => setForgotOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  className="w-full px-4 py-3 text-center tracking-[0.35em] bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-sm font-bold text-stone-800"
+                  className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] px-4 py-3 text-center text-sm font-bold tracking-[0.35em] text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
                 />
 
-                <div className="flex items-center justify-between px-1">
+                <div className="auth-actions auth-login-actions px-1">
                   <span className="text-[10px] font-semibold text-stone-500">
                     OTP expires after 10 minutes.
                   </span>
@@ -1246,7 +1248,7 @@ const handleResetPasswordSubmit = async (
                       forgotLoading ||
                       resendCountdown > 0
                     }
-                    className="text-[10px] font-extrabold text-emerald-700 hover:underline disabled:cursor-not-allowed disabled:text-stone-400 disabled:no-underline"
+                    className="auth-accent text-[10px] font-extrabold text-emerald-700 hover:underline disabled:cursor-not-allowed disabled:text-stone-400 disabled:no-underline"
                   >
                     {forgotLoading
                       ? 'Sending...'
@@ -1264,7 +1266,7 @@ const handleResetPasswordSubmit = async (
                   placeholder="New password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full px-4 py-3 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
+                  className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] px-4 py-3 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
                 />
 
                 <input
@@ -1275,7 +1277,7 @@ const handleResetPasswordSubmit = async (
                   placeholder="Confirm new password"
                   value={confirmNewPassword}
                   onChange={(e) => setConfirmNewPassword(e.target.value)}
-                  className="w-full px-4 py-3 bg-[#FAFBF9] border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-700/10 focus:border-emerald-700 transition-all text-xs font-semibold text-stone-800"
+                  className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] px-4 py-3 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
                 />
 
                 <button
@@ -1286,7 +1288,7 @@ const handleResetPasswordSubmit = async (
                   {showPassword ? 'Hide passwords' : 'Show passwords'}
                 </button>
 
-                <div className="flex gap-2.5 pt-1">
+                <div className="auth-modal-actions">
                   <button
                     type="button"
                     onClick={() => {
@@ -1298,14 +1300,14 @@ const handleResetPasswordSubmit = async (
                       setError('');
                       setSuccessMessage('');
                     }}
-                    className="flex-1 py-2.5 border border-stone-200 rounded-xl text-[10px] font-extrabold text-stone-500 hover:bg-stone-50 transition-colors uppercase tracking-wider"
+                    className="auth-secondary-action flex-1 rounded-xl border border-stone-200 py-2.5 text-[10px] font-extrabold uppercase tracking-wider text-stone-500 transition-colors hover:bg-stone-50"
                   >
                     Back
                   </button>
                   <button
                     type="submit"
                     disabled={resetLoading}
-                    className="flex flex-1 items-center justify-center gap-2 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-[10px] font-extrabold transition-colors uppercase tracking-wider border-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+                    className="auth-primary-action flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl border-none bg-emerald-700 py-2.5 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {resetLoading && (
                       <Loader2 className="h-4 w-4 animate-spin" />
