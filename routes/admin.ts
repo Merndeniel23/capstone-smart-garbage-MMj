@@ -1,8 +1,14 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
+import type { PoolConnection } from "mysql2/promise";
 import { db } from "../config/db.js";
 import { signedProofUrl } from "../config/storage.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
+import {
+  createEmailVerification,
+  requiresEmailVerification,
+  VerificationError,
+} from "../services/emailVerification.js";
 
 const router = Router();
 
@@ -50,8 +56,23 @@ function hasVerifiedResidentProfile(user: any): boolean {
 function isApprovalReadyAccount(user: any): boolean {
   return (
     String(user?.status).toLowerCase() === "pending" &&
+    !requiresEmailVerification(user) &&
     hasVerifiedResidentProfile(user)
   );
+}
+
+function respondVerificationError(error: unknown, res: any): boolean {
+  if (!(error instanceof VerificationError)) return false;
+  if (error.retryAfterSeconds) {
+    res.set("Retry-After", String(error.retryAfterSeconds));
+  }
+  res.status(error.status).json({
+    success: false,
+    code: error.code,
+    message: error.message,
+    ...(error.retryAfterSeconds ? { retryAfterSeconds: error.retryAfterSeconds } : {}),
+  });
+  return true;
 }
 
 function paymentPeriodExpression() {
@@ -239,18 +260,6 @@ router.get(
           FROM users u
           WHERE u.status = 'pending'
             AND u.role NOT IN ('admin', 'super_admin')
-            AND
-            (
-              u.role <> 'resident'
-              OR
-              (
-                u.email_verified_at IS NOT NULL
-                AND u.barangay_id IS NOT NULL
-                AND u.purok_id IS NOT NULL
-                AND NULLIF(TRIM(u.phone), '') IS NOT NULL
-                AND NULLIF(TRIM(u.address), '') IS NOT NULL
-              )
-            )
             ${userWhere}
           `,
           userParams,
@@ -1106,8 +1115,11 @@ router.get("/users", requireAuth, async (req: AuthRequest, res) => {
           WHEN u.email_verified_at IS NOT NULL THEN 1
           ELSE 0
         END AS email_verified,
+        u.email_verified_at,
+        EXISTS(SELECT 1 FROM email_verifications ev WHERE ev.user_id = u.id) AS has_email_verification,
         CASE
           WHEN u.status <> 'pending' THEN 0
+          WHEN u.email_verified_at IS NULL THEN 0
           WHEN u.role <> 'resident' THEN 1
           WHEN u.email_verified_at IS NOT NULL
             AND u.barangay_id IS NOT NULL
@@ -1137,6 +1149,7 @@ router.get("/users", requireAuth, async (req: AuthRequest, res) => {
     const users = await Promise.all(
       rows.map(async (row: any) => ({
         ...row,
+        email_verification_required: requiresEmailVerification(row),
         profile_photo: await signedProofUrl(row.profile_photo),
       })),
     );
@@ -1281,10 +1294,11 @@ router.get("/collectors", requireAuth, async (req: AuthRequest, res) => {
 });
 
 router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
-  const connection = await db.getConnection();
+  let connection: PoolConnection | undefined;
 
   try {
     if (!requireBarangayCaptain(req, res)) return;
+    connection = await db.getConnection();
 
     const userId = parsePositiveInteger(req.params.id);
     const role = normalizeRole(req.body.role);
@@ -1330,6 +1344,7 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
         role,
         status,
         email_verified_at,
+        EXISTS(SELECT 1 FROM email_verifications ev WHERE ev.user_id = users.id) AS has_email_verification,
         phone,
         address,
         barangay_id,
@@ -1371,16 +1386,19 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
       });
     }
 
+    if (requiresEmailVerification(user)) {
+      await connection.rollback();
+      return res.status(409).json({
+        success: false,
+        code: "EMAIL_VERIFICATION_REQUIRED",
+        message: "This account must verify its email before it can be activated or reassigned.",
+      });
+    }
+
     if (
       String(user.role).toLowerCase() === "resident" &&
-      String(user.status).toLowerCase() !== "active" &&
-      (
-        (
-          String(user.status).toLowerCase() === "pending" &&
-          !hasVerifiedResidentProfile(user)
-        ) ||
-        !user.email_verified_at
-      )
+      String(user.status).toLowerCase() === "pending" &&
+      !hasVerifiedResidentProfile(user)
     ) {
       await connection.rollback();
       return res.status(409).json({
@@ -1423,7 +1441,7 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
       }
 
       const [purokRows]: any = await connection.query(
-        `SELECT id, barangay_id FROM puroks WHERE id = ? LIMIT 1`,
+        `SELECT id, barangay_id FROM puroks WHERE id = ? LIMIT 1 FOR UPDATE`,
         [purokId],
       );
 
@@ -1446,6 +1464,21 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
           success: false,
           message: "The selected purok is outside your barangay.",
         });
+      }
+
+      if (role === "purok_leader") {
+        const [existingLeaders]: any = await connection.query(
+          `SELECT id FROM users WHERE role = 'purok_leader' AND purok_id = ?
+           AND status IN ('active', 'pending') AND id <> ? LIMIT 1 FOR UPDATE`,
+          [finalPurokId, userId],
+        );
+        if (existingLeaders.length) {
+          await connection.rollback();
+          return res.status(409).json({
+            success: false,
+            message: "This purok already has an active or pending Purok Leader.",
+          });
+        }
       }
     }
 
@@ -1485,20 +1518,22 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
       message: `${user.full_name} is now assigned as ${roleLabel}.`,
     });
   } catch (error) {
-    await connection.rollback();
+    await connection?.rollback();
     console.error("Admin update role error:", error);
     return res.status(500).json({
       success: false,
       message: "Unable to update the user's role.",
     });
   } finally {
-    connection.release();
+    connection?.release();
   }
 });
 
 router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => {
+  let connection: PoolConnection | undefined;
   try {
     if (!requireBarangayCaptain(req, res)) return;
+    connection = await db.getConnection();
 
     const userId = parsePositiveInteger(req.params.id);
     const status = String(req.body.status || "").trim().toLowerCase();
@@ -1537,13 +1572,15 @@ router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => 
       ? [userId]
       : [userId, barangayId];
 
-    const [userRows]: any = await db.query(
+    await connection.beginTransaction();
+    const [userRows]: any = await connection.query(
       `
       SELECT
         id,
         role,
         status,
         email_verified_at,
+        EXISTS(SELECT 1 FROM email_verifications ev WHERE ev.user_id = users.id) AS has_email_verification,
         phone,
         address,
         barangay_id,
@@ -1553,6 +1590,7 @@ router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => 
         AND role NOT IN ('admin', 'super_admin')
         ${scopeSql}
       LIMIT 1
+      FOR UPDATE
       `,
       lookupParams,
     );
@@ -1560,10 +1598,7 @@ router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => 
     const targetUser = userRows[0];
 
     if (!targetUser) {
-      return res.status(404).json({
-        success: false,
-        message: "User was not found in your barangay or cannot be updated.",
-      });
+      throw new VerificationError("User was not found in your barangay or cannot be updated.", 404);
     }
 
     const targetStatus = String(targetUser.status).toLowerCase();
@@ -1573,43 +1608,43 @@ router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => 
       targetIsResident &&
       targetStatus === "pending" &&
       !hasVerifiedResidentProfile(targetUser);
-    const inactiveResidentEmailIsNotVerified =
-      targetIsResident &&
-      targetStatus === "inactive" &&
-      status === "active" &&
-      !targetUser.email_verified_at;
-
-    if (
-      pendingResidentIsNotReady ||
-      inactiveResidentEmailIsNotVerified
-    ) {
-      return res.status(409).json({
-        success: false,
-        message:
-          "This resident must verify their email and complete their profile before approval.",
-      });
+    if (status === "active" && requiresEmailVerification(targetUser)) {
+      throw new VerificationError(
+        "This account must verify its email before activation.",
+        409,
+        "EMAIL_VERIFICATION_REQUIRED",
+      );
     }
 
-    if (
-      String(targetUser.role).toLowerCase() === "resident" &&
-      String(targetUser.status).toLowerCase() === "active" &&
-      !targetUser.email_verified_at
-    ) {
-      await db.execute(
-        `
-        UPDATE users
-        SET email_verified_at = COALESCE(email_verified_at, NOW())
-        WHERE id = ?
-        `,
-        [userId],
+    if (status === "active" && pendingResidentIsNotReady) {
+      throw new VerificationError(
+        "This resident must complete their profile before approval.", 409,
       );
+    }
+
+    if (status === "active" && targetUser.role === "purok_leader") {
+      const [purokRows]: any = await connection.query(
+        "SELECT id FROM puroks WHERE id = ? AND barangay_id = ? LIMIT 1 FOR UPDATE",
+        [targetUser.purok_id, targetUser.barangay_id],
+      );
+      if (!purokRows.length) {
+        throw new VerificationError("Assign a valid purok in this account's barangay before activation.", 409);
+      }
+      const [leaders]: any = await connection.query(
+        `SELECT id FROM users WHERE role = 'purok_leader' AND purok_id = ?
+         AND status IN ('active', 'pending') AND id <> ? LIMIT 1 FOR UPDATE`,
+        [targetUser.purok_id, userId],
+      );
+      if (leaders.length) {
+        throw new VerificationError("This purok already has an active or pending Purok Leader.", 409);
+      }
     }
 
     const params = isSuperAdmin
       ? [status, userId]
       : [status, userId, barangayId];
 
-    const [result]: any = await db.execute(
+    const [result]: any = await connection.execute(
       `UPDATE users
        SET status = ?
        WHERE id = ?
@@ -1619,11 +1654,10 @@ router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => 
     );
 
     if (result.affectedRows === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "User was not found in your barangay or cannot be updated.",
-      });
+      throw new VerificationError("User was not found in your barangay or cannot be updated.", 404);
     }
+
+    await connection.commit();
 
     return res.json({
       success: true,
@@ -1633,16 +1667,126 @@ router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => 
           : "Account deactivated successfully.",
     });
   } catch (error) {
+    await connection?.rollback();
+    if (respondVerificationError(error, res)) return;
     console.error("Admin update account status error:", error);
     return res.status(500).json({
       success: false,
       message: "Unable to update account status.",
     });
+  } finally {
+    connection?.release();
+  }
+});
+
+router.post("/staff", requireAuth, async (req: AuthRequest, res) => {
+  let connection: PoolConnection | undefined;
+  try {
+    if (!requireBarangayCaptain(req, res)) return;
+    connection = await db.getConnection();
+
+    const role = normalizeRole(req.body.role);
+    const fullName = String(req.body.fullName || "").trim();
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const phone = String(req.body.phone || "").trim();
+    const barangayId = parsePositiveInteger(req.body.barangayId);
+    const purokId = parsePositiveInteger(req.body.purokId);
+    const temporaryPassword = String(req.body.temporaryPassword || "");
+    const confirmTemporaryPassword = String(req.body.confirmTemporaryPassword || "");
+    const isSuperAdmin = req.user?.role === "super_admin";
+
+    if (role !== "purok_leader" && role !== "collector") {
+      throw new VerificationError("Select Purok Leader or Garbage Collector.");
+    }
+    if (!fullName || fullName.length > 150 || email.length > 150 ||
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !/^\+?\d{7,15}$/.test(phone)) {
+      throw new VerificationError("Enter a valid full name, email address, and mobile number.");
+    }
+    if (!barangayId) {
+      throw new VerificationError("Select a valid assigned barangay.");
+    }
+    if (!isSuperAdmin && barangayId !== parsePositiveInteger(req.user?.barangay_id)) {
+      throw new VerificationError("Barangay Captains may create accounts only in their own barangay.", 403);
+    }
+    if (temporaryPassword !== confirmTemporaryPassword) {
+      throw new VerificationError("Temporary passwords do not match.");
+    }
+    if (temporaryPassword.length < 12 || Buffer.byteLength(temporaryPassword, "utf8") > 72 ||
+        !/[A-Z]/.test(temporaryPassword) || !/[a-z]/.test(temporaryPassword) ||
+        !/\d/.test(temporaryPassword) || !/[^A-Za-z0-9]/.test(temporaryPassword)) {
+      throw new VerificationError("Temporary password must be 12–72 bytes and include uppercase, lowercase, number, and symbol.");
+    }
+    if (role === "purok_leader" && !purokId) {
+      throw new VerificationError("Assign a valid purok to the Purok Leader.");
+    }
+
+    const passwordHash = await bcrypt.hash(temporaryPassword, 12);
+    await connection.beginTransaction();
+    const [barangays]: any = await connection.query(
+      "SELECT id FROM barangays WHERE id = ? AND is_active = 1 LIMIT 1 FOR UPDATE",
+      [barangayId],
+    );
+    if (!barangays.length) {
+      throw new VerificationError("The selected barangay was not found or is inactive.", 404);
+    }
+    if (role === "purok_leader") {
+      const [puroks]: any = await connection.query(
+        "SELECT id, barangay_id FROM puroks WHERE id = ? LIMIT 1 FOR UPDATE",
+        [purokId],
+      );
+      if (!puroks.length || Number(puroks[0].barangay_id) !== barangayId) {
+        throw new VerificationError("Select a valid purok belonging to the assigned barangay.");
+      }
+      const [leaders]: any = await connection.query(
+        `SELECT id FROM users WHERE role = 'purok_leader' AND purok_id = ?
+         AND status IN ('active', 'pending') LIMIT 1 FOR UPDATE`,
+        [purokId],
+      );
+      if (leaders.length) {
+        throw new VerificationError("This purok already has an active or pending Purok Leader.", 409);
+      }
+    }
+    const [existing]: any = await connection.query(
+      "SELECT id FROM users WHERE LOWER(email) = ? LIMIT 1 FOR UPDATE", [email],
+    );
+    if (existing.length) {
+      throw new VerificationError("This email address is already registered.", 409);
+    }
+    const [created]: any = await connection.execute(
+      `INSERT INTO users
+       (full_name, email, phone, password_hash, role, barangay_id, purok_id,
+        status, email_verified_at, must_change_password)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, 1)`,
+      [fullName, email, phone, passwordHash, role, barangayId, role === "purok_leader" ? purokId : null],
+    );
+    const userId = Number(created.insertId);
+    const verification = await createEmailVerification(connection, { id: userId, email, full_name: fullName });
+    await connection.commit();
+    return res.status(201).json({
+      success: true,
+      message: `${role === "purok_leader" ? "Purok Leader" : "Garbage Collector"} account created. Verify the email before signing in with the temporary password.`,
+      userId,
+      requiresEmailVerification: true,
+      email,
+      ...verification,
+    });
+  } catch (error: any) {
+    await connection?.rollback();
+    if (respondVerificationError(error, res)) return;
+    console.error("Create managed staff account error:", error);
+    return res.status(error?.code === "ER_DUP_ENTRY" ? 409 : 500).json({
+      success: false,
+      message: error?.code === "ER_DUP_ENTRY"
+        ? "This email address is already registered."
+        : "Unable to create the staff account. Please try again.",
+    });
+  } finally {
+    connection?.release();
   }
 });
 
 router.post("/barangay-captains", requireAuth, async (req: AuthRequest, res) => {
-  const connection = await db.getConnection();
+  let connection: PoolConnection | undefined;
 
   try {
     if (req.user?.role !== "super_admin") {
@@ -1651,6 +1795,7 @@ router.post("/barangay-captains", requireAuth, async (req: AuthRequest, res) => 
         message: "Only the Municipal Administrator can create Barangay Captains.",
       });
     }
+    connection = await db.getConnection();
 
     const fullName = String(req.body.fullName || "").trim();
     const email = String(req.body.email || "").trim().toLowerCase();
@@ -1687,6 +1832,7 @@ router.post("/barangay-captains", requireAuth, async (req: AuthRequest, res) => 
 
     if (
       plainPassword.length < 12 ||
+      Buffer.byteLength(plainPassword, "utf8") > 72 ||
       !/[A-Z]/.test(plainPassword) ||
       !/[a-z]/.test(plainPassword) ||
       !/\d/.test(plainPassword) ||
@@ -1726,7 +1872,7 @@ router.post("/barangay-captains", requireAuth, async (req: AuthRequest, res) => 
     }
 
     const [existing]: any = await connection.query(
-      "SELECT id FROM users WHERE email = ? LIMIT 1 FOR UPDATE",
+      "SELECT id FROM users WHERE LOWER(email) = ? LIMIT 1 FOR UPDATE",
       [email],
     );
 
@@ -1751,10 +1897,10 @@ router.post("/barangay-captains", requireAuth, async (req: AuthRequest, res) => 
       });
     }
 
-    await connection.execute(
+    const [created]: any = await connection.execute(
       `INSERT INTO users
-      (full_name,email,phone,password_hash,recovery_email,role,barangay_id,status,must_change_password)
-      VALUES (?,?,?,?,?,'admin',?,'active',1)`,
+      (full_name,email,phone,password_hash,recovery_email,role,barangay_id,status,email_verified_at,must_change_password)
+      VALUES (?,?,?,?,?,'admin',?,'pending',NULL,1)`,
       [
         fullName,
         email.toLowerCase(),
@@ -1765,14 +1911,21 @@ router.post("/barangay-captains", requireAuth, async (req: AuthRequest, res) => 
       ],
     );
 
+    const userId = Number(created.insertId);
+    const verification = await createEmailVerification(connection, { id: userId, email, full_name: fullName });
     await connection.commit();
 
     return res.status(201).json({
       success: true,
-      message: "Barangay Captain account created successfully.",
+      message: "Barangay Captain account created. Verify the email before signing in with the temporary password.",
+      userId,
+      requiresEmailVerification: true,
+      email,
+      ...verification,
     });
   } catch (error: any) {
-    await connection.rollback();
+    await connection?.rollback();
+    if (respondVerificationError(error, res)) return;
     console.error("Create Barangay Captain error:", error);
 
     if (error?.code === "ER_DUP_ENTRY") {
@@ -1787,7 +1940,7 @@ router.post("/barangay-captains", requireAuth, async (req: AuthRequest, res) => 
       message: "Unable to create Barangay Captain.",
     });
   } finally {
-    connection.release();
+    connection?.release();
   }
 });
 router.delete(
@@ -1993,10 +2146,11 @@ router.get("/truck-crews", requireAuth, async (req: AuthRequest, res) => {
 });
 
 router.post("/truck-crews", requireAuth, async (req: AuthRequest, res) => {
-  const connection = await db.getConnection();
+  let connection: PoolConnection | undefined;
 
   try {
     if (!requireSuperAdmin(req, res)) return;
+    connection = await db.getConnection();
 
     const truckCode = String(
       req.body.truckCode || "",
@@ -2083,6 +2237,7 @@ router.post("/truck-crews", requireAuth, async (req: AuthRequest, res) => {
       !existingCollectorId &&
       (
         temporaryPassword.length < 12 ||
+        Buffer.byteLength(temporaryPassword, "utf8") > 72 ||
         !/[A-Z]/.test(temporaryPassword) ||
         !/[a-z]/.test(temporaryPassword) ||
         !/\d/.test(temporaryPassword) ||
@@ -2197,6 +2352,8 @@ router.post("/truck-crews", requireAuth, async (req: AuthRequest, res) => {
             phone,
             role,
             status,
+            email_verified_at,
+            EXISTS(SELECT 1 FROM email_verifications ev WHERE ev.user_id = users.id) AS has_email_verification,
             barangay_id
           FROM users
           WHERE id = ?
@@ -2221,7 +2378,7 @@ router.post("/truck-crews", requireAuth, async (req: AuthRequest, res) => {
         });
       }
 
-      if (selectedCollector.status !== "active") {
+      if (selectedCollector.status !== "active" || requiresEmailVerification(selectedCollector)) {
         await connection.rollback();
 
         return res.status(400).json({
@@ -2278,7 +2435,7 @@ router.post("/truck-crews", requireAuth, async (req: AuthRequest, res) => {
           `
           SELECT id
           FROM users
-          WHERE email = ?
+          WHERE LOWER(email) = ?
           LIMIT 1
           `,
           [collectorEmail],
@@ -2312,9 +2469,10 @@ router.post("/truck-crews", requireAuth, async (req: AuthRequest, res) => {
             barangay_id,
             purok_id,
             status,
+            email_verified_at,
             must_change_password
           )
-          VALUES (?, ?, ?, ?, 'collector', ?, NULL, 'active', 1)
+          VALUES (?, ?, ?, ?, 'collector', ?, NULL, 'pending', NULL, 1)
           `,
           [
             collectorName,
@@ -2409,18 +2567,25 @@ router.post("/truck-crews", requireAuth, async (req: AuthRequest, res) => {
       );
     }
 
+    const verification = existingCollectorId ? null : await createEmailVerification(connection, {
+      id: collectorUserId,
+      email: collectorEmail,
+      full_name: collectorName,
+    });
     await connection.commit();
 
     return res.status(201).json({
       success: true,
       message: existingCollectorId
         ? `${truckCode} was registered and assigned to the selected Garbage Collector.`
-        : `${truckCode} and its collection crew were registered successfully. The new driver/crew leader must change the temporary password on first login.`,
+        : `${truckCode} and its collection crew were registered. The new driver/crew leader must verify their email before signing in and changing the temporary password.`,
       truckId,
       collectorUserId,
+      ...(verification ? { requiresEmailVerification: true, email: collectorEmail, ...verification } : {}),
     });
   } catch (error: any) {
-    await connection.rollback();
+    await connection?.rollback();
+    if (respondVerificationError(error, res)) return;
     console.error("Create truck crew error:", error);
 
     if (error?.code === "ER_DUP_ENTRY") {
@@ -2437,7 +2602,7 @@ router.post("/truck-crews", requireAuth, async (req: AuthRequest, res) => {
         "Unable to register the collection truck and crew.",
     });
   } finally {
-    connection.release();
+    connection?.release();
   }
 });
 
@@ -2445,10 +2610,11 @@ router.patch(
   "/truck-crews/:id/status",
   requireAuth,
   async (req: AuthRequest, res) => {
-    const connection = await db.getConnection();
+    let connection: PoolConnection | undefined;
 
     try {
       if (!requireSuperAdmin(req, res)) return;
+      connection = await db.getConnection();
 
       const truckId = parsePositiveInteger(
         req.params.id,
@@ -2504,6 +2670,17 @@ router.patch(
         });
       }
 
+      let collectorAwaitingVerification = false;
+      if (truck.collector_user_id) {
+        const [collectors]: any = await connection.query(
+          `SELECT id, role, status, email_verified_at,
+           EXISTS(SELECT 1 FROM email_verifications ev WHERE ev.user_id = users.id) AS has_email_verification
+           FROM users WHERE id = ? AND role = 'collector' LIMIT 1 FOR UPDATE`,
+          [truck.collector_user_id],
+        );
+        collectorAwaitingVerification = Boolean(collectors[0] && requiresEmailVerification(collectors[0]));
+      }
+
       if (
         status !== "inactive" &&
         truck.barangay_id
@@ -2541,7 +2718,8 @@ router.patch(
         [status, truckId],
       );
 
-      if (truck.collector_user_id) {
+      // Vehicle status must never approve or interrupt an outstanding email OTP.
+      if (truck.collector_user_id && !collectorAwaitingVerification) {
         await connection.execute(
           `
           UPDATE users
@@ -2580,7 +2758,8 @@ router.patch(
           `${truck.truck_code} status updated to ${status}.`,
       });
     } catch (error) {
-      await connection.rollback();
+      await connection?.rollback();
+      if (respondVerificationError(error, res)) return;
       console.error(
         "Update truck status error:",
         error,
@@ -2592,7 +2771,7 @@ router.patch(
           "Unable to update truck status.",
       });
     } finally {
-      connection.release();
+      connection?.release();
     }
   },
 );

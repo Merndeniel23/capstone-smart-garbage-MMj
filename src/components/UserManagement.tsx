@@ -8,6 +8,7 @@ import {
   Eye,
   EyeOff,
   Loader2,
+  Mail,
   Plus,
   RefreshCw,
   Search,
@@ -22,6 +23,7 @@ import {
 } from "../hooks/useAdminActionCounts";
 import ConfirmDialog from "./ConfirmDialog";
 import FeedbackToast from "./FeedbackToast";
+import EmailVerificationForm from "./EmailVerificationForm";
 import Pagination, {
   DEFAULT_PAGE_SIZE,
 } from "./Pagination";
@@ -40,6 +42,7 @@ interface ManagedUser {
   | "purok_leader";
   status: "active" | "inactive" | "pending" | string;
   email_verified: number | boolean;
+  email_verification_required?: number | boolean;
   approval_ready: number | boolean;
   barangay_id: number | null;
   barangay_name: string | null;
@@ -61,6 +64,18 @@ interface Purok {
 }
 
 type ManagedRole = "resident" | "collector" | "purok_leader";
+type StaffRole = "collector" | "purok_leader";
+interface StaffDraft {
+  fullName: string;
+  email: string;
+  phone: string;
+  purokId: string;
+  temporaryPassword: string;
+  confirmTemporaryPassword: string;
+}
+const emptyStaffDraft: StaffDraft = {
+  fullName: "", email: "", phone: "", purokId: "", temporaryPassword: "", confirmTemporaryPassword: "",
+};
 
 const API_BASE = "/api";
 
@@ -163,7 +178,20 @@ function isPendingApproval(user: ManagedUser) {
   );
 }
 
+function needsEmailVerification(user: ManagedUser) {
+  return Boolean(Number(user.email_verification_required)) ||
+    (user.status === "pending" && !Boolean(Number(user.email_verified)));
+}
+
+function accountStatusLabel(user: ManagedUser) {
+  if (needsEmailVerification(user)) return "Pending Verification";
+  if (user.status === "pending") return "Pending Approval";
+  if (user.status === "inactive") return "Inactive / Suspended";
+  return user.status;
+}
+
 function canAdminModifyAccount(user: ManagedUser) {
+  if (needsEmailVerification(user)) return false;
   if (user.role !== "resident" || user.status === "active") {
     return true;
   }
@@ -216,6 +244,14 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
     localStorage.getItem("sg_user_role") ||
     sessionStorage.getItem("sg_user_role");
   const isSuperAdmin = currentRole === "super_admin";
+  const isBarangayCaptain = currentRole === "admin";
+
+  const [staffRole, setStaffRole] = useState<StaffRole | null>(null);
+  const [staffDraft, setStaffDraft] = useState<StaffDraft>(emptyStaffDraft);
+  const [showStaffPassword, setShowStaffPassword] = useState(false);
+  const [verification, setVerification] = useState<{ email: string; resendAfter: number } | null>(null);
+  const assignedBarangay = isBarangayCaptain ? barangays[0] : undefined;
+  const staffPuroks = puroks.filter((purok) => Number(purok.barangay_id) === Number(assignedBarangay?.id));
 
   const [showCaptainModal, setShowCaptainModal] = useState(initialCreateCaptain && isSuperAdmin);
   const [captainFullName, setCaptainFullName] = useState("");
@@ -321,7 +357,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
 
       const matchesTab =
         activeTab === "all" ||
-        (activeTab === "pending" && isPendingApproval(user)) ||
+        (activeTab === "pending" && user.status === "pending") ||
         (activeTab === "residents" && user.role === "resident") ||
         (activeTab === "collectors" && user.role === "collector") ||
         (activeTab === "leaders" && user.role === "purok_leader");
@@ -405,7 +441,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
   const pendingCount = useMemo(
     () =>
       users.filter(
-        (user) => isPendingApproval(user),
+        (user) => user.status === "pending",
       ).length,
     [users],
   );
@@ -421,7 +457,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
   const openRoleModal = (user: ManagedUser) => {
     if (!canAdminModifyAccount(user)) {
       setError(
-        "This resident must verify their email and complete any required profile details before admin activation.",
+        "This account must verify its email and complete any required profile details before admin activation.",
       );
       return;
     }
@@ -510,7 +546,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
 
     if (!canAdminModifyAccount(user)) {
       setError(
-        "This resident must verify their email and complete any required profile details before admin activation.",
+        "This account must verify its email and complete any required profile details before admin activation.",
       );
       return;
     }
@@ -635,12 +671,87 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
       await loadData();
       setShowCaptainModal(false);
       resetCaptainForm();
+      if (data.requiresEmailVerification) {
+        setVerification({ email: data.email || email, resendAfter: Number(data.resendAfter) || 60 });
+      }
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
           : "Unable to create the Barangay Captain account.",
       );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openStaffModal = (role: StaffRole) => {
+    if (!isBarangayCaptain) return;
+    setStaffRole(role);
+    setStaffDraft({ ...emptyStaffDraft });
+    setShowStaffPassword(false);
+    setError("");
+    setSuccessMessage("");
+  };
+
+  const closeStaffModal = () => {
+    if (saving) return;
+    setStaffRole(null);
+    setStaffDraft({ ...emptyStaffDraft });
+    setError("");
+  };
+
+  const createStaffAccount = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (saving || !staffRole || !isBarangayCaptain) return;
+    setError("");
+    setSuccessMessage("");
+    const fullName = staffDraft.fullName.trim();
+    const email = staffDraft.email.trim().toLowerCase();
+    const phone = staffDraft.phone.trim();
+    if (!assignedBarangay) {
+      setError("Your account must have an assigned barangay before creating staff accounts.");
+      return;
+    }
+    if (!fullName || !/^\S+@\S+\.\S+$/.test(email) || !isValidPhone(phone)) {
+      setError("Enter a full name, valid email, and mobile number (7 to 15 digits, optionally starting with +).");
+      return;
+    }
+    const purokId = staffRole === "purok_leader" ? Number(staffDraft.purokId) : null;
+    if (staffRole === "purok_leader" && !staffPuroks.some((purok) => Number(purok.id) === purokId)) {
+      setError("Select a valid purok in your assigned barangay.");
+      return;
+    }
+    const password = staffDraft.temporaryPassword;
+    if (password.length < 12 || password.length > 72 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+      setError("Use a temporary password of 12 to 72 characters with uppercase, lowercase, a number, and a symbol.");
+      return;
+    }
+    if (password !== staffDraft.confirmTemporaryPassword) {
+      setError("Temporary passwords do not match.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const data = await apiRequest("/admin/staff", {
+        method: "POST",
+        body: JSON.stringify({
+          role: staffRole, fullName, email, phone,
+          barangayId: Number(assignedBarangay.id), purokId,
+          temporaryPassword: password,
+          confirmTemporaryPassword: staffDraft.confirmTemporaryPassword,
+        }),
+      });
+      setSuccessMessage(data.message || "Account created. Email verification is required before signing in.");
+      setStaffRole(null);
+      setStaffDraft({ ...emptyStaffDraft });
+      await loadData();
+      notifyAdminActionCountsChanged();
+      if (data.requiresEmailVerification) {
+        setVerification({ email: data.email || email, resendAfter: Number(data.resendAfter) || 60 });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to create the staff account.");
     } finally {
       setSaving(false);
     }
@@ -756,6 +867,16 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
               <Plus className="h-4 w-4" />
               Create Barangay Captain
             </button>
+          )}
+          {isBarangayCaptain && (
+            <>
+              <button type="button" onClick={() => openStaffModal("purok_leader")} disabled={loading || !assignedBarangay} className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-4 py-3 text-xs font-black uppercase tracking-wide text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">
+                <Plus className="h-4 w-4" />Create Purok Leader
+              </button>
+              <button type="button" onClick={() => openStaffModal("collector")} disabled={loading || !assignedBarangay} className="flex items-center justify-center gap-2 rounded-2xl border border-emerald-700 bg-white px-4 py-3 text-xs font-black uppercase tracking-wide text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50">
+                <Plus className="h-4 w-4" />Create Collector
+              </button>
+            </>
           )}
 
           <div className="relative min-w-[260px] flex-1 md:max-w-md">
@@ -970,15 +1091,17 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                           )}`}
                         />
                         <span className="text-[10px] font-bold capitalize text-slate-600">
-                          {user.status === "pending" && !isPendingApproval(user)
-                            ? "Awaiting email verification"
-                            : user.status}
+                          {accountStatusLabel(user)}
                         </span>
                       </div>
                     </td>
 
                     <td className="px-4 py-3">
-                     {user.role === "admin" || user.role === "super_admin" ? (
+                     {needsEmailVerification(user) ? (
+                        <button type="button" onClick={() => { setError(""); setVerification({ email: user.email, resendAfter: 0 }); }} className="inline-flex items-center gap-1.5 rounded-xl px-2 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50">
+                          <Mail className="h-4 w-4" />Verify Email
+                        </button>
+                      ) : user.role === "admin" || user.role === "super_admin" ? (
                         <span className="text-[10px] font-bold text-slate-400">
                           Protected account
                         </span>
@@ -1110,17 +1233,18 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                       )}`}
                     />
                     <span className="text-[10px] font-bold capitalize text-slate-600">
-                      {user.status === "pending" &&
-                      !isPendingApproval(user)
-                        ? "Awaiting verification"
-                        : user.status}
+                      {accountStatusLabel(user)}
                     </span>
                   </div>
                 </div>
               </div>
 
               <div className="mt-3 flex items-center justify-end gap-2">
-                {user.role === "admin" ||
+                {needsEmailVerification(user) ? (
+                  <button type="button" onClick={() => { setError(""); setVerification({ email: user.email, resendAfter: 0 }); }} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-bold text-emerald-700 hover:bg-emerald-50">
+                    <Mail className="h-4 w-4" />Verify Email
+                  </button>
+                ) : user.role === "admin" ||
                 user.role === "super_admin" ? (
                   <span className="text-[10px] font-bold text-slate-400">
                     Protected account
@@ -1196,6 +1320,102 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
         </div>
       )}
 
+
+      {staffRole && isBarangayCaptain && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+          <div role="dialog" aria-modal="true" aria-labelledby="create-staff-title" className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-[2rem] border border-slate-100 bg-white p-6 shadow-2xl md:p-8">
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Barangay Captain Action</p>
+                <h2 id="create-staff-title" className="mt-1 text-xl font-black text-slate-900">Create {staffRole === "purok_leader" ? "Purok Leader" : "Collector"}</h2>
+                <p className="mt-1 text-sm text-slate-500">Create an account within your assigned barangay.</p>
+              </div>
+              <button type="button" onClick={closeStaffModal} disabled={saving} aria-label="Close account form" className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 disabled:opacity-50"><X className="h-5 w-5" /></button>
+            </div>
+
+            <form onSubmit={createStaffAccount} className="sg-compact-form">
+              <fieldset disabled={saving} className="sg-form-section">
+                <legend className="sg-form-section-title">Account details</legend>
+                <div className="sg-form-grid sg-form-grid--two">
+                  <label className="block text-xs font-bold text-slate-600">Full Name *
+                    <input required maxLength={150} autoComplete="name" value={staffDraft.fullName} onChange={(event) => setStaffDraft((draft) => ({ ...draft, fullName: event.target.value }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm" />
+                  </label>
+                  <label className="block text-xs font-bold text-slate-600">Email *
+                    <input required type="email" maxLength={150} autoComplete="email" value={staffDraft.email} onChange={(event) => setStaffDraft((draft) => ({ ...draft, email: event.target.value }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm" />
+                  </label>
+                  <label className="block text-xs font-bold text-slate-600">Mobile Number *
+                    <input required type="tel" inputMode="tel" autoComplete="tel" maxLength={16} value={staffDraft.phone} onChange={(event) => setStaffDraft((draft) => ({ ...draft, phone: sanitizePhoneInput(event.target.value) }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm" />
+                  </label>
+                </div>
+              </fieldset>
+
+              <fieldset disabled={saving} className="sg-form-section">
+                <legend className="sg-form-section-title">Assignment</legend>
+                <div className="sg-form-grid sg-form-grid--two">
+                  <label className="block text-xs font-bold text-slate-600">Assigned Barangay
+                    <input value={assignedBarangay?.name || "No assigned barangay"} readOnly aria-readonly="true" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-100 p-3 text-sm" />
+                    <span className="mt-1.5 block text-[11px] font-normal text-slate-500">Fixed to your barangay.</span>
+                  </label>
+                  {staffRole === "purok_leader" && <label className="block text-xs font-bold text-slate-600">Assigned Purok *
+                    <select required value={staffDraft.purokId} onChange={(event) => setStaffDraft((draft) => ({ ...draft, purokId: event.target.value }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
+                      <option value="">Select a purok</option>
+                      {staffPuroks.map((purok) => {
+                        const occupied = users.some((user) => user.role === "purok_leader" && Number(user.purok_id) === Number(purok.id) && (user.status === "active" || user.status === "pending"));
+                        return <option key={purok.id} value={purok.id} disabled={occupied}>{purok.name}{occupied ? " — leader assigned" : ""}</option>;
+                      })}
+                    </select>
+                  </label>}
+                </div>
+              </fieldset>
+
+              <fieldset disabled={saving} className="sg-form-section">
+                <legend className="sg-form-section-title">Temporary password</legend>
+                <div className="sg-form-grid sg-form-grid--two">
+                  <label className="block text-xs font-bold text-slate-600">Temporary Password *
+                    <input required type={showStaffPassword ? "text" : "password"} autoComplete="new-password" minLength={12} maxLength={72} value={staffDraft.temporaryPassword} onChange={(event) => setStaffDraft((draft) => ({ ...draft, temporaryPassword: event.target.value }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm" />
+                  </label>
+                  <label className="block text-xs font-bold text-slate-600">Confirm Temporary Password *
+                    <input required type={showStaffPassword ? "text" : "password"} autoComplete="new-password" minLength={12} maxLength={72} value={staffDraft.confirmTemporaryPassword} onChange={(event) => setStaffDraft((draft) => ({ ...draft, confirmTemporaryPassword: event.target.value }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm" />
+                  </label>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[11px] text-slate-500">12–72 characters with uppercase, lowercase, a number, and a symbol.</p>
+                  <button type="button" aria-pressed={showStaffPassword} onClick={() => setShowStaffPassword((show) => !show)} className="text-xs font-bold text-emerald-700 hover:underline">{showStaffPassword ? "Hide passwords" : "Show passwords"}</button>
+                </div>
+              </fieldset>
+
+              <p className="rounded-xl bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">A 6-digit OTP will be sent to the account email. The account stays pending until verification. Share the temporary password securely; the account owner must change it after the first login.</p>
+              {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-700">{error}</p>}
+              <div className="flex flex-wrap gap-3">
+                <button type="button" onClick={closeStaffModal} disabled={saving} className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-bold text-slate-600 disabled:opacity-50">Cancel</button>
+                <button type="submit" disabled={saving || !assignedBarangay} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 text-sm font-black text-white hover:bg-emerald-800 disabled:opacity-50">{saving && <Loader2 className="h-4 w-4 animate-spin" />}{saving ? "Creating..." : "Create Account"}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {verification && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+          <div role="dialog" aria-modal="true" aria-label="Verify account email" className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-3xl border border-slate-100 bg-white p-6 shadow-2xl">
+            <p className="mb-5 text-xs leading-relaxed text-slate-500">The account owner can enter their emailed code here or use “Verify an existing account” on the Sign In page.</p>
+            <EmailVerificationForm
+              key={verification.email}
+              variant="management"
+              email={verification.email}
+              initialResendAfter={verification.resendAfter}
+              backLabel="Back to User Management"
+              onBack={() => setVerification(null)}
+              onVerified={() => {
+                setVerification(null);
+                setSuccessMessage("Email verified. The account owner can now sign in. Staff must change their temporary password on first login.");
+                void refreshUsers(false);
+                notifyAdminActionCountsChanged();
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {showCaptainModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
@@ -1362,9 +1582,12 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
 
               <div className="rounded-2xl bg-slate-50 p-4 text-xs leading-relaxed text-slate-600">
                 The new account will use the <strong>Barangay Captain</strong>{" "}
-                role, become active immediately, and must change the temporary
-                password after first login.
+                role. A 6-digit code will be sent to their email. The account stays
+                pending until email verification, then requires a password change
+                after the first login. The captain can also verify from the Sign In page.
               </div>
+
+              {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-700">{error}</p>}
 
               <div className="flex gap-3">
                 <button

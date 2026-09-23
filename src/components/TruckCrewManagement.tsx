@@ -15,6 +15,7 @@ import {
 import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
 import ConfirmDialog from "./ConfirmDialog";
 import FeedbackToast from "./FeedbackToast";
+import EmailVerificationForm from "./EmailVerificationForm";
 import Pagination, { DEFAULT_PAGE_SIZE } from "./Pagination";
 
 type Barangay = {
@@ -110,6 +111,7 @@ export default function TruckCrewManagement() {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [verification, setVerification] = useState<{ email: string; resendAfter: number } | null>(null);
   const [fleetPage, setFleetPage] = useState(1);
   const [fleetPageSize, setFleetPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [selectedTruckId, setSelectedTruckId] = useState<number | null>(null);
@@ -281,7 +283,12 @@ export default function TruckCrewManagement() {
         body: JSON.stringify(payload),
       });
 
-      setNotice(data.message || "Truck and crew registered successfully.");
+      setNotice(data.message || (data.requiresEmailVerification
+        ? "Truck and crew registered. The new collector must verify their email before signing in."
+        : "Truck and crew registered successfully."));
+      if (data.requiresEmailVerification) {
+        setVerification({ email: data.email || collectorEmail.trim().toLowerCase(), resendAfter: Number(data.resendAfter) || 60 });
+      }
       resetForm();
       await loadData();
     } catch (err) {
@@ -609,7 +616,7 @@ export default function TruckCrewManagement() {
               <dt className="font-bold">Helpers / Loaders</dt><dd>{crew.filter((member) => member.fullName.trim()).length}</dd>
             </dl>
             {crew.some((member) => member.fullName.trim()) && <ul className="space-y-1 text-sm">{crew.filter((member) => member.fullName.trim()).map((member, index) => <li key={index}>{member.fullName.trim()} — {member.role}</li>)}</ul>}
-            <p className="text-xs">Helpers and loaders receive no login accounts. {collectorMode === "new" && "Share the temporary password securely with the collector; they must change it on first login."}</p>
+            <p className="text-xs">Helpers and loaders receive no login accounts. {collectorMode === "new" && "The collector must verify their email with a 6-digit code before signing in. Share the temporary password securely; they must change it on first login."}</p>
           </div>
         }
         confirmLabel="Register Truck & Crew"
@@ -628,6 +635,26 @@ export default function TruckCrewManagement() {
         onCancel={() => setStatusConfirmation(null)}
         onConfirm={() => { if (statusConfirmation) void changeTruckStatus(statusConfirmation.truck, statusConfirmation.status); }}
       />
+      {verification && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+          <div role="dialog" aria-modal="true" aria-label="Verify collector email" className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-3xl border border-slate-100 bg-white p-6 shadow-2xl">
+            <p className="mb-5 text-xs leading-relaxed text-slate-500">The collector can enter their emailed code here or use “Verify an existing account” on the Sign In page.</p>
+            <EmailVerificationForm
+              key={verification.email}
+              variant="management"
+              email={verification.email}
+              initialResendAfter={verification.resendAfter}
+              backLabel="Back to Truck & Crew"
+              onBack={() => setVerification(null)}
+              onVerified={() => {
+                setVerification(null);
+                setNotice("Collector email verified. They can sign in with the temporary password and change it on first login.");
+                void loadData();
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

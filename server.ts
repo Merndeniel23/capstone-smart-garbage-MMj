@@ -126,6 +126,7 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 app.use("/api/auth/login", loginLimiter);
+app.use("/api/auth/google", loginLimiter);
 app.use("/api/auth/register", registrationLimiter);
 app.use("/api/auth/verify-registration-email", emailVerificationLimiter);
 app.use("/api/auth/resend-registration-email", emailVerificationLimiter);

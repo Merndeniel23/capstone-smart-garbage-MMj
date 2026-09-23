@@ -65,7 +65,7 @@ export function validateProductionEnvironment() {
   }
 
   const resendApiKey = String(process.env.RESEND_API_KEY || "").trim();
-  const resendFrom = String(process.env.RESEND_FROM_EMAIL || "").trim();
+  const resendFrom = String(process.env.RESEND_FROM_EMAIL || process.env.EMAIL_FROM || "").trim();
 
   if (!resendApiKey || isPlaceholder(resendApiKey)) {
     errors.push("RESEND_API_KEY must be configured for registration and password recovery email.");

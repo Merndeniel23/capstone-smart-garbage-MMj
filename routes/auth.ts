@@ -1,10 +1,19 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { OAuth2Client } from "google-auth-library";
-import { Resend } from "resend";
 import { db } from "../config/db.js";
+import { getResendClient, getResendFromAddress } from "../services/email.js";
+import {
+  createEmailVerification,
+  isValidEmail,
+  normalizeEmail,
+  requiresEmailVerification,
+  resendVerificationOtp,
+  verifyEmailOtp,
+  VerificationError,
+} from "../services/emailVerification.js";
 import {
   requireAuth,
   requireAuthenticatedAccount,
@@ -31,24 +40,29 @@ const googleClient = new OAuth2Client(
   process.env.GOOGLE_CLIENT_ID,
 );
 
-function getResendClient() {
-  const apiKey = String(process.env.RESEND_API_KEY || "").trim();
-  return apiKey ? new Resend(apiKey) : null;
+function verificationErrorResponse(res: Response, error: unknown): boolean {
+  if (!(error instanceof VerificationError)) return false;
+  if (error.retryAfterSeconds !== undefined) {
+    res.setHeader("Retry-After", String(error.retryAfterSeconds));
+  }
+  res.status(error.status).json({
+    message: error.message,
+    code: error.code,
+    retryAfterSeconds: error.retryAfterSeconds,
+    resendAfter: error.retryAfterSeconds,
+  });
+  return true;
 }
 
-function getResendFromAddress() {
-  const configured = String(process.env.RESEND_FROM_EMAIL || "").trim();
-
-  // The Resend test sender works for local development. A deployed app must
-  // replace it with a sender from a verified domain.
-  if (
-    !configured ||
-    /YOUR-VERIFIED-SENDER|YOUR-DOMAIN|noreply@example\.com/i.test(configured)
-  ) {
-    return "Smart Garbage <onboarding@resend.dev>";
-  }
-
-  return configured;
+function emailVerificationRequired(res: Response, email: string) {
+  return res.status(403).json({
+    message: "Please verify your email before signing in.",
+    code: "EMAIL_VERIFICATION_REQUIRED",
+    requiresEmailVerification: true,
+    verificationRequired: true,
+    email: normalizeEmail(email),
+    resendAfter: 0,
+  });
 }
 
 function createToken(user: {
@@ -75,16 +89,6 @@ function createToken(user: {
       expiresIn: "12h",
     },
   );
-}
-
-function normalizeEmail(value: unknown) {
-  return String(value || "")
-    .trim()
-    .toLowerCase();
-}
-
-function isValidEmail(value: string) {
-  return value.length <= 150 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 function escapeHtml(value: unknown) {
@@ -120,39 +124,6 @@ function otpMatches(email: string, otp: string, storedHash: unknown) {
   const actual = Buffer.from(String(storedHash || ""), "hex");
 
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
-}
-
-async function sendRegistrationVerificationEmail(
-  email: string,
-  fullName: string,
-  otp: string,
-) {
-  const client = getResendClient();
-
-  if (!client) {
-    return new Error("Email verification is not configured on the server.");
-  }
-
-  try {
-    const { error } = await client.emails.send({
-      from: getResendFromAddress(),
-      to: email,
-      subject: "Verify your Smart Garbage account",
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 520px; margin: auto;">
-          <h2>Verify your Smart Garbage account</h2>
-          <p>Hello ${escapeHtml(fullName)},</p>
-          <p>Your 6-digit email verification code is:</p>
-          <div style="font-size: 32px; font-weight: bold; letter-spacing: 8px;">${otp}</div>
-          <p>This code expires after 10 minutes. If you did not create this account, ignore this email.</p>
-        </div>
-      `,
-    });
-
-    return error ? new Error("Unable to send the verification email.") : null;
-  } catch {
-    return new Error("Unable to send the verification email.");
-  }
 }
 
 async function notifyBarangayAdminOfApprovalRequest(user: {
@@ -399,6 +370,10 @@ router.post(
             u.duty_longitude,
             u.status,
             u.must_change_password,
+            u.email_verified_at,
+            EXISTS (
+              SELECT 1 FROM email_verifications ev WHERE ev.user_id = u.id
+            ) AS has_email_verification,
             b.name AS barangay_name,
             p.name AS purok_name
           FROM users u
@@ -427,6 +402,17 @@ router.post(
         });
       }
 
+      if (user.status !== "active" && user.status !== "pending") {
+        return res.status(403).json({
+          message:
+            "This account is inactive. Please contact the Barangay Captain.",
+        });
+      }
+
+      if (requiresEmailVerification(user)) {
+        return emailVerificationRequired(res, user.email);
+      }
+
       if (user.status === "pending") {
         return res.status(403).json({
           message:
@@ -434,17 +420,11 @@ router.post(
         });
       }
 
-      if (user.status !== "active") {
-        return res.status(403).json({
-          message:
-            "This account is inactive. Please contact the Barangay Captain.",
-        });
-      }
-
       const token =
         createToken(user);
 
       delete user.password_hash;
+      delete user.has_email_verification;
       user.profile_photo = await signedProofUrl(user.profile_photo);
 
       return res.json({
@@ -553,12 +533,6 @@ router.post(
         });
       }
 
-      if (!getResendClient()) {
-        return res.status(503).json({
-          message: "Email verification is not configured on the server.",
-        });
-      }
-
       if (
         !Number.isInteger(purokId) ||
         purokId <= 0
@@ -603,8 +577,13 @@ router.post(
           12,
         );
 
-      const [result] =
-        await db.execute<any>(
+      const connection = await db.getConnection();
+      let userId: number;
+      let verification: { expiresInSeconds: number; resendAfter: number };
+
+      try {
+        await connection.beginTransaction();
+        const [result] = await connection.execute<any>(
           `
           INSERT INTO users
           (
@@ -642,40 +621,26 @@ router.post(
           ],
         );
 
-      const userId = Number(result.insertId);
-      const verificationOtp = String(crypto.randomInt(100000, 1000000));
-
-      await db.execute(
-        `
-        INSERT INTO email_verifications
-          (user_id, email, otp_hash, attempt_count, expires_at)
-        VALUES (?, ?, ?, 0, ?)
-        `,
-        [
-          userId,
+        userId = Number(result.insertId);
+        verification = await createEmailVerification(connection, {
+          id: userId,
           email,
-          createOtpHash(email, verificationOtp),
-          new Date(Date.now() + 10 * 60 * 1000),
-        ],
-      );
-
-      const emailError = await sendRegistrationVerificationEmail(
-        email,
-        fullName,
-        verificationOtp,
-      );
-
-      if (emailError) {
-        await db.execute("DELETE FROM users WHERE id = ? AND status = 'pending'", [userId]);
-        return res.status(503).json({
-          message: "Unable to send the verification email. Please try again.",
+          full_name: fullName,
         });
+        await connection.commit();
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      } finally {
+        connection.release();
       }
 
       return res.status(201).json({
         message:
           "Registration started. Check your email for the verification code.",
         verificationRequired: true,
+        requiresEmailVerification: true,
+        ...verification,
         email,
         userId,
         assignment: {
@@ -690,6 +655,7 @@ router.post(
         },
       });
     } catch (error: any) {
+      if (verificationErrorResponse(res, error)) return;
       if (
         error?.code ===
         "ER_DUP_ENTRY"
@@ -714,9 +680,8 @@ router.post(
 );
 
 /**
- * Confirm the email address used for a new public registration. Verification
- * is deliberately separate from login so an unverified address cannot create
- * an active account or access tenant data.
+ * The existing public endpoints verify all newly created account roles.
+ * Verification never issues a login session or changes a user's role.
  */
 router.post("/verify-registration-email", async (req, res) => {
   const email = normalizeEmail(req.body.email);
@@ -728,88 +693,12 @@ router.post("/verify-registration-email", async (req, res) => {
     });
   }
 
-  const connection = await db.getConnection();
-
   try {
-    await connection.beginTransaction();
-
-    const [userRows] = await connection.query<any[]>(
-      `
-      SELECT id, full_name, status, email_verified_at
-      FROM users
-      WHERE LOWER(email) = ?
-        AND role = 'resident'
-      LIMIT 1
-      FOR UPDATE
-      `,
-      [email],
-    );
-
-    const user = userRows[0];
-
-    if (!user || user.status !== "pending" || user.email_verified_at) {
-      await connection.rollback();
-      return res.status(400).json({ message: "Invalid or expired verification code." });
-    }
-
-    const [verificationRows] = await connection.query<any[]>(
-      `
-      SELECT id, otp_hash, attempt_count, expires_at
-      FROM email_verifications
-      WHERE user_id = ?
-        AND email = ?
-        AND verified_at IS NULL
-      ORDER BY id DESC
-      LIMIT 1
-      FOR UPDATE
-      `,
-      [user.id, email],
-    );
-
-    const verification = verificationRows[0];
-
-    if (
-      !verification ||
-      Number(verification.attempt_count || 0) >= 5 ||
-      new Date(verification.expires_at).getTime() <= Date.now()
-    ) {
-      await connection.rollback();
-      return res.status(400).json({ message: "Invalid or expired verification code." });
-    }
-
-    if (!otpMatches(email, otp, verification.otp_hash)) {
-      await connection.execute(
-        `UPDATE email_verifications SET attempt_count = attempt_count + 1 WHERE id = ?`,
-        [verification.id],
-      );
-      await connection.commit();
-      return res.status(400).json({ message: "Invalid or expired verification code." });
-    }
-
-    await connection.execute(
-      `UPDATE email_verifications SET verified_at = NOW() WHERE id = ? AND verified_at IS NULL`,
-      [verification.id],
-    );
-    await connection.execute(
-      `
-      UPDATE users
-      SET status = 'active', email_verified_at = NOW(), updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND status = 'pending' AND email_verified_at IS NULL
-      `,
-      [user.id],
-    );
-
-    await connection.commit();
-    return res.json({
-      message: "Email verified successfully. You can now sign in.",
-      email,
-    });
+    return res.json({ ...(await verifyEmailOtp(email, otp)), email });
   } catch (error) {
-    await connection.rollback();
+    if (verificationErrorResponse(res, error)) return;
     console.error("Verify registration email error:", error);
     return res.status(500).json({ message: "Unable to verify the email address." });
-  } finally {
-    connection.release();
   }
 });
 
@@ -821,51 +710,9 @@ router.post("/resend-registration-email", async (req, res) => {
   }
 
   try {
-    const [userRows] = await db.query<any[]>(
-      `SELECT id, full_name, status, email_verified_at FROM users WHERE LOWER(email) = ? AND role = 'resident' LIMIT 1`,
-      [email],
-    );
-    const user = userRows[0];
-
-    if (!user || user.status !== "pending" || user.email_verified_at) {
-      return res.json({ message: "If the account is awaiting verification, a new code has been sent." });
-    }
-
-    const [recentRows] = await db.query<any[]>(
-      `
-      SELECT created_at
-      FROM email_verifications
-      WHERE user_id = ?
-      ORDER BY id DESC
-      LIMIT 1
-      `,
-      [user.id],
-    );
-    const recentCreatedAt = recentRows[0]?.created_at
-      ? new Date(recentRows[0].created_at).getTime()
-      : 0;
-
-    if (recentCreatedAt && Date.now() - recentCreatedAt < 60 * 1000) {
-      return res.status(429).json({
-        message: "Please wait before requesting another verification code.",
-      });
-    }
-
-    const otp = String(crypto.randomInt(100000, 1000000));
-    await db.execute("DELETE FROM email_verifications WHERE user_id = ?", [user.id]);
-    await db.execute(
-      `INSERT INTO email_verifications (user_id, email, otp_hash, attempt_count, expires_at) VALUES (?, ?, ?, 0, ?)`,
-      [user.id, email, createOtpHash(email, otp), new Date(Date.now() + 10 * 60 * 1000)],
-    );
-
-    const emailError = await sendRegistrationVerificationEmail(email, user.full_name, otp);
-
-    if (emailError) {
-      return res.status(503).json({ message: "Unable to send the verification email. Please try again." });
-    }
-
-    return res.json({ message: "If the account is awaiting verification, a new code has been sent." });
+    return res.json(await resendVerificationOtp(email));
   } catch (error) {
+    if (verificationErrorResponse(res, error)) return;
     console.error("Resend registration email error:", error);
     return res.status(500).json({ message: "Unable to resend the verification email." });
   }
@@ -942,6 +789,10 @@ router.post(
             u.full_name,
             u.email,
             u.email_verified_at,
+            u.must_change_password,
+            EXISTS (
+              SELECT 1 FROM email_verifications ev WHERE ev.user_id = u.id
+            ) AS has_email_verification,
             u.role,
             u.status,
             u.phone,
@@ -964,73 +815,11 @@ router.post(
       let user =
         existingRows[0];
 
-      if (user) {
-        await db.execute(
-          `
-          UPDATE users
-          SET email_verified_at = COALESCE(email_verified_at, NOW())
-          WHERE id = ?
-          `,
-          [user.id],
-        );
-
-        user.email_verified_at =
-          user.email_verified_at || new Date();
-
-        const isIncompleteResidentSetup =
-          user.role === "resident" &&
-          (
-            !user.barangay_id ||
-            !user.purok_id ||
-            !String(user.address || "").trim() ||
-            !String(user.phone || "").trim()
-          );
-
-        if (user.status === "inactive") {
-          return res.status(403).json({
-            message:
-              "This account is inactive. Please contact the Barangay Captain.",
-          });
-        }
-
-        if (
-          user.status === "pending" &&
-          !isIncompleteResidentSetup
-        ) {
-          try {
-            await notifyBarangayAdminOfApprovalRequest({
-              id: Number(user.id),
-              full_name: String(user.full_name),
-              barangay_id: Number(user.barangay_id),
-            });
-          } catch (notificationError) {
-            console.error(
-              "Account approval notification error:",
-              notificationError,
-            );
-          }
-
-          return res.status(403).json({
-            message:
-              "Your resident profile is waiting for Barangay Captain approval.",
-            pendingApproval: true,
-          });
-        }
-
-        if (
-          user.status === "pending" &&
-          user.role !== "resident"
-        ) {
-          return res.status(403).json({
-            message:
-              "This account is waiting for administrator approval.",
-          });
-        }
-      } else {
+      if (!user) {
         /*
          * Google-created Resident accounts have no location yet.
-         * The frontend should ask the user to complete barangay,
-         * purok, phone, and address before using location-based features.
+         * They verify an application OTP before any session is issued, then
+         * continue the existing restricted location/profile setup flow.
          */
         const randomPassword =
           crypto
@@ -1043,9 +832,11 @@ router.post(
             12,
           );
 
+        const connection = await db.getConnection();
         try {
+          await connection.beginTransaction();
           const [insertResult] =
-            await db.execute<any>(
+            await connection.execute<any>(
               `
               INSERT INTO users
               (
@@ -1064,7 +855,7 @@ router.post(
                 NULL,
                 ?,
                 ?,
-                NOW(),
+                NULL,
                 ?,
                 'resident',
                 'pending'
@@ -1077,35 +868,23 @@ router.post(
               ],
             );
 
-          const [newRows] =
-            await db.query<any[]>(
-              `
-              SELECT
-                id,
-                barangay_id,
-                purok_id,
-                full_name,
-                email,
-                email_verified_at,
-                role,
-                status,
-                phone,
-                address,
-                profile_photo,
-                created_at
-              FROM users
-              WHERE id = ?
-              LIMIT 1
-              `,
-              [
-                insertResult.insertId,
-              ],
-            );
-
-          user = newRows[0];
+          const verification = await createEmailVerification(connection, {
+            id: Number(insertResult.insertId),
+            email,
+            full_name: fullName,
+          });
+          await connection.commit();
+          return res.status(201).json({
+            message: "Check your email for a verification code. After verification, sign in with Google to complete your profile.",
+            requiresEmailVerification: true,
+            verificationRequired: true,
+            email,
+            ...verification,
+          });
         } catch (
           insertError: any
         ) {
+          await connection.rollback();
           if (
             insertError?.code !==
             "ER_DUP_ENTRY"
@@ -1117,20 +896,24 @@ router.post(
             await db.query<any[]>(
               `
               SELECT
-                id,
-                barangay_id,
-                purok_id,
-                full_name,
-                email,
-                email_verified_at,
-                role,
-                status,
-                phone,
-                address,
-                profile_photo,
-                created_at
-              FROM users
-              WHERE email = ?
+                u.id,
+                u.barangay_id,
+                u.purok_id,
+                u.full_name,
+                u.email,
+                u.email_verified_at,
+                u.must_change_password,
+                EXISTS (
+                  SELECT 1 FROM email_verifications ev WHERE ev.user_id = u.id
+                ) AS has_email_verification,
+                u.role,
+                u.status,
+                u.phone,
+                u.address,
+                u.profile_photo,
+                u.created_at
+              FROM users u
+              WHERE u.email = ?
               LIMIT 1
               `,
               [email],
@@ -1138,6 +921,8 @@ router.post(
 
           user =
             duplicateRows[0];
+        } finally {
+          connection.release();
         }
       }
 
@@ -1148,28 +933,64 @@ router.post(
         });
       }
 
+      if (user.status !== "active" && user.status !== "pending") {
+        return res.status(403).json({
+          message: "This account is inactive. Please contact the Barangay Captain.",
+        });
+      }
+
+      if (requiresEmailVerification(user)) {
+        return emailVerificationRequired(res, user.email);
+      }
+
+      const isIncompleteResidentSetup = user.role === "resident" && (
+        !user.barangay_id || !user.purok_id ||
+        !String(user.address || "").trim() || !String(user.phone || "").trim()
+      );
+
+      if (user.status === "pending" && user.role !== "resident") {
+        return res.status(403).json({
+          message: "This account is waiting for administrator approval.",
+        });
+      }
+
+      if (user.status === "pending" && !isIncompleteResidentSetup) {
+        try {
+          await notifyBarangayAdminOfApprovalRequest({
+            id: Number(user.id),
+            full_name: String(user.full_name),
+            barangay_id: Number(user.barangay_id),
+          });
+        } catch (notificationError) {
+          console.error("Account approval notification error:", notificationError);
+        }
+        return res.status(403).json({
+          message: "Your resident profile is waiting for Barangay Captain approval.",
+          pendingApproval: true,
+        });
+      }
+
       const token =
         createToken(user);
+      delete user.has_email_verification;
 
       return res.json({
         message: existingRows[0]
           ? "Google login successful."
           : "Google Resident account created. Complete your barangay and purok assignment before using location-based features.",
         token,
+        mustChangePassword: Boolean(user.must_change_password),
         user: {
           ...user,
           profile_photo: await signedProofUrl(user.profile_photo),
         },
-        needsLocationSetup:
-          !user.barangay_id ||
-          !user.purok_id ||
-          !String(user.address || "").trim() ||
-          !String(user.phone || "").trim(),
+        needsLocationSetup: isIncompleteResidentSetup,
         needsApproval:
           user.role === "resident" &&
           user.status === "pending",
       });
     } catch (error: any) {
+      if (verificationErrorResponse(res, error)) return;
       console.error(
         "Google login error:",
         error,
@@ -1496,12 +1317,7 @@ router.put(
           purok_id = ?,
           address = ?,
           duty_latitude = ?,
-          duty_longitude = ?,
-          email_verified_at = CASE
-            WHEN role = 'resident' AND status = 'pending'
-              THEN COALESCE(email_verified_at, NOW())
-            ELSE email_verified_at
-          END
+          duty_longitude = ?
         WHERE id = ?
         `,
         [
@@ -2486,9 +2302,13 @@ router.patch(
             full_name,
             email,
             role,
-            status
-          FROM users
-          WHERE id = ?
+            status,
+            email_verified_at,
+            EXISTS (
+              SELECT 1 FROM email_verifications ev WHERE ev.user_id = u.id
+            ) AS has_email_verification
+          FROM users u
+          WHERE u.id = ?
             AND role = 'collector'
             AND barangay_id = ?
           LIMIT 1
@@ -2512,6 +2332,14 @@ router.patch(
           return res.status(409).json({
             message:
               "This collector account has already been reviewed.",
+          });
+        }
+
+        if (action === "approve" && requiresEmailVerification(collector)) {
+          await connection.rollback();
+          return res.status(409).json({
+            message: "This collector must verify their email before the account can be activated.",
+            code: "EMAIL_VERIFICATION_REQUIRED",
           });
         }
 

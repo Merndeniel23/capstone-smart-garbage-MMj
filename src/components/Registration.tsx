@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleLogin } from '@react-oauth/google';
+import EmailVerificationForm from './EmailVerificationForm';
 import {
   User, 
   Mail, 
@@ -52,9 +53,7 @@ export default function Registration() {
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
   const [registrationVerificationEmail, setRegistrationVerificationEmail] = useState('');
-  const [registrationOtp, setRegistrationOtp] = useState('');
   const [registrationVerificationStep, setRegistrationVerificationStep] = useState(false);
-  const [registrationVerificationLoading, setRegistrationVerificationLoading] = useState(false);
   const [registrationResendCountdown, setRegistrationResendCountdown] = useState(0);
   
   const [error, setError] = useState('');
@@ -147,16 +146,6 @@ const [resendCountdown, setResendCountdown] = useState(0);
       window.clearInterval(timer);
     };
   }, [resendCountdown]);
-
-  useEffect(() => {
-    if (registrationResendCountdown <= 0) return;
-
-    const timer = window.setInterval(() => {
-      setRegistrationResendCountdown((current) => (current > 0 ? current - 1 : 0));
-    }, 1000);
-
-    return () => window.clearInterval(timer);
-  }, [registrationResendCountdown]);
 
   const resetForgotPasswordState = () => {
     setShowForgotModal(false);
@@ -323,6 +312,13 @@ const [resendCountdown, setResendCountdown] = useState(0);
       const data = await response.json();
 
       if (!response.ok) {
+        if (data.requiresEmailVerification && data.email) {
+          setRegistrationVerificationEmail(data.email);
+          setRegistrationResendCountdown(Number(data.resendAfter) || 0);
+          setRegistrationVerificationStep(true);
+          setLoginPassword('');
+          return;
+        }
         setError(data.message || 'Login failed.');
         return;
       }
@@ -417,9 +413,8 @@ const [resendCountdown, setResendCountdown] = useState(0);
       }
 
       setRegistrationVerificationEmail(data.email || regEmail.trim().toLowerCase());
-      setRegistrationOtp('');
       setRegistrationVerificationStep(true);
-      setRegistrationResendCountdown(60);
+      setRegistrationResendCountdown(Number(data.resendAfter) || 60);
       setSuccessMessage('Verification code sent. Check your email to activate the account.');
 
       setRegFullName('');
@@ -436,77 +431,6 @@ const [resendCountdown, setResendCountdown] = useState(0);
     }
   };
 
-  const handleRegistrationVerification = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setSuccessMessage('');
-
-    const email = registrationVerificationEmail.trim().toLowerCase();
-    const otp = registrationOtp.trim();
-
-    if (!/^\d{6}$/.test(otp)) {
-      setError('Enter the 6-digit verification code sent to your email.');
-      return;
-    }
-
-    setRegistrationVerificationLoading(true);
-
-    try {
-      const response = await fetch('/api/auth/verify-registration-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, otp }),
-      });
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        setError(data.message || 'Email verification failed.');
-        return;
-      }
-
-      setSuccessMessage('Email verified. You can now sign in.');
-      setRegistrationVerificationStep(false);
-      setRegistrationVerificationEmail('');
-      setRegistrationOtp('');
-      setActiveTab('login');
-      setLoginEmail(email);
-    } catch (err) {
-      console.error('Registration email verification error:', err);
-      setError('Cannot connect to the server.');
-    } finally {
-      setRegistrationVerificationLoading(false);
-    }
-  };
-
-  const resendRegistrationVerification = async () => {
-    if (registrationResendCountdown > 0 || !registrationVerificationEmail) return;
-
-    setError('');
-    setSuccessMessage('');
-    setRegistrationVerificationLoading(true);
-
-    try {
-      const response = await fetch('/api/auth/resend-registration-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: registrationVerificationEmail }),
-      });
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        setError(data.message || 'Unable to resend the verification code.');
-        return;
-      }
-
-      setRegistrationResendCountdown(60);
-      setSuccessMessage(data.message || 'A new verification code was sent.');
-    } catch (err) {
-      console.error('Resend registration email error:', err);
-      setError('Cannot connect to the server.');
-    } finally {
-      setRegistrationVerificationLoading(false);
-    }
-  };
 const sendForgotPasswordOtp = async () => {
   setError('');
   setSuccessMessage('');
@@ -722,7 +646,7 @@ const handleResetPasswordSubmit = async (
             </button>
             <button
               type="button"
-              onClick={() => { setActiveTab('register'); setError(''); setSuccessMessage(''); }}
+              onClick={() => { setActiveTab('register'); setRegistrationVerificationStep(false); setError(''); setSuccessMessage(''); }}
               className={`auth-tab relative flex-1 pb-2 text-center text-xs font-extrabold uppercase tracking-wider transition-all ${
                 activeTab === 'register' ? 'auth-accent text-emerald-700' : 'text-stone-400 hover:text-stone-600'
               }`}
@@ -762,7 +686,28 @@ const handleResetPasswordSubmit = async (
           </AnimatePresence>
 
           {/* FORMS */}
-          {activeTab === 'login' ? (
+          {registrationVerificationStep ? (
+            <EmailVerificationForm
+              key={registrationVerificationEmail || 'request-code'}
+              email={registrationVerificationEmail}
+              initialResendAfter={registrationResendCountdown}
+              onVerified={(email) => {
+                setRegistrationVerificationStep(false);
+                setRegistrationVerificationEmail('');
+                setActiveTab('login');
+                setLoginEmail(email);
+                setError('');
+                setSuccessMessage('Email verified. Sign in with your password. Staff accounts will be asked to change their temporary password.');
+              }}
+              onBack={() => {
+                setRegistrationVerificationStep(false);
+                setRegistrationVerificationEmail('');
+                setActiveTab('login');
+                setError('');
+                setSuccessMessage('');
+              }}
+            />
+          ) : activeTab === 'login' ? (
             /* LOGIN SCREEN */
             <form onSubmit={handleLoginSubmit} className="auth-form auth-form--login">
               <div className="auth-field">
@@ -876,6 +821,13 @@ const handleResetPasswordSubmit = async (
 
           const data = await response.json();
 
+          if (data.requiresEmailVerification && data.email) {
+            setRegistrationVerificationEmail(data.email);
+            setRegistrationResendCountdown(Number(data.resendAfter) || 0);
+            setRegistrationVerificationStep(true);
+            return;
+          }
+
           if (!response.ok) {
             setError(data.message || 'Google login failed.');
             return;
@@ -900,58 +852,6 @@ const handleResetPasswordSubmit = async (
             </form>
           ) : (
             /* REGISTRATION SCREEN */
-            registrationVerificationStep ? (
-              <form onSubmit={handleRegistrationVerification} className="auth-form">
-                <div className="text-center space-y-2">
-                  <Mail className="auth-accent mx-auto h-10 w-10 text-emerald-700" />
-                  <h2 className="text-sm font-extrabold text-stone-800">Verify your email</h2>
-                  <p className="text-xs text-stone-500">
-                    Enter the 6-digit code sent to <strong>{registrationVerificationEmail}</strong>.
-                  </p>
-                </div>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={6}
-                  required
-                  value={registrationOtp}
-                  onChange={(e) => setRegistrationOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  placeholder="Enter 6-digit code"
-                  className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] px-4 py-3 text-center font-bold tracking-[0.4em] text-stone-800"
-                />
-                <button
-                  type="submit"
-                  disabled={registrationVerificationLoading}
-                  className="auth-primary-action w-full rounded-2xl bg-emerald-700 py-3 text-[10px] font-extrabold uppercase tracking-widest text-white hover:bg-emerald-800 disabled:opacity-60"
-                >
-                  {registrationVerificationLoading ? 'Verifying...' : 'Verify Email'}
-                </button>
-                <div className="auth-actions auth-login-actions text-[11px]">
-                  <button
-                    type="button"
-                    disabled={registrationVerificationLoading || registrationResendCountdown > 0}
-                    onClick={resendRegistrationVerification}
-                    className="auth-accent text-emerald-700 font-bold disabled:text-stone-400"
-                  >
-                    {registrationResendCountdown > 0 ? `Resend in ${registrationResendCountdown}s` : 'Resend code'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRegistrationVerificationStep(false);
-                      setRegistrationVerificationEmail('');
-                      setRegistrationOtp('');
-                      setError('');
-                      setSuccessMessage('');
-                    }}
-                    className="text-stone-500 font-bold hover:text-stone-700"
-                  >
-                    Start over
-                  </button>
-                </div>
-              </form>
-            ) : (
             <form onSubmit={handleRegisterSubmit} className="auth-form auth-form--register">
               <fieldset className="auth-form-section">
                 <legend className="auth-form-section-title">Contact details</legend>
@@ -1134,11 +1034,10 @@ const handleResetPasswordSubmit = async (
                 Register & Join Network
               </button>
             </form>
-            )
           )}
 
           {/* TOGGLE BOTTOM LINK */}
-          <div className="auth-switch mt-6 border-t border-stone-100 pt-5 text-center">
+          {!registrationVerificationStep && <div className="auth-switch mt-6 border-t border-stone-100 pt-5 text-center">
             {activeTab === 'login' ? (
               <p className="text-[11px] text-stone-500 font-semibold">
                 Don't have an account?{' '}
@@ -1162,7 +1061,20 @@ const handleResetPasswordSubmit = async (
                 </button>
               </p>
             )}
-          </div>
+            <button
+              type="button"
+              onClick={() => {
+                setRegistrationVerificationEmail('');
+                setRegistrationResendCountdown(0);
+                setRegistrationVerificationStep(true);
+                setError('');
+                setSuccessMessage('');
+              }}
+              className="auth-accent mt-2 text-[11px] font-bold text-emerald-700 hover:underline"
+            >
+              Verify an existing account
+            </button>
+          </div>}
         </div>
 
 

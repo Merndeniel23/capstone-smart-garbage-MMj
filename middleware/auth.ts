@@ -6,6 +6,7 @@ import type {
 import jwt from "jsonwebtoken";
 import { db } from "../config/db.js";
 import { getJwtSecret } from "../config/security.js";
+import { requiresEmailVerification } from "../services/emailVerification.js";
 
 export interface AuthUser {
   id: number;
@@ -73,7 +74,9 @@ async function authenticateRequest(
         barangay_id,
         purok_id,
         status,
-        must_change_password
+        must_change_password,
+        email_verified_at,
+        EXISTS (SELECT 1 FROM email_verifications ev WHERE ev.user_id = users.id) AS has_email_verification
       FROM users
       WHERE id = ?
       LIMIT 1
@@ -91,6 +94,15 @@ async function authenticateRequest(
     }
 
     const currentStatus = String(currentUser.status).toLowerCase();
+    if (currentStatus !== "inactive" && requiresEmailVerification(currentUser)) {
+      return res.status(403).json({
+        success: false,
+        code: "EMAIL_VERIFICATION_REQUIRED",
+        requiresEmailVerification: true,
+        message: "Please verify your email before signing in.",
+      });
+    }
+
     const isAllowedPendingResident =
       allowPendingResident &&
       currentStatus === "pending" &&
