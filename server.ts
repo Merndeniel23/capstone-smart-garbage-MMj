@@ -1,4 +1,7 @@
-import express, { type ErrorRequestHandler } from "express";
+import express, {
+  type ErrorRequestHandler,
+  type RequestHandler,
+} from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
@@ -117,6 +120,35 @@ const chatLimiter = createRateLimiter({
   message: "Too many assistant requests. Please wait a moment.",
 });
 
+// ==================== NEW SECURITY LAYER START ====================
+// Broad per-client API ceiling. Normal browsing should stay well below this,
+// while rapid request floods from one client are throttled.
+const apiLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 180,
+  message: "Too many requests. Please slow down and try again.",
+});
+
+// Stricter limit for actions that can change data. This is intentionally
+// separate from GET requests so normal page loading is not easily blocked.
+const writeActionLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 10,
+  message: "Too many actions submitted. Please wait a moment before trying again.",
+});
+
+const protectWriteActions: RequestHandler = (req, res, next) => {
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) {
+    return writeActionLimiter(req, res, next);
+  }
+
+  next();
+};
+
+// Apply the broad ceiling to every API request.
+app.use("/api", apiLimiter);
+// ===================== NEW SECURITY LAYER END =====================
+
 app.get("/api/health", async (_req, res) => {
   try {
     await db.query("SELECT 1");
@@ -135,18 +167,23 @@ app.use("/api/auth/verify-otp", recoveryLimiter);
 app.use("/api/auth/reset-password", recoveryLimiter);
 app.use("/api/super-admin/recovery", recoveryLimiter);
 app.use("/api/auth", authRoutes);
-app.use("/api/inspections", inspectionsRouter);
-app.use("/api/garbage-bins", garbageBinsRouter);
-app.use("/api/collection-schedules", collectionSchedulesRouter);
-app.use("/api/collection-requests", collectionRequestsRouter);
-app.use("/api/collection-runs", collectionRunsRouter);
-app.use("/api/complaints", complaintsRouter);
-app.use("/api/admin", adminRouter);
-app.use("/api/collector-locations", collectorLocationsRouter);
-app.use("/api/notifications", notificationsRouter);
-app.use("/api/payments", paymentsRouter);
-app.use("/api/endorsements", endorsementsRouter);
-app.use("/api/super-admin", superAdminRouter);
+
+// ================= SECURED WRITE ROUTES START =================
+// GET requests pass through normally. POST/PUT/PATCH/DELETE requests
+// are additionally protected by writeActionLimiter.
+app.use("/api/inspections", protectWriteActions, inspectionsRouter);
+app.use("/api/garbage-bins", protectWriteActions, garbageBinsRouter);
+app.use("/api/collection-schedules", protectWriteActions, collectionSchedulesRouter);
+app.use("/api/collection-requests", protectWriteActions, collectionRequestsRouter);
+app.use("/api/collection-runs", protectWriteActions, collectionRunsRouter);
+app.use("/api/complaints", protectWriteActions, complaintsRouter);
+app.use("/api/admin", protectWriteActions, adminRouter);
+app.use("/api/collector-locations", protectWriteActions, collectorLocationsRouter);
+app.use("/api/notifications", protectWriteActions, notificationsRouter);
+app.use("/api/payments", protectWriteActions, paymentsRouter);
+app.use("/api/endorsements", protectWriteActions, endorsementsRouter);
+app.use("/api/super-admin", protectWriteActions, superAdminRouter);
+// ================== SECURED WRITE ROUTES END ==================
 
 // Initialize Gemini client on the server securely
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({
