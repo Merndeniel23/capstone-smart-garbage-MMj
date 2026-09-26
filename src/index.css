@@ -484,3 +484,25 @@ html.sg-dark .sg-app-shell .sg-form-section-title {
     width: 100%;
   }
 }
+/* Slow down status/loading animations across the whole app */
+
+.animate-ping {
+  animation-duration: 3s !important;
+}
+
+.animate-pulse {
+  animation-duration: 3s !important;
+}
+
+.animate-bounce {
+  animation-duration: 2s !important;
+}
+
+/* Optional: make blinking less aggressive */
+@media (prefers-reduced-motion: no-preference) {
+  .animate-ping,
+  .animate-pulse,
+  .animate-bounce {
+    animation-timing-function: ease-in-out !important;
+  }
+}

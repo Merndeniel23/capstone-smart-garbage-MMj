@@ -112,6 +112,15 @@ function binMarkerIcon(bin: GarbageBin, selected: boolean): L.DivIcon {
   });
 }
 
+// Use an inline DivIcon for newly selected/draggable locations so the map
+// never depends on Leaflet's default PNG marker asset paths after deployment.
+const editableLocationMarkerIcon = L.divIcon({
+  className: "editable-location-marker",
+  html: `<div style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:#059669;border:3px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 8px rgba(15,23,42,.35)"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.3" style="transform:rotate(45deg)"><circle cx="12" cy="11" r="3"/><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z"/></svg></div>`,
+  iconSize: [34, 34],
+  iconAnchor: [17, 34],
+});
+
 function formatBinTime(value?: string | null): string {
   if (!value) return "";
   const match = value.match(/^(\d{1,2}):(\d{2})/);
@@ -288,23 +297,28 @@ export default function ManageGarbageBins() {
   const [binPage, setBinPage] = useState(1);
   const [binPageSize, setBinPageSize] = useState(DEFAULT_PAGE_SIZE);
 
-  const scopedBins = useMemo(() => bins.filter(bin => {
+  const activeBins = useMemo(
+    () => bins.filter((bin) => Number(bin.is_active) === 1),
+    [bins],
+  );
+
+  const scopedBins = useMemo(() => activeBins.filter(bin => {
     if (!isSuperAdmin) return true;
     const matchesBarangay = !barangayFilter || String(bin.barangay_id) === barangayFilter;
     const query = search.trim().toLowerCase();
     return matchesBarangay && (!query || [bin.bin_code, bin.location_name, bin.purok_name, bin.barangay_name]
       .some(value => value?.toLowerCase().includes(query)));
-  }), [bins, isSuperAdmin, barangayFilter, search]);
+  }), [activeBins, isSuperAdmin, barangayFilter, search]);
 
   const visibleBins = useMemo(() => isSuperAdmin
     ? scopedBins.filter(bin => matchesBinFilter(bin, binFilter))
       .sort((left, right) => binPriority(left) - binPriority(right) || left.bin_code.localeCompare(right.bin_code))
-    : bins, [bins, scopedBins, binFilter, isSuperAdmin]);
+    : activeBins, [activeBins, scopedBins, binFilter, isSuperAdmin]);
 
-  const barangayOptions = useMemo(() => Array.from(new Map(bins
+  const barangayOptions = useMemo(() => Array.from(new Map(activeBins
     .filter(bin => bin.barangay_id != null)
     .map(bin => [String(bin.barangay_id), bin.barangay_name || `Barangay ${bin.barangay_id}`])).entries())
-    .sort((left, right) => left[1].localeCompare(right[1])), [bins]);
+    .sort((left, right) => left[1].localeCompare(right[1])), [activeBins]);
   const binPageCount = Math.max(1, Math.ceil(visibleBins.length / binPageSize));
   const safeBinPage = Math.min(binPage, binPageCount);
   const paginatedBins = useMemo(() => visibleBins.slice(
@@ -534,7 +548,10 @@ export default function ManageGarbageBins() {
 
         const marker = L.marker(
           event.latlng,
-          { draggable: true },
+          {
+            draggable: true,
+            icon: editableLocationMarkerIcon,
+          },
         ).addTo(map);
 
         selectedMarkerRef.current =
@@ -603,7 +620,9 @@ export default function ManageGarbageBins() {
       const marker = L.marker([latitude, longitude], {
         title: `${bin.bin_code}: ${binStatusLabel(bin)}`,
         alt: `Select garbage bin ${bin.bin_code}`,
-        ...(isSuperAdmin ? { icon: binMarkerIcon(bin, false) } : {}),
+        // Always use our inline icon. This avoids broken default Leaflet
+        // marker PNGs in Vite/Railway for Barangay Captain/Purok Leader views.
+        icon: binMarkerIcon(bin, false),
       }).addTo(markerLayer);
       markersByIdRef.current.set(bin.id, marker);
 
@@ -707,7 +726,10 @@ export default function ManageGarbageBins() {
 
     const marker = L.marker(
       [latitude, longitude],
-      { draggable: true },
+      {
+        draggable: true,
+        icon: editableLocationMarkerIcon,
+      },
     ).addTo(mapRef.current);
 
     selectedMarkerRef.current = marker;
@@ -973,7 +995,9 @@ export default function ManageGarbageBins() {
             disabled={loading}
             className="flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-bold disabled:opacity-50"
           >
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCw
+              className={`h-4 w-4 ${loading ? "opacity-60" : ""}`}
+            />
             {loading ? "Refreshing..." : "Refresh"}
           </button>
 
@@ -1336,12 +1360,12 @@ export default function ManageGarbageBins() {
         <div className="border-b px-5 py-4">
           <h2 className="font-black text-slate-900">
             {isSuperAdmin
-              ? "All Registered Garbage Bins"
+              ? "Active Garbage Bins"
               : isBarangayCaptain
                 ? "Garbage Bins in My Barangay"
                 : "Garbage Bins in My Purok"}
           </h2>
-          {isSuperAdmin && <p className="mt-1 text-xs text-slate-500" aria-live="polite">{loading ? "Loading records..." : `${visibleBins.length} of ${bins.length} bins shown`}. Select a bin to view details and focus its marker.</p>}
+          {isSuperAdmin && <p className="mt-1 text-xs text-slate-500" aria-live="polite">{loading ? "Loading records..." : `${visibleBins.length} active bins shown`}. Select a bin to view details and focus its marker.</p>}
         </div>
 
         <div className="sg-desktop-table overflow-hidden">
