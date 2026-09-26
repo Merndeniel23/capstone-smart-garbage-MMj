@@ -1642,12 +1642,12 @@ router.post(
         });
       }
 
-      if (user.status !== "active") {
-        return res.json({
-          message:
-            "If the account exists, an OTP has been sent to its registered email.",
-        });
-      }
+     if (!["active", "pending"].includes(String(user.status))) {
+  return res.json({
+    message:
+      "If the account exists, an OTP has been sent to its registered email.",
+  });
+}
 
       const accountEmail =
         normalizeEmail(user.email);
