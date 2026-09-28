@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -24,6 +25,7 @@ import {
   motion,
 } from "motion/react";
 import { apiRequest } from "../services/api";
+import { notifyAdminActionCountsChanged } from "../hooks/useAdminActionCounts";
 import ConfirmDialog from "./ConfirmDialog";
 import Pagination, {
   DEFAULT_PAGE_SIZE,
@@ -43,6 +45,7 @@ type DirectoryMember = {
   address: string;
   householdId: string;
   status: DirectoryStatus;
+  canDelete: boolean;
   profilePhoto?: string | null;
   currentMonthContribution: number;
   previousMonthContribution: number;
@@ -60,6 +63,7 @@ type DatabaseUser = {
   address?: string | null;
   role?: string | null;
   status?: string | null;
+  can_delete?: boolean;
   barangay_id?: number | null;
   barangay_name?: string | null;
   purok_id?: number | null;
@@ -155,6 +159,7 @@ function mapDatabaseUser(
       user.full_name || "Unnamed user",
     ),
     email: String(user.email || ""),
+    canDelete: Boolean(user.can_delete),
     phone: String(user.phone || ""),
     communalZone: [
       user.purok_name,
@@ -225,6 +230,7 @@ export default function MembersList() {
 
   const [deletingId, setDeletingId] =
     useState<number | null>(null);
+  const deletingRef = useRef(false);
 
   const [actionMessage, setActionMessage] =
     useState<{
@@ -425,11 +431,12 @@ export default function MembersList() {
     async (
       member: DirectoryMember,
     ) => {
-      if (!canManageUsers) {
+      if (deletingRef.current) return;
+      if (!member.canDelete) {
         setActionMessage({
           type: "error",
           text:
-            "Only an administrator can delete user accounts.",
+            "You do not have permission to delete this account.",
         });
         return;
       }
@@ -445,6 +452,7 @@ export default function MembersList() {
         return;
       }
 
+      deletingRef.current = true;
       setDeletingId(member.id);
       setActionMessage(null);
 
@@ -457,6 +465,8 @@ export default function MembersList() {
         });
 
         setSelectedMemberId(null);
+        setDatabaseMembers((currentMembers) => currentMembers.filter((item) => item.id !== member.id));
+        notifyAdminActionCountsChanged();
         const refreshed =
           await loadDatabaseMembers();
 
@@ -482,8 +492,8 @@ export default function MembersList() {
               ? error.message
               : "Unable to delete the user.",
         });
-        setDeleteConfirmation(null);
       } finally {
+        deletingRef.current = false;
         setDeletingId(null);
       }
     };
@@ -491,11 +501,12 @@ export default function MembersList() {
   const requestDeleteMember = (
     member: DirectoryMember,
   ) => {
-    if (!canManageUsers) {
+    if (deletingRef.current) return;
+    if (!member.canDelete) {
       setActionMessage({
         type: "error",
         text:
-          "Only an administrator can delete user accounts.",
+          "You do not have permission to delete this account.",
       });
       return;
     }
@@ -509,6 +520,7 @@ export default function MembersList() {
       return;
     }
 
+    setActionMessage(null);
     setDeleteConfirmation(member);
   };
 
@@ -599,6 +611,7 @@ export default function MembersList() {
 
       {actionMessage && (
         <div
+          role={actionMessage.type === "error" ? "alert" : "status"}
           className={`rounded-2xl border px-4 py-3 text-sm font-bold ${
             actionMessage.type ===
             "success"
@@ -958,7 +971,7 @@ export default function MembersList() {
                     </div>
                   </div>
 
-                  {canManageUsers && (
+                  {selectedMember.canDelete && (
                     <button
                       type="button"
                       onClick={() =>
@@ -966,10 +979,7 @@ export default function MembersList() {
                           selectedMember,
                         )
                       }
-                      disabled={
-                        deletingId ===
-                        selectedMember.id
-                      }
+                      disabled={deletingId !== null}
                       className="flex w-full items-center justify-center gap-2 rounded-2xl bg-rose-600 px-4 py-3 text-xs font-black uppercase tracking-wider text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {deletingId ===
@@ -1009,7 +1019,14 @@ export default function MembersList() {
         title="Delete household account?"
         description={
           deleteConfirmation
-            ? `Delete ${deleteConfirmation.name}? This action cannot be undone.`
+            ? (
+              <>
+                <p>Delete {deleteConfirmation.name} ({deleteConfirmation.email})? This action cannot be undone. Accounts with linked operational records cannot be deleted.</p>
+                {actionMessage?.type === "error" && (
+                  <p role="alert" className="mt-3 rounded-xl bg-rose-50 p-3 font-bold text-rose-700">{actionMessage.text}</p>
+                )}
+              </>
+            )
             : ""
         }
         confirmLabel="Delete account"

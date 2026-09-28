@@ -1,5 +1,5 @@
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   ChevronDown,
@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
+  Trash2,
   User,
   UserCog,
   X,
@@ -44,6 +45,7 @@ interface ManagedUser {
   email_verified: number | boolean;
   email_verification_required?: number | boolean;
   approval_ready: number | boolean;
+  can_delete?: boolean;
   barangay_id: number | null;
   barangay_name: string | null;
   purok_id: number | null;
@@ -227,6 +229,8 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
   const [userPage, setUserPage] = useState(1);
   const [userPageSize, setUserPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [statusConfirmation, setStatusConfirmation] = useState<ManagedUser | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<ManagedUser | null>(null);
+  const deletingRef = useRef(false);
   const [roleConfirmation, setRoleConfirmation] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -573,6 +577,46 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
         err instanceof Error ? err.message : "Unable to update account status.",
       );
     } finally {
+      setSaving(false);
+    }
+  };
+
+  const requestDeleteUser = (user: ManagedUser) => {
+    if (saving || deletingRef.current || !user.can_delete) return;
+    setError("");
+    setSuccessMessage("");
+    setDeleteConfirmation(user);
+  };
+
+  const deleteUser = async (user: ManagedUser) => {
+    if (saving || deletingRef.current || !user.can_delete) return;
+    deletingRef.current = true;
+    setSaving(true);
+    setError("");
+    setSuccessMessage("");
+
+    try {
+      const data = await apiRequest(`/admin/users/${user.id}`, {
+        method: "DELETE",
+      });
+
+      setUsers((currentUsers) => currentUsers.filter((item) => item.id !== user.id));
+      setDeleteConfirmation(null);
+      if (statusConfirmation?.id === user.id) setStatusConfirmation(null);
+      if (selectedUser?.id === user.id) {
+        setRoleConfirmation(false);
+        setSelectedUser(null);
+        setSelectedBarangayId("");
+        setSelectedPurokId("");
+      }
+      if (verification?.email === user.email) setVerification(null);
+      setSuccessMessage(data.message || "Account deleted successfully.");
+      notifyAdminActionCountsChanged();
+      await refreshUsers(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to delete the account.");
+    } finally {
+      deletingRef.current = false;
       setSaving(false);
     }
   };
@@ -1097,7 +1141,8 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                     </td>
 
                     <td className="px-4 py-3">
-                     {needsEmailVerification(user) ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                      {needsEmailVerification(user) ? (
                         <button type="button" onClick={() => { setError(""); setVerification({ email: user.email, resendAfter: 0 }); }} className="inline-flex items-center gap-1.5 rounded-xl px-2 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50">
                           <Mail className="h-4 w-4" />Verify Email
                         </button>
@@ -1154,6 +1199,19 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                           </button>
                         </div>
                       )}
+                      {Boolean(user.can_delete) && (
+                        <button
+                          type="button"
+                          onClick={() => requestDeleteUser(user)}
+                          disabled={saving}
+                          aria-label={`Delete Account: ${user.full_name}`}
+                          className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Delete
+                        </button>
+                      )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1239,7 +1297,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                 </div>
               </div>
 
-              <div className="mt-3 flex items-center justify-end gap-2">
+              <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
                 {needsEmailVerification(user) ? (
                   <button type="button" onClick={() => { setError(""); setVerification({ email: user.email, resendAfter: 0 }); }} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-bold text-emerald-700 hover:bg-emerald-50">
                     <Mail className="h-4 w-4" />Verify Email
@@ -1296,6 +1354,18 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                         : "Activate"}
                     </button>
                   </>
+                )}
+                {Boolean(user.can_delete) && (
+                  <button
+                    type="button"
+                    onClick={() => requestDeleteUser(user)}
+                    disabled={saving}
+                    aria-label={`Delete Account: ${user.full_name}`}
+                    className="flex min-h-9 items-center gap-1.5 rounded-lg border border-rose-200 px-3 text-[10px] font-black uppercase text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete
+                  </button>
                 )}
               </div>
             </article>
@@ -1742,6 +1812,21 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
         busy={saving}
         onCancel={() => setStatusConfirmation(null)}
         onConfirm={() => { if (statusConfirmation) void toggleStatus(statusConfirmation); }}
+      />
+      <ConfirmDialog
+        open={Boolean(deleteConfirmation)}
+        title="Delete account?"
+        description={deleteConfirmation ? (
+          <>
+            <p>Delete {deleteConfirmation.full_name} ({deleteConfirmation.email})? This action cannot be undone. Accounts with linked operational records cannot be deleted.</p>
+            {error && <p role="alert" className="mt-3 rounded-xl bg-rose-50 p-3 font-bold text-rose-700">{error}</p>}
+          </>
+        ) : ""}
+        confirmLabel="Delete account"
+        destructive
+        busy={saving}
+        onCancel={() => { if (!saving) setDeleteConfirmation(null); }}
+        onConfirm={() => { if (deleteConfirmation) void deleteUser(deleteConfirmation); }}
       />
       <ConfirmDialog
         open={roleConfirmation && !!selectedUser}

@@ -26,6 +26,19 @@ Every authenticated API request reloads the current account status, role, and
 location assignment from MySQL. Tenant-sensitive operations are restricted by
 barangay, purok, ownership, or collector assignment as appropriate.
 
+Account deletion is available from User Management and the Household Directory.
+Super Administrators may delete resident, collector, and Purok Leader accounts;
+Barangay Captains are limited to those accounts in their own barangay. Purok
+Leaders may delete only residents assigned to their own barangay and purok.
+Deleting your own account or an administrator account is prohibited.
+
+Deletion requires confirmation and permanently removes an account only when it
+has no linked operational history. Accounts with payments, complaints,
+inspections, collections, or other operational records must be retained; use
+account suspension instead, or ask the Barangay Captain to suspend access.
+Pending, unverified accounts without those records can be deleted. Password
+reset requests and unfinished signups for the deleted email are also removed.
+
 ## In-app AI assistant
 
 The authenticated assistant is available from the chat button. Its Gemini
@@ -176,6 +189,7 @@ replace the temporary password after the first login.
 ```bash
 npm run lint
 npm run test:registration
+npm run test:accounts
 npm run build
 npm start
 ```

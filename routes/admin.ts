@@ -4,6 +4,7 @@ import type { PoolConnection } from "mysql2/promise";
 import { db } from "../config/db.js";
 import { signedProofUrl } from "../config/storage.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
+import { AccountDeletionError, canDeleteAccount, deleteAccount } from "../services/accountDeletion.js";
 import {
   createEmailVerification,
   requiresEmailVerification,
@@ -1014,11 +1015,12 @@ router.get("/purok-members", requireAuth, async (req: AuthRequest, res) => {
     }
 
     const purokId = parsePositiveInteger(viewer.purok_id);
+    const barangayId = parsePositiveInteger(viewer.barangay_id);
 
-    if (!purokId) {
+    if (!purokId || !barangayId) {
       return res.status(400).json({
         success: false,
-        message: "The Purok Leader account has no assigned purok.",
+        message: "The Purok Leader account must have an assigned barangay and purok.",
       });
     }
 
@@ -1044,14 +1046,16 @@ router.get("/purok-members", requireAuth, async (req: AuthRequest, res) => {
       LEFT JOIN puroks p ON p.id = u.purok_id
       WHERE u.role = 'resident'
         AND u.purok_id = ?
+        AND u.barangay_id = ?
       ORDER BY u.full_name ASC
       `,
-      [purokId],
+      [purokId, barangayId],
     );
 
     const users = await Promise.all(
       rows.map(async (row: any) => ({
         ...row,
+        can_delete: canDeleteAccount(viewer, row),
         profile_photo: await signedProofUrl(row.profile_photo),
       })),
     );
@@ -1149,6 +1153,7 @@ router.get("/users", requireAuth, async (req: AuthRequest, res) => {
     const users = await Promise.all(
       rows.map(async (row: any) => ({
         ...row,
+        can_delete: canDeleteAccount(req.user, row),
         email_verification_required: requiresEmailVerification(row),
         profile_photo: await signedProofUrl(row.profile_photo),
       })),
@@ -1948,102 +1953,20 @@ router.delete(
   requireAuth,
   async (req: AuthRequest, res) => {
     try {
-      if (!requireBarangayCaptain(req, res)) return;
-
-      const userId = parsePositiveInteger(req.params.id);
-
-      if (!userId) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid user ID.",
-        });
-      }
-
-      if (req.user?.id === userId) {
-        return res.status(400).json({
-          success: false,
-          message: "You cannot delete your own account.",
-        });
-      }
-
-      const [rows]: any = await db.query(
-        `
-        SELECT id, role, full_name, barangay_id
-        FROM users
-        WHERE id = ?
-        LIMIT 1
-        `,
-        [userId],
-      );
-
-      if (!rows.length) {
-        return res.status(404).json({
-          success: false,
-          message: "User not found.",
-        });
-      }
-
-      const isSuperAdmin = req.user?.role === "super_admin";
-      const viewerBarangayId = parsePositiveInteger(
-        req.user?.barangay_id,
-      );
-
-      if (!isSuperAdmin && !viewerBarangayId) {
-        return res.status(403).json({
-          success: false,
-          message: "The Barangay Captain account has no assigned barangay.",
-        });
-      }
-
-      if (
-        !isSuperAdmin &&
-        Number(rows[0].barangay_id) !== viewerBarangayId
-      ) {
-        return res.status(404).json({
-          success: false,
-          message: "User was not found in your barangay.",
-        });
-      }
-
-      if (
-        rows[0].role === "admin" ||
-        rows[0].role === "super_admin"
-      ) {
-        return res.status(403).json({
-          success: false,
-          message: "Administrator accounts cannot be deleted.",
-        });
-      }
-
-      const scopeSql = isSuperAdmin ? "" : "AND barangay_id = ?";
-      const parameters = isSuperAdmin
-        ? [userId]
-        : [userId, viewerBarangayId];
-
-      const [result]: any = await db.execute(
-        `
-        DELETE FROM users
-        WHERE id = ?
-          AND role NOT IN ('admin', 'super_admin')
-          ${scopeSql}
-        `,
-        parameters,
-      );
-
-      if (result.affectedRows === 0) {
-        return res.status(404).json({
-          success: false,
-          message: "User was not found in your barangay or cannot be deleted.",
-        });
-      }
-
+      await deleteAccount(req.user, req.params.id);
       return res.json({
         success: true,
         message: "User deleted successfully.",
       });
     } catch (error) {
+      if (error instanceof AccountDeletionError) {
+        return res.status(error.status).json({
+          success: false,
+          code: error.code,
+          message: error.message,
+        });
+      }
       console.error("Delete user error:", error);
-
       return res.status(500).json({
         success: false,
         message: "Unable to delete user.",
@@ -2051,7 +1974,6 @@ router.delete(
     }
   },
 );
-
 
 // -----------------------------------------------------------------------------
 // Municipal Truck & Crew Management (Super Admin only)
