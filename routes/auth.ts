@@ -6,7 +6,6 @@ import { OAuth2Client } from "google-auth-library";
 import { db } from "../config/db.js";
 import { getResendClient, getResendFromAddress } from "../services/email.js";
 import {
-  createEmailVerification,
   isValidEmail,
   normalizeEmail,
   requiresEmailVerification,
@@ -14,6 +13,11 @@ import {
   verifyEmailOtp,
   VerificationError,
 } from "../services/emailVerification.js";
+import {
+  startPendingRegistration,
+  verifyPendingRegistration,
+  resendPendingRegistration,
+} from "../services/pendingRegistration.js";
 import {
   requireAuth,
   requireAuthenticatedAccount,
@@ -577,72 +581,21 @@ router.post(
           12,
         );
 
-      const connection = await db.getConnection();
-      let userId: number;
-      let verification: { expiresInSeconds: number; resendAfter: number };
+      const verification = await startPendingRegistration({
+        email,
+        full_name: fullName,
+        password_hash: passwordHash,
+        barangay_id: Number(selectedPurok.barangay_id),
+        purok_id: Number(selectedPurok.id),
+        phone: normalizedPhone,
+        address,
+      });
 
-      try {
-        await connection.beginTransaction();
-        const [result] = await connection.execute<any>(
-          `
-          INSERT INTO users
-          (
-            barangay_id,
-            purok_id,
-            full_name,
-            email,
-            password_hash,
-            role,
-            phone,
-            address,
-            status
-          )
-          VALUES
-          (
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            'resident',
-            ?,
-            ?,
-            'pending'
-          )
-          `,
-          [
-            selectedPurok.barangay_id,
-            selectedPurok.id,
-            fullName,
-            email,
-            passwordHash,
-            normalizedPhone,
-            address,
-          ],
-        );
-
-        userId = Number(result.insertId);
-        verification = await createEmailVerification(connection, {
-          id: userId,
-          email,
-          full_name: fullName,
-        });
-        await connection.commit();
-      } catch (error) {
-        await connection.rollback();
-        throw error;
-      } finally {
-        connection.release();
-      }
-
-      return res.status(201).json({
-        message:
-          "Registration started. Check your email for the verification code.",
+      return res.status(202).json({
         verificationRequired: true,
         requiresEmailVerification: true,
         ...verification,
         email,
-        userId,
         assignment: {
           barangay_id:
             selectedPurok.barangay_id,
@@ -694,9 +647,13 @@ router.post("/verify-registration-email", async (req, res) => {
   }
 
   try {
-    return res.json({ ...(await verifyEmailOtp(email, otp)), email });
-  } catch (error) {
+    const registration = await verifyPendingRegistration(email, otp, req.body.registrationToken);
+    return res.json({ ...(registration ?? await verifyEmailOtp(email, otp)), email });
+  } catch (error: any) {
     if (verificationErrorResponse(res, error)) return;
+    if (error?.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ message: "Email is already registered. Please sign in." });
+    }
     console.error("Verify registration email error:", error);
     return res.status(500).json({ message: "Unable to verify the email address." });
   }
@@ -710,7 +667,8 @@ router.post("/resend-registration-email", async (req, res) => {
   }
 
   try {
-    return res.json(await resendVerificationOtp(email));
+    const registration = await resendPendingRegistration(email, req.body.registrationToken);
+    return res.json(registration ?? await resendVerificationOtp(email));
   } catch (error) {
     if (verificationErrorResponse(res, error)) return;
     console.error("Resend registration email error:", error);
@@ -817,9 +775,8 @@ router.post(
 
       if (!user) {
         /*
-         * Google-created Resident accounts have no location yet.
-         * They verify an application OTP before any session is issued, then
-         * continue the existing restricted location/profile setup flow.
+         * Google signup details are staged until the application OTP is
+         * verified. Only then is a Resident account created for profile setup.
          */
         const randomPassword =
           crypto
@@ -832,50 +789,17 @@ router.post(
             12,
           );
 
-        const connection = await db.getConnection();
         try {
-          await connection.beginTransaction();
-          const [insertResult] =
-            await connection.execute<any>(
-              `
-              INSERT INTO users
-              (
-                barangay_id,
-                purok_id,
-                full_name,
-                email,
-                email_verified_at,
-                password_hash,
-                role,
-                status
-              )
-              VALUES
-              (
-                NULL,
-                NULL,
-                ?,
-                ?,
-                NULL,
-                ?,
-                'resident',
-                'pending'
-              )
-              `,
-              [
-                fullName,
-                email,
-                passwordHash,
-              ],
-            );
-
-          const verification = await createEmailVerification(connection, {
-            id: Number(insertResult.insertId),
+          const verification = await startPendingRegistration({
             email,
             full_name: fullName,
+            password_hash: passwordHash,
+            barangay_id: null,
+            purok_id: null,
+            phone: null,
+            address: null,
           });
-          await connection.commit();
-          return res.status(201).json({
-            message: "Check your email for a verification code. After verification, sign in with Google to complete your profile.",
+          return res.status(202).json({
             requiresEmailVerification: true,
             verificationRequired: true,
             email,
@@ -884,7 +808,6 @@ router.post(
         } catch (
           insertError: any
         ) {
-          await connection.rollback();
           if (
             insertError?.code !==
             "ER_DUP_ENTRY"
@@ -921,8 +844,6 @@ router.post(
 
           user =
             duplicateRows[0];
-        } finally {
-          connection.release();
         }
       }
 

@@ -63,8 +63,8 @@ registration in a deployed environment.
    Copy-Item .env.template .env
    ```
 
-3. Create or migrate the database. This command is idempotent and does not
-   reset passwords belonging to existing accounts:
+3. Create or migrate the database for local setup. This command is idempotent
+   and does not reset existing account passwords:
 
    ```bash
    npm run db:setup
@@ -77,6 +77,38 @@ registration in a deployed environment.
    ```
 
 5. Open `http://localhost:3001`.
+
+## Registration and email verification
+
+Public registration, including a new registration through Google sign-in,
+stores a temporary request in `pending_registrations` and sends an email OTP.
+The application creates the resident account only after the correct,
+unexpired OTP is submitted. Until then, the request cannot sign in and does
+not appear in user management or account counts. Successful verification
+removes the temporary request.
+
+Continue verification in the browser where registration was started. A
+registration token binds the code to those submitted account details. If the
+browser loses that token, start registration again after the resend cooldown;
+the new request replaces the previous details, code, and token together.
+Requesting another code from the verification screen keeps the same account
+details and registration token.
+
+Email validation checks the address format and whether the domain has DNS
+records for receiving mail. These checks can reject invalid domains, but
+cannot establish whether a particular mailbox exists. Receiving and entering
+the OTP proves access to the mailbox; an invented address cannot become an
+account without completing that step.
+
+Configure `RESEND_API_KEY` and a verified `RESEND_FROM_EMAIL` before accepting
+registrations. The server also needs working DNS resolution. A successful
+email send means the email provider accepted the message; it does not itself
+verify the mailbox.
+
+Existing unverified accounts from earlier installations remain available for
+their original email-verification flow and may still appear as pending in
+user management. This update does not delete them. Staff provisioning and
+Super Administrator creation keep their existing workflows.
 
 ## Optional private receipt storage
 
@@ -143,6 +175,7 @@ replace the temporary password after the first login.
 
 ```bash
 npm run lint
+npm run test:registration
 npm run build
 npm start
 ```
@@ -153,6 +186,17 @@ Set `NODE_ENV=production`, configure the exact HTTPS application origin(s) in
 when the app is behind a reverse proxy. Production startup validates the
 required database, JWT, email, and optional Supabase settings and refuses to
 start with localhost/test placeholders.
+
+For an existing deployment, deploy the updated source and rebuild using
+`npm run build`, then restart with `npm start`. Before listening for requests,
+the server creates `pending_registrations` if it does not exist, using the
+configured database connection and SSL settings. The database user needs
+permission to create that table. Startup fails if database initialization
+fails, allowing deployment health checks to reject an unready instance.
+This narrow startup migration leaves existing users and operational records
+unchanged; do not run the broad `db:setup` script solely for this update.
+Check `/api/health` after deployment and complete a registration using an
+inbox you control to verify OTP delivery and account creation.
 
 ## Project layout
 

@@ -9,6 +9,7 @@ import dotenv from "dotenv";
 import cors from "cors";
 import authRoutes from "./routes/auth.js";
 import { db, testDatabaseConnection } from "./config/db.js";
+import { ensureRegistrationSchema } from "./config/registrationSchema.js";
 import inspectionsRouter from "./routes/inspections";
 import garbageBinsRouter from "./routes/garbageBins.js";
 import collectionSchedulesRouter from "./routes/collectionSchedules.js";
@@ -982,6 +983,7 @@ app.use(apiErrorHandler);
 // Start server function to bundle Vite dev or production static serving
 async function startServer() {
   await testDatabaseConnection();
+  await ensureRegistrationSchema(db);
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -1002,4 +1004,13 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch(async () => {
+  console.error(
+    "Server startup failed. Check database connectivity, permission to create pending_registrations, and application configuration.",
+  );
+  try {
+    await db.end();
+  } finally {
+    process.exit(1);
+  }
+});

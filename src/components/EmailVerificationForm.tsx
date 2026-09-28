@@ -1,11 +1,12 @@
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Loader2, Mail } from "lucide-react";
 
 interface EmailVerificationFormProps {
   email?: string;
+  registrationToken?: string;
   initialResendAfter?: number;
   variant?: "auth" | "management";
-  onVerified: (email: string) => void;
+  onVerified: (email: string, message?: string) => void;
   onBack: () => void;
   backLabel?: string;
 }
@@ -15,8 +16,22 @@ function maskedEmail(email: string) {
   return domain ? `${name.slice(0, 1)}***@${domain}` : "your email";
 }
 
+function registrationStorageKey(email: string) {
+  return `sg_registration_request:${email}`;
+}
+
+function savedRegistrationToken(email: string): string | undefined {
+  try {
+    const token = window.sessionStorage.getItem(registrationStorageKey(email));
+    return token && /^[a-f0-9]{64}$/.test(token) ? token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export default function EmailVerificationForm({
   email = "",
+  registrationToken,
   initialResendAfter = 0,
   variant = "auth",
   onVerified,
@@ -33,6 +48,32 @@ export default function EmailVerificationForm({
   const [resendAt, setResendAt] = useState(() => Date.now() + initialResendAfter * 1000);
   const [countdown, setCountdown] = useState(initialResendAfter);
   const isAuth = variant === "auth";
+  const requestToken = useRef<{ email: string; token?: string } | null>(null);
+
+  useEffect(() => {
+    if (!email || !registrationToken) return;
+    try {
+      window.sessionStorage.setItem(registrationStorageKey(email.trim().toLowerCase()), registrationToken);
+    } catch {
+      // Verification can still use the in-memory token when storage is disabled.
+    }
+  }, [email, registrationToken]);
+
+  function tokenForEmail(normalizedEmail: string): string | undefined {
+    // Keep the request shown in this screen bound to its original signup, even
+    // if another signup for the same email changes the stored resume token.
+    if (registrationToken && normalizedEmail === email.trim().toLowerCase()) return registrationToken;
+    if (requestToken.current?.email === normalizedEmail) return requestToken.current.token;
+    const token = savedRegistrationToken(normalizedEmail);
+    requestToken.current = { email: normalizedEmail, token };
+    return token;
+  }
+
+  function verificationError(data: { code?: string; message?: string }, fallback: string) {
+    return data.code === "REGISTRATION_RESTART_REQUIRED"
+      ? "This signup request is no longer available in this browser. Go back and register again to receive a new code."
+      : data.message || fallback;
+  }
 
   useEffect(() => {
     const updateCountdown = () => setCountdown(Math.max(0, Math.ceil((resendAt - Date.now()) / 1000)));
@@ -60,14 +101,14 @@ export default function EmailVerificationForm({
       const response = await fetch("/api/auth/resend-registration-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: normalizedEmail }),
+        body: JSON.stringify({ email: normalizedEmail, registrationToken: tokenForEmail(normalizedEmail) }),
       });
       const data = await response.json().catch(() => ({}));
       applyCooldown(data, response.ok ? 60 : 0);
       if (!response.ok) {
         // A recent code can still be entered while the resend cooldown runs.
         if (response.status === 429 && Number(data.resendAfter ?? data.retryAfter) > 0) setHasCode(true);
-        setError(data.message || "Unable to send the verification code. Please try again.");
+        setError(verificationError(data, "Unable to send the verification code. Please try again."));
         return;
       }
       setVerificationEmail(normalizedEmail);
@@ -100,15 +141,20 @@ export default function EmailVerificationForm({
       const response = await fetch("/api/auth/verify-registration-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: normalizedEmail, otp }),
+        body: JSON.stringify({ email: normalizedEmail, otp, registrationToken: tokenForEmail(normalizedEmail) }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         applyCooldown(data);
-        setError(data.message || "Unable to verify this code. Please try again.");
+        setError(verificationError(data, "Unable to verify this code. Please try again."));
         return;
       }
-      onVerified(normalizedEmail);
+      try {
+        window.sessionStorage.removeItem(registrationStorageKey(normalizedEmail));
+      } catch {
+        // Storage may be disabled; successful verification already consumed the request.
+      }
+      onVerified(normalizedEmail, data.message);
     } catch {
       setError("Cannot connect to the server. Please try again.");
     } finally {
@@ -122,7 +168,7 @@ export default function EmailVerificationForm({
         <Mail className={`${isAuth ? "auth-accent" : ""} mx-auto h-9 w-9 text-emerald-700`} />
         <h2 className={`text-lg font-extrabold ${isAuth ? "text-stone-800" : "text-slate-900"}`}>Verify Your Email</h2>
         <p className={`text-sm ${isAuth ? "text-stone-500" : "text-slate-500"}`}>
-          {hasCode ? <>We sent a 6-digit verification code to <strong className="break-all">{maskedEmail(verificationEmail)}</strong>.</> : "Enter your account email to request a verification code."}
+          {hasCode ? <>Enter the 6-digit code sent to <strong className="break-all">{maskedEmail(verificationEmail)}</strong>.</> : "Enter the email you used to sign up or create your account to request a verification code."}
         </p>
       </div>
 

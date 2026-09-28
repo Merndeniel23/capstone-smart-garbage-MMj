@@ -161,6 +161,23 @@ async function createCurrentSchema() {
         ON DELETE SET NULL ON UPDATE CASCADE
     ) ENGINE=InnoDB;
 
+    CREATE TABLE IF NOT EXISTS pending_registrations (
+      email VARCHAR(150) NOT NULL,
+      full_name VARCHAR(150) NOT NULL,
+      password_hash VARCHAR(255) NOT NULL,
+      barangay_id INT UNSIGNED NULL,
+      purok_id INT UNSIGNED NULL,
+      phone VARCHAR(30) NULL,
+      address VARCHAR(255) NULL,
+      otp_hash VARCHAR(64) NOT NULL,
+      registration_token_hash VARCHAR(64) NOT NULL,
+      attempt_count TINYINT UNSIGNED NOT NULL DEFAULT 0,
+      expires_at DATETIME NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (email),
+      KEY idx_pending_registrations_expiry (expires_at)
+    ) ENGINE=InnoDB;
+
     CREATE TABLE IF NOT EXISTS password_resets (
       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
       email VARCHAR(255) NOT NULL,

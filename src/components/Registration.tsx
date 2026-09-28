@@ -52,7 +52,9 @@ export default function Registration() {
   const [locationsLoading, setLocationsLoading] = useState(false);
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
+  const [registrationSubmitting, setRegistrationSubmitting] = useState(false);
   const [registrationVerificationEmail, setRegistrationVerificationEmail] = useState('');
+  const [registrationToken, setRegistrationToken] = useState('');
   const [registrationVerificationStep, setRegistrationVerificationStep] = useState(false);
   const [registrationResendCountdown, setRegistrationResendCountdown] = useState(0);
   
@@ -314,6 +316,7 @@ const [resendCountdown, setResendCountdown] = useState(0);
       if (!response.ok) {
         if (data.requiresEmailVerification && data.email) {
           setRegistrationVerificationEmail(data.email);
+          setRegistrationToken('');
           setRegistrationResendCountdown(Number(data.resendAfter) || 0);
           setRegistrationVerificationStep(true);
           setLoginPassword('');
@@ -335,6 +338,7 @@ const [resendCountdown, setResendCountdown] = useState(0);
   };
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (registrationSubmitting) return;
     setError('');
     setSuccessMessage('');
 
@@ -377,6 +381,7 @@ const [resendCountdown, setResendCountdown] = useState(0);
       return;
     }
 
+    setRegistrationSubmitting(true);
     try {
       const barangay = registrationBarangays.find(
         (item) => item.id === Number(regBarangayId),
@@ -413,9 +418,10 @@ const [resendCountdown, setResendCountdown] = useState(0);
       }
 
       setRegistrationVerificationEmail(data.email || regEmail.trim().toLowerCase());
+      setRegistrationToken(data.registrationToken || '');
       setRegistrationVerificationStep(true);
       setRegistrationResendCountdown(Number(data.resendAfter) || 60);
-      setSuccessMessage('Verification code sent. Check your email to activate the account.');
+      setSuccessMessage(data.message || 'Check your email for the code. Your account will be created after verification.');
 
       setRegFullName('');
       setRegEmail('');
@@ -428,6 +434,8 @@ const [resendCountdown, setResendCountdown] = useState(0);
     } catch (error) {
       console.error('Registration error:', error);
       setError('Cannot connect to the server.');
+    } finally {
+      setRegistrationSubmitting(false);
     }
   };
 
@@ -690,18 +698,21 @@ const handleResetPasswordSubmit = async (
             <EmailVerificationForm
               key={registrationVerificationEmail || 'request-code'}
               email={registrationVerificationEmail}
+              registrationToken={registrationToken}
               initialResendAfter={registrationResendCountdown}
-              onVerified={(email) => {
+              onVerified={(email, message) => {
                 setRegistrationVerificationStep(false);
                 setRegistrationVerificationEmail('');
+                setRegistrationToken('');
                 setActiveTab('login');
                 setLoginEmail(email);
                 setError('');
-                setSuccessMessage('Email verified. Sign in with your password. Staff accounts will be asked to change their temporary password.');
+                setSuccessMessage(message || 'Email verified. You may now sign in.');
               }}
               onBack={() => {
                 setRegistrationVerificationStep(false);
                 setRegistrationVerificationEmail('');
+                setRegistrationToken('');
                 setActiveTab('login');
                 setError('');
                 setSuccessMessage('');
@@ -823,8 +834,10 @@ const handleResetPasswordSubmit = async (
 
           if (data.requiresEmailVerification && data.email) {
             setRegistrationVerificationEmail(data.email);
+            setRegistrationToken(data.registrationToken || '');
             setRegistrationResendCountdown(Number(data.resendAfter) || 0);
             setRegistrationVerificationStep(true);
+            setSuccessMessage(response.ok ? data.message || '' : '');
             return;
           }
 
@@ -853,7 +866,7 @@ const handleResetPasswordSubmit = async (
           ) : (
             /* REGISTRATION SCREEN */
             <form onSubmit={handleRegisterSubmit} className="auth-form auth-form--register">
-              <fieldset className="auth-form-section">
+              <fieldset className="auth-form-section" disabled={registrationSubmitting}>
                 <legend className="auth-form-section-title">Contact details</legend>
                 <div className="auth-form-grid">
               <div className="auth-field">
@@ -890,6 +903,9 @@ const handleResetPasswordSubmit = async (
                     className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] py-2.5 pl-11 pr-4 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
                   />
                 </div>
+                <p className="mt-1 text-[11px] leading-relaxed text-stone-500">
+                  Use an inbox you can open. Your account is created only after you enter the email verification code.
+                </p>
               </div>
 
               <div className="auth-field">
@@ -919,7 +935,7 @@ const handleResetPasswordSubmit = async (
                 </div>
               </fieldset>
 
-              <fieldset className="auth-form-section">
+              <fieldset className="auth-form-section" disabled={registrationSubmitting}>
                 <legend className="auth-form-section-title">Service area and account security</legend>
                 <p className="auth-form-section-intro text-[11px] font-semibold leading-relaxed text-stone-400">
                   Choose the barangay and purok where this household receives service.
@@ -1029,9 +1045,11 @@ const handleResetPasswordSubmit = async (
 
               <button
                 type="submit"
-                className="auth-primary-action mt-1 w-full cursor-pointer rounded-2xl border-none bg-emerald-700 py-3 text-[10px] font-extrabold uppercase tracking-widest text-white shadow-lg shadow-emerald-800/10 transition-all hover:bg-emerald-800 active:scale-[0.98]"
+                disabled={registrationSubmitting}
+                className="auth-primary-action mt-1 flex w-full items-center justify-center gap-2 cursor-pointer rounded-2xl border-none bg-emerald-700 py-3 text-[10px] font-extrabold uppercase tracking-widest text-white shadow-lg shadow-emerald-800/10 transition-all hover:bg-emerald-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Register & Join Network
+                {registrationSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                {registrationSubmitting ? 'Checking Email & Sending Code...' : 'Verify Email to Register'}
               </button>
             </form>
           )}
@@ -1065,6 +1083,7 @@ const handleResetPasswordSubmit = async (
               type="button"
               onClick={() => {
                 setRegistrationVerificationEmail('');
+                setRegistrationToken('');
                 setRegistrationResendCountdown(0);
                 setRegistrationVerificationStep(true);
                 setError('');
