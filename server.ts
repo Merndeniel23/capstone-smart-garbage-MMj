@@ -28,6 +28,7 @@ import { getJwtSecret } from "./config/security.js";
 import { validateProductionEnvironment } from "./config/environment.js";
 import type { AuthRequest, AuthUser } from "./middleware/auth.js";
 import { isPaymentSummaryRequest, paymentSummary } from "./services/chatPayments.js";
+import fs from "fs";
 dotenv.config();
 
 validateProductionEnvironment();
@@ -995,6 +996,8 @@ async function startServer() {
   
   const distPath = path.resolve(process.cwd(), "dist");
   const assetsPath = path.resolve(distPath, "assets");
+  console.log("Runtime dist files:", fs.readdirSync(distPath));
+console.log("Runtime asset files:", fs.readdirSync(assetsPath));
   console.log("Serving frontend from:", distPath);
   console.log("Serving frontend assets from:", assetsPath);
 
