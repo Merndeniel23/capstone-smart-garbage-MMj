@@ -992,12 +992,31 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
+  
+  const distPath = path.resolve(process.cwd(), "dist");
+  const assetsPath = path.resolve(distPath, "assets");
+  console.log("Serving frontend from:", distPath);
+  console.log("Serving frontend assets from:", assetsPath);
+
+  app.use(
+    "/assets",
+    express.static(assetsPath, {
+      fallthrough: false,
+      maxAge: "1y",
+      immutable: true,
+    }),
+  );
+
+  app.use(
+    express.static(distPath, {
+      index: false,
+    }),
+  );
+
+  app.get("*", (_req, res) => {
+    res.sendFile(path.join(distPath, "index.html"));
+  });
+}
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
