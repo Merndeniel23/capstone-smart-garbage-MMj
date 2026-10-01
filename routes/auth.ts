@@ -417,10 +417,20 @@ router.post(
         return emailVerificationRequired(res, user.email);
       }
 
-      if (user.status === "pending") {
+      const isIncompleteResidentSetup =
+        user.role === "resident" &&
+        (
+          !user.barangay_id ||
+          !user.purok_id ||
+          !String(user.address || "").trim() ||
+          !String(user.phone || "").trim()
+        );
+
+      if (user.status === "pending" && !isIncompleteResidentSetup) {
         return res.status(403).json({
           message:
             "Your account is waiting for Barangay Captain approval.",
+          pendingApproval: true,
         });
       }
 
@@ -437,14 +447,11 @@ router.post(
         token,
         user,
         mustChangePassword: Boolean(user.must_change_password),
-        needsLocationSetup:
+        needsLocationSetup: isIncompleteResidentSetup,
+        needsApproval:
           user.role === "resident" &&
-          (
-            !user.barangay_id ||
-            !user.purok_id ||
-            !String(user.address || "").trim() ||
-            !String(user.phone || "").trim()
-          ),
+          user.status === "pending" &&
+          !isIncompleteResidentSetup,
       });
     } catch (error) {
       console.error(
@@ -486,20 +493,6 @@ router.post(
         req.body.password || "",
       );
 
-      const phone = String(
-        req.body.phone || "",
-      ).trim();
-
-      const normalizedPhone = normalizePhilippinePhone(phone);
-
-      const address = String(
-        req.body.address || "",
-      ).trim();
-
-      const purokId = Number(
-        req.body.purokId,
-      );
-
       if (
         !fullName ||
         !email ||
@@ -511,16 +504,9 @@ router.post(
         });
       }
 
-      if (fullName.length > 150 || address.length > 255) {
+      if (fullName.length > 150) {
         return res.status(400).json({
-          message: "Full name or address is too long.",
-        });
-      }
-
-      if (!phone || !address) {
-        return res.status(400).json({
-          message:
-            "Phone number and complete address are required.",
+          message: "Full name is too long.",
         });
       }
 
@@ -530,65 +516,25 @@ router.post(
         });
       }
 
-      if (!isValidPhilippinePhone(normalizedPhone)) {
-        return res.status(400).json({
-          message:
-            "Enter a valid Philippine mobile number (09XXXXXXXXX or +639XXXXXXXXX).",
-        });
-      }
-
-      if (
-        !Number.isInteger(purokId) ||
-        purokId <= 0
-      ) {
-        return res.status(400).json({
-          message:
-            "Please select a valid barangay and purok.",
-        });
-      }
-
-      const [purokRows] =
-        await db.query<any[]>(
-          `
-          SELECT
-            p.id,
-            p.barangay_id,
-            p.name AS purok_name,
-            b.name AS barangay_name
-          FROM puroks p
-          INNER JOIN barangays b
-            ON b.id = p.barangay_id
-          WHERE p.id = ?
-            AND b.is_active = 1
-          LIMIT 1
-          `,
-          [purokId],
-        );
-
-      const selectedPurok =
-        purokRows[0];
-
-      if (!selectedPurok) {
-        return res.status(404).json({
-          message:
-            "The selected barangay or purok was not found.",
-        });
-      }
-
       const passwordHash =
         await bcrypt.hash(
           password,
           12,
         );
 
+      /*
+       * Public signup intentionally collects only account credentials.
+       * Phone, barangay, purok, and physical address are completed after
+       * email verification on the resident's first authenticated session.
+       */
       const verification = await startPendingRegistration({
         email,
         full_name: fullName,
         password_hash: passwordHash,
-        barangay_id: Number(selectedPurok.barangay_id),
-        purok_id: Number(selectedPurok.id),
-        phone: normalizedPhone,
-        address,
+        barangay_id: null,
+        purok_id: null,
+        phone: null,
+        address: null,
       });
 
       return res.status(202).json({
@@ -596,19 +542,11 @@ router.post(
         requiresEmailVerification: true,
         ...verification,
         email,
-        assignment: {
-          barangay_id:
-            selectedPurok.barangay_id,
-          barangay_name:
-            selectedPurok.barangay_name,
-          purok_id:
-            selectedPurok.id,
-          purok_name:
-            selectedPurok.purok_name,
-        },
+        needsLocationSetup: true,
       });
     } catch (error: any) {
       if (verificationErrorResponse(res, error)) return;
+
       if (
         error?.code ===
         "ER_DUP_ENTRY"

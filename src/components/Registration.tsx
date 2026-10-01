@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleLogin } from '@react-oauth/google';
 import EmailVerificationForm from './EmailVerificationForm';
@@ -6,9 +6,6 @@ import {
   User, 
   Mail, 
   Lock, 
-  Phone, 
-  MapPin, 
-  ChevronDown, 
   Eye, 
   EyeOff, 
   ShieldAlert, 
@@ -18,17 +15,6 @@ import {
   Loader2
 } from 'lucide-react';
 
-interface RegistrationBarangay {
-  id: number;
-  name: string;
-}
-
-interface RegistrationPurok {
-  id: number;
-  barangay_id: number;
-  name: string;
-  barangay_name?: string;
-}
 
 export default function Registration() {
   
@@ -44,12 +30,6 @@ export default function Registration() {
   // Registration fields
   const [regFullName, setRegFullName] = useState('');
   const [regEmail, setRegEmail] = useState('');
-  const [regPhone, setRegPhone] = useState('');
-  const [regBarangayId, setRegBarangayId] = useState('');
-  const [regPurokId, setRegPurokId] = useState('');
-  const [registrationBarangays, setRegistrationBarangays] = useState<RegistrationBarangay[]>([]);
-  const [registrationPuroks, setRegistrationPuroks] = useState<RegistrationPurok[]>([]);
-  const [locationsLoading, setLocationsLoading] = useState(false);
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
   const [registrationSubmitting, setRegistrationSubmitting] = useState(false);
@@ -73,65 +53,7 @@ const [forgotLoading, setForgotLoading] = useState(false);
 const [resetLoading, setResetLoading] = useState(false);
 const [resendCountdown, setResendCountdown] = useState(0);
 
-  const filteredRegistrationPuroks = useMemo(() => {
-    const barangayId = Number(regBarangayId);
 
-    if (!barangayId) {
-      return [];
-    }
-
-    return registrationPuroks.filter(
-      (purok) => purok.barangay_id === barangayId,
-    );
-  }, [registrationPuroks, regBarangayId]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadRegistrationLocations = async () => {
-      setLocationsLoading(true);
-
-      try {
-        const response = await fetch('/api/auth/registration-locations');
-        const data = await response.json().catch(() => ({}));
-
-        if (!response.ok) {
-          throw new Error(
-            data.message || 'Unable to load barangays and puroks.',
-          );
-        }
-
-        if (!cancelled) {
-          setRegistrationBarangays(
-            Array.isArray(data.barangays) ? data.barangays : [],
-          );
-          setRegistrationPuroks(
-            Array.isArray(data.puroks) ? data.puroks : [],
-          );
-        }
-      } catch (err) {
-        console.error('Registration locations error:', err);
-
-        if (!cancelled) {
-          setError(
-            err instanceof Error
-              ? err.message
-              : 'Unable to load barangays and puroks.',
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setLocationsLoading(false);
-        }
-      }
-    };
-
-    loadRegistrationLocations();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (resendCountdown <= 0) {
@@ -167,11 +89,7 @@ const [resendCountdown, setResendCountdown] = useState(0);
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr);
   };
 
-  const normalizePhone = (phone: string) =>
-    phone.trim().replace(/[\s()-]/g, '');
-
-  const validatePhilippinePhone = (phone: string) =>
-    /^(?:09\d{9}|\+639\d{9})$/.test(normalizePhone(phone));
+ 
 
  const completeLogin = (data: any, remember: boolean) => {
   const backendRole = String(data?.user?.role || "resident");
@@ -345,13 +263,10 @@ const [resendCountdown, setResendCountdown] = useState(0);
     if (
       !regFullName.trim() ||
       !regEmail.trim() ||
-      !regPhone.trim() ||
-      !regBarangayId ||
-      !regPurokId ||
       !regPassword ||
       !regConfirmPassword
     ) {
-      setError('Please fill in all registration fields.');
+      setError('Please fill in your name, email, and password fields.');
       return;
     }
 
@@ -360,10 +275,6 @@ const [resendCountdown, setResendCountdown] = useState(0);
       return;
     }
 
-    if (!validatePhilippinePhone(regPhone)) {
-      setError('Enter a valid Philippine mobile number (09XXXXXXXXX or +639XXXXXXXXX).');
-      return;
-    }
 
     if (
       regPassword.length < 8 ||
@@ -383,18 +294,6 @@ const [resendCountdown, setResendCountdown] = useState(0);
 
     setRegistrationSubmitting(true);
     try {
-      const barangay = registrationBarangays.find(
-        (item) => item.id === Number(regBarangayId),
-      );
-      const purok = registrationPuroks.find(
-        (item) => item.id === Number(regPurokId),
-      );
-
-      if (!barangay || !purok || purok.barangay_id !== barangay.id) {
-        setError('Please select a valid barangay and purok.');
-        return;
-      }
-
       const response = await fetch('/api/auth/register', {
         method: 'POST',
         headers: {
@@ -404,9 +303,6 @@ const [resendCountdown, setResendCountdown] = useState(0);
           fullName: regFullName.trim(),
           email: regEmail.trim().toLowerCase(),
           password: regPassword,
-          purokId: purok.id,
-          phone: regPhone.trim(),
-          address: `${purok.name}, ${barangay.name}`, 
         }),
       });
 
@@ -425,9 +321,6 @@ const [resendCountdown, setResendCountdown] = useState(0);
 
       setRegFullName('');
       setRegEmail('');
-      setRegPhone('');
-      setRegBarangayId('');
-      setRegPurokId('');
       setRegPassword('');
       setRegConfirmPassword('');
 
@@ -867,186 +760,112 @@ const handleResetPasswordSubmit = async (
             /* REGISTRATION SCREEN */
             <form onSubmit={handleRegisterSubmit} className="auth-form auth-form--register">
               <fieldset className="auth-form-section" disabled={registrationSubmitting}>
-                <legend className="auth-form-section-title">Contact details</legend>
-                <div className="auth-form-grid">
-              <div className="auth-field">
-                <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
-                  Full Name
-                </label>
-                <div className="relative flex items-center">
-                  <User className="absolute left-4 w-4 h-4 text-stone-400" />
-                  <input
-                    type="text"
-                    required
-                    maxLength={150}
-                    placeholder="Enter full name"
-                    value={regFullName}
-                    onChange={(e) => setRegFullName(e.target.value)}
-                    className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] py-2.5 pl-11 pr-4 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
-                  />
-                </div>
-              </div>
-
-              <div className="auth-field">
-                <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
-                  Email Address
-                </label>
-                <div className="relative flex items-center">
-                  <Mail className="absolute left-4 w-4 h-4 text-stone-400" />
-                  <input
-                    type="email"
-                    required
-                    maxLength={150}
-                    placeholder="Enter email address"
-                    value={regEmail}
-                    onChange={(e) => setRegEmail(e.target.value)}
-                    className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] py-2.5 pl-11 pr-4 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
-                  />
-                </div>
-                <p className="mt-1 text-[11px] leading-relaxed text-stone-500">
-                  Use an inbox you can open. Your account is created only after you enter the email verification code.
-                </p>
-              </div>
-
-              <div className="auth-field">
-                <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
-                  Mobile Number
-                </label>
-                <div className="relative flex items-center">
-                  <Phone className="absolute left-4 w-4 h-4 text-stone-400" />
-                  <input
-                    type="tel"
-                    inputMode="numeric"
-                    autoComplete="tel"
-                    required
-                    maxLength={17}
-                    placeholder="Enter phone number "
-                    value={regPhone}
-                    onChange={(e) =>
-                      setRegPhone(
-                        e.target.value.replace(/[^0-9+\s()-]/g, ''),
-                      )
-                    }
-                    className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] py-2.5 pl-11 pr-4 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
-                  />
-                </div>
-              </div>
-
-                </div>
-              </fieldset>
-
-              <fieldset className="auth-form-section" disabled={registrationSubmitting}>
-                <legend className="auth-form-section-title">Service area and account security</legend>
+                <legend className="auth-form-section-title">Create your account</legend>
                 <p className="auth-form-section-intro text-[11px] font-semibold leading-relaxed text-stone-400">
-                  Choose the barangay and purok where this household receives service.
+                  Start with your basic login details. After your first sign-in, you will complete your mobile number, barangay, purok, and address.
                 </p>
+
                 <div className="auth-form-grid">
-
-              <div className="auth-field">
-                <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
-                  Assigned Communal Zone (Barangay & Purok)
-                </label>
-                <div className="auth-form-grid">
-                  <div className="relative flex items-center">
-                    <MapPin className="absolute left-4 w-4 h-4 text-stone-400" />
-                    <select
-                      value={regBarangayId}
-                      onChange={(e) => {
-                        setRegBarangayId(e.target.value);
-                        setRegPurokId('');
-                      }}
-                      disabled={locationsLoading}
-                      required
-                      className="auth-input w-full cursor-pointer appearance-none rounded-2xl border border-stone-200 bg-[#FAFBF9] py-2.5 pl-11 pr-10 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      <option value="">
-                        {locationsLoading ? 'Loading...' : 'Select barangay'}
-                      </option>
-                      {registrationBarangays.map((bgy) => (
-                        <option key={bgy.id} value={bgy.id}>
-                          {bgy.name}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown className="absolute right-4 w-4 h-4 text-stone-400 pointer-events-none" />
+                  <div className="auth-field">
+                    <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
+                      Full Name
+                    </label>
+                    <div className="relative flex items-center">
+                      <User className="absolute left-4 h-4 w-4 text-stone-400" />
+                      <input
+                        type="text"
+                        required
+                        maxLength={150}
+                        autoComplete="name"
+                        placeholder="Enter full name"
+                        value={regFullName}
+                        onChange={(e) => setRegFullName(e.target.value)}
+                        className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] py-3 pl-11 pr-4 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
+                      />
+                    </div>
                   </div>
 
-                  <div className="relative flex items-center">
-                    <MapPin className="absolute left-4 w-4 h-4 text-stone-400" />
-                    <select
-                      value={regPurokId}
-                      onChange={(e) => setRegPurokId(e.target.value)}
-                      disabled={!regBarangayId || locationsLoading}
-                      required
-                      className="auth-input w-full cursor-pointer appearance-none rounded-2xl border border-stone-200 bg-[#FAFBF9] py-2.5 pl-11 pr-10 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      <option value="">
-                        {!regBarangayId ? 'Select barangay first' : 'Select purok'}
-                      </option>
-                      {filteredRegistrationPuroks.map((purok) => (
-                        <option key={purok.id} value={purok.id}>
-                          {purok.name}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown className="absolute right-4 w-4 h-4 text-stone-400 pointer-events-none" />
+                  <div className="auth-field">
+                    <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
+                      Email Address
+                    </label>
+                    <div className="relative flex items-center">
+                      <Mail className="absolute left-4 h-4 w-4 text-stone-400" />
+                      <input
+                        type="email"
+                        required
+                        maxLength={150}
+                        autoComplete="email"
+                        placeholder="Enter email address"
+                        value={regEmail}
+                        onChange={(e) => setRegEmail(e.target.value)}
+                        className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] py-3 pl-11 pr-4 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
+                      />
+                    </div>
+                    <p className="mt-1 text-[11px] leading-relaxed text-stone-500">
+                      Use an inbox you can open. Your account is created only after you enter the email verification code.
+                    </p>
                   </div>
-                </div>
-              </div>
 
-              <div className="auth-form-grid">
-                <div className="auth-field">
-                  <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
-                    Password
-                  </label>
-                  <div className="relative flex items-center">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      maxLength={72}
-                      placeholder="8+ chars, upper/lower/number"
-                      value={regPassword}
-                      onChange={(e) => setRegPassword(e.target.value)}
-                      className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] px-4 py-2.5 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
-                    />
+                  <div className="auth-field">
+                    <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
+                      Password
+                    </label>
+                    <div className="relative flex items-center">
+                      <Lock className="absolute left-4 h-4 w-4 text-stone-400" />
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        required
+                        minLength={8}
+                        maxLength={72}
+                        autoComplete="new-password"
+                        placeholder="8+ chars, upper/lower/number"
+                        value={regPassword}
+                        onChange={(e) => setRegPassword(e.target.value)}
+                        className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] py-3 pl-11 pr-11 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
+                      />
+                    </div>
                   </div>
-                </div>
 
-                <div className="auth-field">
-                  <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
-                    Confirm Password
-                  </label>
-                  <div className="relative flex items-center">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      maxLength={72}
-                      placeholder="Confirm"
-                      value={regConfirmPassword}
-                      onChange={(e) => setRegConfirmPassword(e.target.value)}
-                      className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] px-4 py-2.5 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
-                    />
+                  <div className="auth-field">
+                    <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
+                      Confirm Password
+                    </label>
+                    <div className="relative flex items-center">
+                      <Lock className="absolute left-4 h-4 w-4 text-stone-400" />
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        required
+                        minLength={8}
+                        maxLength={72}
+                        autoComplete="new-password"
+                        placeholder="Confirm password"
+                        value={regConfirmPassword}
+                        onChange={(e) => setRegConfirmPassword(e.target.value)}
+                        className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] py-3 pl-11 pr-11 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="flex justify-end pt-1">
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="text-[10px] font-bold text-stone-500 hover:text-stone-700 flex items-center gap-1"
-                >
-                  {showPassword ? 'Hide Passwords' : 'Show Passwords'}
-                </button>
-              </div>
-
+                <div className="mt-2 flex items-center justify-between gap-3 rounded-2xl border border-emerald-100 bg-emerald-50/70 px-4 py-3">
+                  <p className="text-[10px] font-semibold leading-relaxed text-emerald-800">
+                    After verification and first login, complete your phone number, barangay, purok, and full address before using resident features.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="shrink-0 text-[10px] font-bold text-emerald-700 hover:underline"
+                  >
+                    {showPassword ? 'Hide passwords' : 'Show passwords'}
+                  </button>
                 </div>
               </fieldset>
 
               <button
                 type="submit"
                 disabled={registrationSubmitting}
-                className="auth-primary-action mt-1 flex w-full items-center justify-center gap-2 cursor-pointer rounded-2xl border-none bg-emerald-700 py-3 text-[10px] font-extrabold uppercase tracking-widest text-white shadow-lg shadow-emerald-800/10 transition-all hover:bg-emerald-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+                className="auth-primary-action mt-1 flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl border-none bg-emerald-700 py-3 text-[10px] font-extrabold uppercase tracking-widest text-white shadow-lg shadow-emerald-800/10 transition-all hover:bg-emerald-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {registrationSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
                 {registrationSubmitting ? 'Checking Email & Sending Code...' : 'Verify Email to Register'}
