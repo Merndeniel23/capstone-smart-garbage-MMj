@@ -108,6 +108,8 @@ async function createCurrentSchema() {
     CREATE TABLE IF NOT EXISTS barangays (
       id INT UNSIGNED NOT NULL AUTO_INCREMENT,
       name VARCHAR(120) NOT NULL,
+      address VARCHAR(255) NULL,
+      image_url MEDIUMTEXT NULL,
       is_active TINYINT(1) NOT NULL DEFAULT 1,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
@@ -634,6 +636,9 @@ async function createCurrentSchema() {
 }
 
 async function migrateLegacySchema(defaultBarangayId: number) {
+  await ensureColumn("barangays", "address", "VARCHAR(255) NULL AFTER name");
+  await ensureColumn("barangays", "image_url", "MEDIUMTEXT NULL AFTER address");
+
   await ensureColumn("puroks", "barangay_id", "INT UNSIGNED NULL AFTER id");
   await connection.execute(
     "UPDATE puroks SET barangay_id = ? WHERE barangay_id IS NULL",

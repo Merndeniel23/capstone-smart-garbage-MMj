@@ -2,7 +2,14 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../config/db.js";
-import { signedProofUrl } from "../config/storage.js";
+import {
+  deleteStoredProof,
+  imageExtensionForDataUrl,
+  isStorageReference,
+  parseImageDataUrl,
+  signedProofUrl,
+  storeProof,
+} from "../config/storage.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 import { AccountDeletionError, canDeleteAccount, deleteAccount } from "../services/accountDeletion.js";
 import {
@@ -1199,13 +1206,13 @@ router.get("/locations", requireAuth, async (req: AuthRequest, res) => {
 
     const [barangays]: any = isSuperAdmin
       ? await db.query(`
-          SELECT id, name
+          SELECT id, name, address, image_url
           FROM barangays
           WHERE is_active = 1
           ORDER BY name ASC
         `)
       : await db.query(
-          `SELECT id, name FROM barangays WHERE id = ? AND is_active = 1`,
+          `SELECT id, name, address, image_url FROM barangays WHERE id = ? AND is_active = 1`,
           [barangayId],
         );
 
@@ -1227,12 +1234,134 @@ router.get("/locations", requireAuth, async (req: AuthRequest, res) => {
           [barangayId],
         );
 
-    return res.json({ success: true, barangays, puroks });
+    const hydratedBarangays = await Promise.all(
+      (barangays as any[]).map(async (barangay) => ({
+        ...barangay,
+        image_url: await signedProofUrl(barangay.image_url),
+      })),
+    );
+
+    return res.json({ success: true, barangays: hydratedBarangays, puroks });
   } catch (error) {
     console.error("Admin load locations error:", error);
     return res.status(500).json({
       success: false,
       message: "Unable to load barangays and puroks.",
+    });
+  }
+});
+
+
+router.patch("/barangays/:id", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    if (String(req.user?.role || "").toLowerCase() !== "super_admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Municipal Administrator access is required.",
+      });
+    }
+
+    const barangayId = parsePositiveInteger(req.params.id);
+    if (!barangayId) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid barangay is required.",
+      });
+    }
+
+    const [rows]: any = await db.query(
+      `SELECT id, name, address, image_url, is_active FROM barangays WHERE id = ? LIMIT 1`,
+      [barangayId],
+    );
+
+    const barangay = rows[0];
+    if (!barangay) {
+      return res.status(404).json({
+        success: false,
+        message: "Barangay was not found.",
+      });
+    }
+
+    const name = String(req.body.name ?? barangay.name).trim();
+    const address = String(req.body.address ?? barangay.address ?? "").trim();
+    const imageDataUrl = req.body.imageDataUrl;
+    const removeImage = Boolean(req.body.removeImage);
+
+    if (!name || name.length > 120) {
+      return res.status(400).json({
+        success: false,
+        message: "Barangay name is required and must not exceed 120 characters.",
+      });
+    }
+
+    if (address.length > 255) {
+      return res.status(400).json({
+        success: false,
+        message: "Barangay address must not exceed 255 characters.",
+      });
+    }
+
+    let nextImage = barangay.image_url || null;
+
+    if (removeImage) {
+      nextImage = null;
+    } else if (imageDataUrl !== undefined && imageDataUrl !== null && imageDataUrl !== "") {
+      if (!parseImageDataUrl(imageDataUrl)) {
+        return res.status(400).json({
+          success: false,
+          message: "Choose a valid PNG, JPG, or WebP image up to 3.5 MB.",
+        });
+      }
+
+      const extension = imageExtensionForDataUrl(imageDataUrl);
+      nextImage = await storeProof(
+        String(imageDataUrl),
+        `barangays/${barangayId}-${Date.now()}.${extension}`,
+      );
+    }
+
+    await db.execute(
+      `
+        UPDATE barangays
+        SET name = ?, address = ?, image_url = ?
+        WHERE id = ?
+      `,
+      [name, address || null, nextImage, barangayId],
+    );
+
+    if (
+      barangay.image_url &&
+      barangay.image_url !== nextImage &&
+      isStorageReference(barangay.image_url)
+    ) {
+      await deleteStoredProof(barangay.image_url).catch((error) =>
+        console.error("Delete old barangay image error:", error),
+      );
+    }
+
+    return res.json({
+      success: true,
+      message: "Barangay details updated successfully.",
+      barangay: {
+        id: barangayId,
+        name,
+        address: address || null,
+        image_url: await signedProofUrl(nextImage),
+        is_active: barangay.is_active,
+      },
+    });
+  } catch (error: any) {
+    if (error?.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({
+        success: false,
+        message: "A barangay with that name already exists.",
+      });
+    }
+
+    console.error("Update barangay details error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to update barangay details.",
     });
   }
 });

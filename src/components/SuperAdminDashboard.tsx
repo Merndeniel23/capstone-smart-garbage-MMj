@@ -661,7 +661,7 @@ export default function SuperAdminDashboard({
               />
 
               <ActionButton label="View Complaints" description="Review and assign open complaints" icon={MessageSquare} onClick={() => setCurrentScreen("complaints")} />
-              <ActionButton label="View Collection Schedule" description="Monitor barangay collection windows" icon={CalendarDays} onClick={() => setCurrentScreen("schedule")} />
+              <ActionButton label="Manage Collection Schedule" description="Assign and manage barangay collection windows" icon={CalendarDays} onClick={() => setCurrentScreen("schedule")} />
               <ActionButton label="View Municipal Bins" description="Locate bins that need collection" icon={Trash2} onClick={() => setCurrentScreen("garbage-bins")} />
 
               <ActionButton

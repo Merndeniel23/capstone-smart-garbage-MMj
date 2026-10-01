@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { db } from "../config/db.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
+import { signedProofUrl } from "../config/storage.js";
 
 const router = Router();
 
@@ -146,6 +147,8 @@ router.get(
           schedule.id,
           schedule.barangay_id,
           barangay.name AS barangay_name,
+          barangay.address AS barangay_address,
+          barangay.image_url AS barangay_image_url,
           schedule.day_of_week,
           schedule.start_time,
           schedule.end_time,
@@ -174,9 +177,16 @@ router.get(
           barangay.name ASC
       `, isSuperAdmin ? [] : [viewer.barangay_id]);
 
+      const schedules = await Promise.all(
+        (rows as any[]).map(async (row) => ({
+          ...row,
+          barangay_image_url: await signedProofUrl(row.barangay_image_url),
+        })),
+      );
+
       return res.json({
         success: true,
-        schedules: rows,
+        schedules,
       });
     } catch (error) {
       console.error(
@@ -201,11 +211,11 @@ router.post(
   requireAuth,
   async (req: AuthRequest, res) => {
     try {
-      if (req.user?.role !== "admin") {
+      if (req.user?.role !== "super_admin") {
         return res.status(403).json({
           success: false,
           message:
-            "Administrator access required.",
+            "Municipal Administrator access required.",
         });
       }
 
@@ -231,18 +241,10 @@ router.post(
         Number(req.user.id),
       );
 
-      if (viewer?.role !== "admin") {
+      if (viewer?.role !== "super_admin") {
         return res.status(403).json({
           success: false,
-          message: "An active Barangay Captain account is required.",
-        });
-      }
-
-      if (!viewer.barangay_id) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Your captain account is not assigned to a barangay.",
+          message: "An active Municipal Administrator account is required.",
         });
       }
 
@@ -272,17 +274,6 @@ router.post(
       }
 
       if (
-        requestedBarangayId !==
-        Number(viewer.barangay_id)
-      ) {
-        return res.status(403).json({
-          success: false,
-          message:
-            "You may only manage schedules for your assigned barangay.",
-        });
-      }
-
-      if (
         normalizedStartTime === undefined ||
         normalizedEndTime === undefined
       ) {
@@ -307,6 +298,18 @@ router.post(
         return res.status(400).json({
           success: false,
           message: "Schedule notes cannot exceed 255 characters.",
+        });
+      }
+
+      const [barangayRows] = await db.query<any[]>(
+        `SELECT id FROM barangays WHERE id = ? AND is_active = 1 LIMIT 1`,
+        [requestedBarangayId],
+      );
+
+      if (!barangayRows[0]) {
+        return res.status(404).json({
+          success: false,
+          message: "The selected barangay was not found or is inactive.",
         });
       }
 
@@ -361,6 +364,145 @@ router.post(
   },
 );
 
+
+/**
+ * UPDATE COLLECTION SCHEDULE
+ * Only the Municipal Administrator may edit a published schedule.
+ */
+router.put(
+  "/:id",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    try {
+      if (req.user?.role !== "super_admin") {
+        return res.status(403).json({
+          success: false,
+          message: "Municipal Administrator access required.",
+        });
+      }
+
+      const scheduleId = Number(req.params.id);
+      const requestedBarangayId = Number(req.body.barangay_id);
+      const dayOfWeek = String(req.body.day_of_week || "");
+      const normalizedStartTime = normalizeTime(req.body.start_time);
+      const normalizedEndTime = normalizeTime(req.body.end_time);
+      const normalizedNotes = String(req.body.notes || "").trim();
+
+      const validDays = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+      ];
+
+      if (
+        !Number.isInteger(scheduleId) ||
+        scheduleId <= 0 ||
+        !Number.isInteger(requestedBarangayId) ||
+        requestedBarangayId <= 0 ||
+        !validDays.includes(dayOfWeek)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "A valid schedule, barangay, and collection day are required.",
+        });
+      }
+
+      if (
+        normalizedStartTime === undefined ||
+        normalizedEndTime === undefined
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Collection times must use a valid 24-hour format.",
+        });
+      }
+
+      if (
+        normalizedStartTime &&
+        normalizedEndTime &&
+        normalizedEndTime <= normalizedStartTime
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "End time must be later than start time.",
+        });
+      }
+
+      if (normalizedNotes.length > 255) {
+        return res.status(400).json({
+          success: false,
+          message: "Schedule notes cannot exceed 255 characters.",
+        });
+      }
+
+      const [barangayRows] = await db.query<any[]>(
+        `SELECT id FROM barangays WHERE id = ? AND is_active = 1 LIMIT 1`,
+        [requestedBarangayId],
+      );
+
+      if (!barangayRows[0]) {
+        return res.status(404).json({
+          success: false,
+          message: "The selected barangay was not found or is inactive.",
+        });
+      }
+
+      const [result]: any = await db.execute(
+        `
+          UPDATE barangay_collection_schedules
+          SET
+            barangay_id = ?,
+            day_of_week = ?,
+            start_time = ?,
+            end_time = ?,
+            notes = ?,
+            is_active = 1,
+            created_by = ?
+          WHERE id = ?
+        `,
+        [
+          requestedBarangayId,
+          dayOfWeek,
+          normalizedStartTime,
+          normalizedEndTime,
+          normalizedNotes || null,
+          req.user.id,
+          scheduleId,
+        ],
+      );
+
+      if (Number(result.affectedRows) !== 1) {
+        return res.status(404).json({
+          success: false,
+          message: "Collection schedule not found.",
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: "Collection schedule updated successfully.",
+      });
+    } catch (error: any) {
+      if (error?.code === "ER_DUP_ENTRY") {
+        return res.status(409).json({
+          success: false,
+          message: "That barangay already has a collection schedule for the selected weekday.",
+        });
+      }
+
+      console.error("Update collection schedule error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to update collection schedule.",
+      });
+    }
+  },
+);
+
 /**
  * DELETE COLLECTION SCHEDULE
  */
@@ -369,11 +511,11 @@ router.delete(
   requireAuth,
   async (req: AuthRequest, res) => {
     try {
-      if (req.user?.role !== "admin") {
+      if (req.user?.role !== "super_admin") {
         return res.status(403).json({
           success: false,
           message:
-            "Administrator access required.",
+            "Municipal Administrator access required.",
         });
       }
 
@@ -396,18 +538,10 @@ router.delete(
         Number(req.user.id),
       );
 
-      if (viewer?.role !== "admin") {
+      if (viewer?.role !== "super_admin") {
         return res.status(403).json({
           success: false,
-          message: "An active Barangay Captain account is required.",
-        });
-      }
-
-      if (!viewer.barangay_id) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Your captain account is not assigned to a barangay.",
+          message: "An active Municipal Administrator account is required.",
         });
       }
 
@@ -416,9 +550,8 @@ router.delete(
           `
           DELETE FROM barangay_collection_schedules
           WHERE id = ?
-            AND barangay_id = ?
           `,
-          [scheduleId, viewer.barangay_id],
+          [scheduleId],
         );
 
       if (result.affectedRows === 0) {

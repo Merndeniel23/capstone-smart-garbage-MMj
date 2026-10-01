@@ -3,11 +3,13 @@ import {
   ChevronRight,
   Clock,
   Eye,
+  Image as ImageIcon,
   Loader2,
   MapPin,
   Plus,
   RefreshCw,
   Save,
+  Settings,
   Trash2,
   Truck,
   X,
@@ -48,6 +50,8 @@ type CollectionSchedule = {
   id: number;
   barangay_id: number;
   barangay_name: string;
+  barangay_address?: string | null;
+  barangay_image_url?: string | null;
   day_of_week: DayOfWeek;
   start_time: string | null;
   end_time: string | null;
@@ -56,13 +60,29 @@ type CollectionSchedule = {
 };
 
 type ScheduleForm = {
+  barangayId: string;
   dayOfWeek: DayOfWeek;
   startTime: string;
   endTime: string;
   notes: string;
 };
 
+type BarangayOption = {
+  id: number;
+  name: string;
+  address?: string | null;
+  image_url?: string | null;
+};
+
+type BarangaySettingsForm = {
+  name: string;
+  address: string;
+  imageDataUrl: string;
+  removeImage: boolean;
+};
+
 const emptyForm: ScheduleForm = {
+  barangayId: "",
   dayOfWeek: "Monday",
   startTime: "",
   endTime: "",
@@ -153,17 +173,31 @@ export default function Schedule() {
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [barangayOptions, setBarangayOptions] = useState<BarangayOption[]>([]);
+  const [showBarangaySettings, setShowBarangaySettings] = useState(false);
+  const [settingsBarangayId, setSettingsBarangayId] = useState("");
+  const [barangaySettings, setBarangaySettings] = useState<BarangaySettingsForm>({
+    name: "",
+    address: "",
+    imageDataUrl: "",
+    removeImage: false,
+  });
+  const [savingBarangay, setSavingBarangay] = useState(false);
 
-  const canManage =
-    currentUser?.role === "admin" &&
-    Boolean(currentUser.barangay_id);
+  const canManage = currentUser?.role === "super_admin";
   const isMunicipal = currentUser?.role === "super_admin";
 
   const barangays = useMemo(() => {
+    if (barangayOptions.length) {
+      return barangayOptions
+        .map((barangay) => [barangay.id, barangay.name] as [number, string])
+        .sort((a, b) => a[1].localeCompare(b[1]));
+    }
+
     const values = new Map<number, string>();
     schedules.forEach((schedule) => values.set(schedule.barangay_id, schedule.barangay_name));
     return [...values.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [schedules]);
+  }, [barangayOptions, schedules]);
   const normalizedScheduleSearch = scheduleSearch.trim().toLowerCase();
   const visibleSchedules = useMemo(
     () =>
@@ -274,7 +308,7 @@ export default function Schedule() {
     setError("");
 
     try {
-      const [profileResult, scheduleResult] =
+      const [profileResult, scheduleResult, locationResult] =
         await Promise.all([
           apiRequest<{
             success: boolean;
@@ -284,12 +318,21 @@ export default function Schedule() {
             success: boolean;
             schedules: CollectionSchedule[];
           }>("/collection-schedules"),
+          apiRequest<{
+            success: boolean;
+            barangays: BarangayOption[];
+          }>("/admin/locations").catch(() => ({ success: false, barangays: [] })),
         ]);
 
       setCurrentUser(profileResult.user || null);
       setSchedules(
         Array.isArray(scheduleResult.schedules)
           ? scheduleResult.schedules
+          : [],
+      );
+      setBarangayOptions(
+        Array.isArray(locationResult.barangays)
+          ? locationResult.barangays
           : [],
       );
     } catch (loadError) {
@@ -355,8 +398,13 @@ export default function Schedule() {
   const hasScheduleOnDay = (day: number) =>
     scheduledWeekdays.has(weekdayForDay(day));
 
-  const openNewForm = () => {
-    setForm(emptyForm);
+  const openNewForm = (date?: Date) => {
+    const targetDate = date || selectedDate;
+    setForm({
+      ...emptyForm,
+      barangayId: barangayFilter || "",
+      dayOfWeek: DAYS[(targetDate.getDay() + 6) % 7],
+    });
     setEditingScheduleId(null);
     setError("");
     setNotice("");
@@ -365,6 +413,7 @@ export default function Schedule() {
 
   const openEditForm = (schedule: CollectionSchedule) => {
     setForm({
+      barangayId: String(schedule.barangay_id),
       dayOfWeek: schedule.day_of_week,
       startTime: schedule.start_time?.slice(0, 5) || "",
       endTime: schedule.end_time?.slice(0, 5) || "",
@@ -390,10 +439,14 @@ export default function Schedule() {
   ) => {
     event.preventDefault();
 
-    if (!canManage || !currentUser?.barangay_id) {
-      setError(
-        "Only a Barangay Captain with an assigned barangay can manage schedules.",
-      );
+    if (!canManage) {
+      setError("Only the Municipal Administrator can manage collection schedules.");
+      return;
+    }
+
+    const selectedBarangayId = Number(form.barangayId);
+    if (!Number.isInteger(selectedBarangayId) || selectedBarangayId <= 0) {
+      setError("Please select a barangay.");
       return;
     }
 
@@ -411,13 +464,17 @@ export default function Schedule() {
     setNotice("");
 
     try {
+      const endpoint = editingScheduleId
+        ? `/collection-schedules/${editingScheduleId}`
+        : "/collection-schedules";
+
       const result = await apiRequest<{
         success: boolean;
         message: string;
-      }>("/collection-schedules", {
-        method: "POST",
+      }>(endpoint, {
+        method: editingScheduleId ? "PUT" : "POST",
         body: JSON.stringify({
-          barangay_id: currentUser.barangay_id,
+          barangay_id: selectedBarangayId,
           day_of_week: form.dayOfWeek,
           start_time: form.startTime || null,
           end_time: form.endTime || null,
@@ -478,6 +535,107 @@ export default function Schedule() {
     }
   };
 
+
+  const openBarangaySettings = (barangayId?: number) => {
+    const selected =
+      barangayOptions.find((barangay) => barangay.id === barangayId) ||
+      barangayOptions[0];
+
+    if (!selected) {
+      setError("No active barangay is available to configure.");
+      return;
+    }
+
+    setSettingsBarangayId(String(selected.id));
+    setBarangaySettings({
+      name: selected.name,
+      address: selected.address || "",
+      imageDataUrl: "",
+      removeImage: false,
+    });
+    setShowBarangaySettings(true);
+    setError("");
+    setNotice("");
+  };
+
+  const chooseSettingsBarangay = (value: string) => {
+    setSettingsBarangayId(value);
+    const selected = barangayOptions.find(
+      (barangay) => String(barangay.id) === value,
+    );
+    setBarangaySettings({
+      name: selected?.name || "",
+      address: selected?.address || "",
+      imageDataUrl: "",
+      removeImage: false,
+    });
+  };
+
+  const readBarangayImage = (file?: File) => {
+    if (!file) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      setError("Choose a PNG, JPG, or WebP image.");
+      return;
+    }
+    if (file.size > 3_500_000) {
+      setError("Barangay image must be 3.5 MB or smaller.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setBarangaySettings((current) => ({
+        ...current,
+        imageDataUrl: String(reader.result || ""),
+        removeImage: false,
+      }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const saveBarangaySettings = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canManage) return;
+
+    const barangayId = Number(settingsBarangayId);
+    if (!Number.isInteger(barangayId) || barangayId <= 0) {
+      setError("Select a barangay.");
+      return;
+    }
+
+    setSavingBarangay(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const result = await apiRequest<{
+        success: boolean;
+        message: string;
+        barangay: BarangayOption;
+      }>(`/admin/barangays/${barangayId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: barangaySettings.name.trim(),
+          address: barangaySettings.address.trim(),
+          imageDataUrl: barangaySettings.imageDataUrl || undefined,
+          removeImage: barangaySettings.removeImage,
+        }),
+      });
+
+      setNotice(result.message || "Barangay details updated.");
+      setShowBarangaySettings(false);
+      await loadData(true);
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Unable to update barangay details.",
+      );
+    } finally {
+      setSavingBarangay(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-[420px] items-center justify-center">
@@ -519,7 +677,18 @@ export default function Schedule() {
           {canManage && (
             <button
               type="button"
-              onClick={openNewForm}
+              onClick={() => openBarangaySettings()}
+              className="inline-flex min-h-11 items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-100"
+            >
+              <Settings className="h-4 w-4" />
+              Barangay Settings
+            </button>
+          )}
+
+          {canManage && (
+            <button
+              type="button"
+              onClick={() => openNewForm(selectedDate)}
               className="inline-flex min-h-11 items-center gap-2 rounded-full bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700"
             >
               <Plus className="h-4 w-4" />
@@ -555,8 +724,8 @@ export default function Schedule() {
           <div className="flex gap-3 rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
             <Eye className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
             <div>
-              <p className="text-sm font-bold text-emerald-900">Municipal monitoring · Read-only</p>
-              <p className="mt-1 text-sm leading-relaxed text-emerald-700">Municipal Administrators can monitor schedules across all barangays. Each Barangay Captain manages the collection schedule for their assigned barangay.</p>
+              <p className="text-sm font-bold text-emerald-900">Municipal schedule management</p>
+              <p className="mt-1 text-sm leading-relaxed text-emerald-700">Municipal Administrators can create, edit, and remove collection schedules for all barangays. Other roles have read-only access.</p>
             </div>
           </div>
           <section
@@ -663,19 +832,19 @@ export default function Schedule() {
 
             const todayCell = isToday(day);
             const scheduledCell = hasScheduleOnDay(day);
-            const selectedCell = isMunicipal && selectedDate.getFullYear() === visibleMonth.getFullYear() && selectedDate.getMonth() === visibleMonth.getMonth() && selectedDate.getDate() === day;
+            const selectedCell = selectedDate.getFullYear() === visibleMonth.getFullYear() && selectedDate.getMonth() === visibleMonth.getMonth() && selectedDate.getDate() === day;
             const dayLabel = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-            const CalendarDay = isMunicipal ? "button" : "div";
+            const CalendarDay = "button";
 
             return (
               <CalendarDay
-                type={isMunicipal ? "button" : undefined}
+                type="button"
                 key={`${visibleMonth.getFullYear()}-${visibleMonth.getMonth()}-${day}`}
-                onClick={isMunicipal ? () => setSelectedDate(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day)) : undefined}
+                onClick={() => setSelectedDate(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day))}
                 aria-label={`${dayLabel}${scheduledCell ? ", collection scheduled" : ", no scheduled collection"}`}
-                aria-pressed={isMunicipal ? selectedCell : undefined}
+                aria-pressed={selectedCell}
                 aria-current={todayCell ? "date" : undefined}
-                className={`relative ${isMunicipal ? "min-h-11" : ""} rounded-xl py-2 text-center text-xs font-medium transition-colors ${selectedCell ? "outline-2 outline-offset-2 outline-emerald-500" : ""} ${
+                className={`relative min-h-11 rounded-xl py-2 text-center text-xs font-medium transition-colors ${selectedCell ? "outline-2 outline-offset-2 outline-emerald-500" : ""} ${
                   todayCell
                     ? "bg-emerald-500 font-bold text-white shadow-sm ring-2 ring-emerald-100"
                     : scheduledCell
@@ -708,11 +877,23 @@ export default function Schedule() {
         </p>
       </div>
 
-      {isMunicipal && (
+      {(
         <section className="space-y-3" aria-label="Selected date collections">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-lg font-bold text-slate-900">{selectedDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</h2>
-            <span role="status" className="text-xs text-slate-500">{selectedDateSchedules.length} published collection {selectedDateSchedules.length === 1 ? "window" : "windows"}</span>
+            <div className="flex items-center gap-2">
+              <span role="status" className="text-xs text-slate-500">{selectedDateSchedules.length} published collection {selectedDateSchedules.length === 1 ? "window" : "windows"}</span>
+              {canManage && (
+                <button
+                  type="button"
+                  onClick={() => openNewForm(selectedDate)}
+                  className="rounded-full bg-emerald-600 px-3 py-2 text-[11px] font-bold text-white hover:bg-emerald-700"
+                >
+                  <Plus className="mr-1 inline h-3.5 w-3.5" />
+                  Add for this day
+                </button>
+              )}
+            </div>
           </div>
           <p className="text-xs text-slate-500">Dates follow the recurring weekly plan. Select a collection window to see its published details.</p>
           {selectedDateSchedules.length ? (
@@ -830,12 +1011,12 @@ export default function Schedule() {
               <p className="mt-1 text-xs text-slate-400">
                 {error ? "Use Refresh to try again." : isMunicipal ? "No weekly collection plans have been published for the selected barangay scope." : canManage
                   ? "Add the first weekly collection day for your barangay."
-                  : "Your Barangay Captain has not published a weekly schedule yet."}
+                  : "The Municipal Administrator has not published a weekly schedule yet."}
               </p>
               {canManage && (
                 <button
                   type="button"
-                  onClick={openNewForm}
+                  onClick={() => openNewForm(selectedDate)}
                   className="mt-5 rounded-full bg-emerald-600 px-5 py-2 text-xs font-bold text-white transition hover:bg-emerald-700"
                 >
                   Add Schedule
@@ -867,14 +1048,14 @@ export default function Schedule() {
               : "Published Weekly Plan"}
           </h3>
           <p className="mb-4 mt-1 text-xs leading-relaxed text-emerald-700">
-            {isMunicipal ? "These recurring collection plans are published by the Barangay Captains. Select a date or collection window to review the available time and route notes." : canManage
-              ? "Publishing a collection day makes it visible to residents, Purok Leaders, and collectors assigned to your barangay."
-              : "This is the official recurring collection plan published by your Barangay Captain."}
+            {isMunicipal ? "These recurring collection plans are managed by the Municipal Administrator. Select a date or collection window to review the available time and route notes." : canManage
+              ? "Publishing a collection day makes it visible to the assigned barangay users."
+              : "This is the official recurring collection plan published by the Municipal Administrator."}
           </p>
           {canManage && (
             <button
               type="button"
-              onClick={openNewForm}
+              onClick={() => openNewForm(selectedDate)}
               className="rounded-full bg-white px-6 py-2 text-xs font-bold text-emerald-600 shadow-sm shadow-emerald-900/5 transition-all active:scale-95"
             >
               Configure Now
@@ -883,6 +1064,139 @@ export default function Schedule() {
         </div>
         <CalendarIcon className="absolute -bottom-4 -right-4 h-32 w-32 -rotate-12 text-emerald-100/60" />
       </div>
+
+
+      {showBarangaySettings && canManage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 p-4 backdrop-blur-md"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="barangay-settings-title"
+        >
+          <form
+            onSubmit={saveBarangaySettings}
+            className="relative w-full max-w-xl rounded-[2.5rem] border border-slate-100 bg-white p-6 shadow-2xl"
+          >
+            <button
+              type="button"
+              onClick={() => setShowBarangaySettings(false)}
+              className="absolute right-5 top-5 rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200"
+              aria-label="Close barangay settings"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            <div className="pr-10">
+              <p className="text-[10px] font-black uppercase tracking-[0.35em] text-emerald-500">
+                Municipal settings
+              </p>
+              <h3 id="barangay-settings-title" className="mt-2 text-2xl font-black text-slate-900">
+                Barangay Profile
+              </h3>
+              <p className="mt-1 text-sm text-slate-500">
+                The photo, name, and address saved here are reused in collection schedule details.
+              </p>
+            </div>
+
+            <div className="mt-6 space-y-4">
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold text-slate-700">Barangay</span>
+                <select
+                  value={settingsBarangayId}
+                  onChange={(event) => chooseSettingsBarangay(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800"
+                  required
+                >
+                  {barangayOptions.map((barangay) => (
+                    <option key={barangay.id} value={barangay.id}>{barangay.name}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold text-slate-700">Barangay name</span>
+                <input
+                  value={barangaySettings.name}
+                  maxLength={120}
+                  onChange={(event) =>
+                    setBarangaySettings((current) => ({ ...current, name: event.target.value }))
+                  }
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-800"
+                  required
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold text-slate-700">Address</span>
+                <input
+                  value={barangaySettings.address}
+                  maxLength={255}
+                  placeholder="Example: Cordova, Cebu"
+                  onChange={(event) =>
+                    setBarangaySettings((current) => ({ ...current, address: event.target.value }))
+                  }
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-800"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold text-slate-700">Barangay photo/logo</span>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={(event) => readBarangayImage(event.target.files?.[0])}
+                  className="block w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700"
+                />
+                <span className="mt-1 block text-[10px] text-slate-400">
+                  PNG, JPG, or WebP up to 3.5 MB.
+                </span>
+              </label>
+
+              {barangaySettings.imageDataUrl && (
+                <img
+                  src={barangaySettings.imageDataUrl}
+                  alt="Selected barangay preview"
+                  className="h-36 w-full rounded-2xl border border-slate-100 object-cover"
+                />
+              )}
+
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={barangaySettings.removeImage}
+                  onChange={(event) =>
+                    setBarangaySettings((current) => ({
+                      ...current,
+                      removeImage: event.target.checked,
+                      imageDataUrl: event.target.checked ? "" : current.imageDataUrl,
+                    }))
+                  }
+                />
+                Remove current barangay image
+              </label>
+            </div>
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setShowBarangaySettings(false)}
+                disabled={savingBarangay}
+                className="rounded-3xl border border-slate-200 py-3 text-xs font-black uppercase tracking-[0.18em] text-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={savingBarangay}
+                className="inline-flex items-center justify-center gap-2 rounded-3xl bg-emerald-600 py-3 text-xs font-black uppercase tracking-[0.18em] text-white disabled:opacity-60"
+              >
+                {savingBarangay ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {savingBarangay ? "Saving" : "Save Barangay"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {showForm && canManage && (
         <div
@@ -930,18 +1244,41 @@ export default function Schedule() {
             <div className="mt-6 space-y-4">
               <label className="block">
                 <span className="mb-2 block text-xs font-bold text-slate-700">
+                  Barangay
+                </span>
+                <select
+                  value={form.barangayId}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      barangayId: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                  required
+                >
+                  <option value="">Select barangay</option>
+                  {barangayOptions.map((barangay) => (
+                    <option key={barangay.id} value={barangay.id}>
+                      {barangay.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-bold text-slate-700">
                   Collection day
                 </span>
                 <select
                   value={form.dayOfWeek}
-                  disabled={editingScheduleId !== null}
-                  onChange={(event) =>
+                                    onChange={(event) =>
                     setForm((current) => ({
                       ...current,
                       dayOfWeek: event.target.value as DayOfWeek,
                     }))
                   }
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 "
                   required
                 >
                   {DAYS.map((day) => (
@@ -1073,6 +1410,28 @@ export default function Schedule() {
                 <span className="w-fit rounded-full bg-emerald-500 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.2em] text-white">
                   Active
                 </span>
+              </div>
+
+              <div className="overflow-hidden rounded-3xl border border-slate-100 bg-slate-50">
+                {selectedSchedule.barangay_image_url ? (
+                  <img
+                    src={selectedSchedule.barangay_image_url}
+                    alt={`${selectedSchedule.barangay_name} barangay`}
+                    className="h-40 w-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-32 items-center justify-center bg-slate-100 text-slate-400">
+                    <ImageIcon className="h-8 w-8" />
+                  </div>
+                )}
+                <div className="p-4">
+                  <p className="text-lg font-black text-slate-900">
+                    {selectedSchedule.barangay_name}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {selectedSchedule.barangay_address || "Barangay address not yet provided."}
+                  </p>
+                </div>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
