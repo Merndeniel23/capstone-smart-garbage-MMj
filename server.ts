@@ -89,7 +89,23 @@ app.use(cors({
 
     callback(new Error("Origin is not allowed by CORS policy."));
   },
-}));
+}));app.use(
+  "/api",
+  cors({
+    origin(origin, callback) {
+      if (
+        !origin ||
+        configuredOrigins.length === 0 ||
+        configuredOrigins.includes(origin)
+      ) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error("Origin is not allowed by CORS policy."));
+    },
+  }),
+);
 app.use(express.json({ limit: "5mb" }));
 app.use("/api", (_req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
@@ -996,8 +1012,9 @@ async function startServer() {
   
   const distPath = path.resolve(process.cwd(), "dist");
   const assetsPath = path.resolve(distPath, "assets");
+
   console.log("Runtime dist files:", fs.readdirSync(distPath));
-console.log("Runtime asset files:", fs.readdirSync(assetsPath));
+  console.log("Runtime asset files:", fs.readdirSync(assetsPath));
   console.log("Serving frontend from:", distPath);
   console.log("Serving frontend assets from:", assetsPath);
 
