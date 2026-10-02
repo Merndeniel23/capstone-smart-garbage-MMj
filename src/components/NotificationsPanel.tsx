@@ -849,18 +849,18 @@ export default function NotificationsPanel({
                         {style.label}
                       </span>
 
-                      <span className="text-[10px] font-bold text-slate-400">
+                      <span className="text-[10px] font-bold text-[#64748b]">
                         NOTIF-{item.id}
                       </span>
                     </div>
 
-                    <h2 className="mt-2 truncate text-sm font-black text-slate-900 sm:text-base">
+                    <h2 className="mt-2 truncate text-sm font-black text-[#0f172a] sm:text-base">
                       {item.title}
                     </h2>
 
                     <p
                       id={`notification-details-${item.id}`}
-                      className={`mt-1 text-sm leading-relaxed text-slate-600 ${
+                      className={`mt-1 text-sm leading-relaxed text-[#475569] ${
                         isExpanded
                           ? ""
                           : "line-clamp-2"
@@ -869,7 +869,7 @@ export default function NotificationsPanel({
                       {item.message}
                     </p>
 
-                    <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                    <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-[#64748b]">
                       Issued by{" "}
                       {item.created_by_name ||
                         "System"}
@@ -881,7 +881,7 @@ export default function NotificationsPanel({
 
                     {(item.barangay_name ||
                       item.purok_name) && (
-                      <p className="mt-1 text-[10px] font-bold uppercase text-emerald-700">
+                      <p className="mt-1 text-[10px] font-bold uppercase text-[#047857]">
                         {[
                           item.purok_name,
                           item.barangay_name,
