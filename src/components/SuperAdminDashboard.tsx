@@ -370,7 +370,7 @@ export default function SuperAdminDashboard({
     return (
       <div className="flex min-h-[500px] items-center justify-center">
         <div className="text-center" role="status" aria-live="polite">
-          <Loader2 className="mx-auto h-8 w-8 animate-spin text-emerald-700" />
+          <Loader2 className="mx-auto h-8 w-8 animate-spin [animation-duration:2s] text-emerald-700" />
           <p className="mt-3 text-sm font-bold text-slate-500">
             Loading municipal control center...
           </p>
@@ -402,7 +402,7 @@ export default function SuperAdminDashboard({
           disabled={refreshing}
           className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+          <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin [animation-duration:2s]" : ""}`} />
           {refreshing ? "Refreshing" : "Refresh"}
         </button>
       </header>

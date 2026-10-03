@@ -691,6 +691,34 @@ export default function ManageGarbageBins() {
   }, [visibleBins, canEditBins, isSuperAdmin, adminView]);
 
   useEffect(() => {
+    if (adminView !== "bins" || !mapContainerRef.current) return;
+
+    const container = mapContainerRef.current;
+    let frame = 0;
+    const resizeMap = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        mapRef.current?.invalidateSize({ pan: false });
+      });
+    };
+
+    const observer = new ResizeObserver(resizeMap);
+    observer.observe(container);
+    window.addEventListener("resize", resizeMap);
+
+    const timers = [0, 80, 220, 450].map((delay) =>
+      window.setTimeout(resizeMap, delay),
+    );
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", resizeMap);
+      timers.forEach((timer) => window.clearTimeout(timer));
+      window.cancelAnimationFrame(frame);
+    };
+  }, [adminView, showForm]);
+
+  useEffect(() => {
     if (!isSuperAdmin || adminView !== "bins") return;
     for (const bin of visibleBins) {
       const marker = markersByIdRef.current.get(bin.id);
@@ -781,6 +809,9 @@ export default function ManageGarbageBins() {
     });
 
     setShowForm(true);
+    [0, 100, 300].forEach((delay) =>
+      window.setTimeout(() => mapRef.current?.invalidateSize({ pan: false }), delay),
+    );
 
     const latitude =
       Number(bin.latitude);
@@ -937,7 +968,7 @@ export default function ManageGarbageBins() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 text-slate-800 dark:text-slate-100">
       {canViewCollectorMonitoring && (
         <div className="flex flex-wrap gap-2 rounded-2xl border bg-white p-2 shadow-sm">
           <button
@@ -975,11 +1006,11 @@ export default function ManageGarbageBins() {
         <div className="space-y-5">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-black text-slate-900">
+          <h1 className="text-2xl font-black text-slate-900 dark:text-white">
             {isSuperAdmin ? "Municipal Bins" : "Garbage Bin Locations"}
           </h1>
 
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-slate-500 dark:text-slate-300">
             {isSuperAdmin
               ? "Monitor bins across all barangays. Select a map marker or a bin in the list to see its details."
               : isBarangayCaptain
@@ -993,7 +1024,7 @@ export default function ManageGarbageBins() {
             type="button"
             onClick={loadData}
             disabled={loading}
-            className="flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-bold disabled:opacity-50"
+            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
           >
             <RefreshCw
               className={`h-4 w-4 ${loading ? "opacity-60" : ""}`}
@@ -1369,7 +1400,7 @@ export default function ManageGarbageBins() {
         </div>
 
         <div className="sg-desktop-table overflow-hidden">
-          <table aria-busy={loading} className="w-full table-fixed text-left text-xs">
+          <table aria-busy={loading} className="w-full table-fixed text-left text-xs text-slate-800 dark:text-slate-100">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500">
               <tr>
                 <th className="px-5 py-3">
@@ -1400,9 +1431,9 @@ export default function ManageGarbageBins() {
                 <tr
                   key={bin.id}
                   onClick={isSuperAdmin ? () => focusBin(bin) : undefined}
-                  className={`border-t transition ${isSuperAdmin ? selectedBinId === bin.id
-                    ? "cursor-pointer bg-emerald-50 ring-1 ring-inset ring-emerald-300"
-                    : "cursor-pointer hover:bg-slate-50" : ""}`}
+                  className={`border-t border-slate-200 transition dark:border-slate-700 ${isSuperAdmin ? selectedBinId === bin.id
+                    ? "cursor-pointer bg-emerald-50 ring-1 ring-inset ring-emerald-300 dark:bg-emerald-950/25"
+                    : "cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800" : ""}`}
                 >
                   <td className="truncate px-5 py-3 font-black" title={bin.bin_code}>
                     {isSuperAdmin ? <button type="button" aria-pressed={selectedBinId === bin.id}
@@ -1441,7 +1472,7 @@ export default function ManageGarbageBins() {
                           onClick={() =>
                             openEditForm(bin)
                           }
-                          className="rounded-lg border p-2"
+                          className="rounded-lg border border-slate-300 p-2 text-slate-700 dark:border-slate-600 dark:text-slate-100"
                           title="Edit garbage bin"
                         >
                           <Pencil className="h-4 w-4" />
@@ -1503,7 +1534,7 @@ export default function ManageGarbageBins() {
           {!loading && paginatedBins.map((bin) => (
             <article
               key={bin.id}
-              className={`rounded-xl border bg-white p-3 shadow-sm ${
+              className={`rounded-xl border bg-white p-3 text-slate-800 shadow-sm dark:bg-slate-900 dark:text-slate-100 ${
                 isSuperAdmin && selectedBinId === bin.id
                   ? "border-emerald-400 ring-1 ring-emerald-200"
                   : "border-slate-200"
@@ -1511,9 +1542,9 @@ export default function ManageGarbageBins() {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="truncate font-mono text-xs font-black text-slate-800">{bin.bin_code}</p>
-                  <p className="mt-1 truncate text-sm font-bold text-slate-900">{bin.location_name}</p>
-                  <p className="mt-1 truncate text-xs text-slate-500">{[bin.barangay_name, bin.purok_name || assignedPurok].filter(Boolean).join(" / ") || "Area not recorded"}</p>
+                  <p className="truncate font-mono text-xs font-black text-slate-800 dark:text-slate-100">{bin.bin_code}</p>
+                  <p className="mt-1 truncate text-sm font-bold text-slate-900 dark:text-white">{bin.location_name}</p>
+                  <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-300">{[bin.barangay_name, bin.purok_name || assignedPurok].filter(Boolean).join(" / ") || "Area not recorded"}</p>
                 </div>
                 <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold capitalize ${binStatusClass(bin)}`}>{binStatusLabel(bin)}</span>
               </div>

@@ -305,7 +305,7 @@ export default function BinInspections() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col gap-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900 md:flex-row md:items-center md:justify-between">
         <div>
           <p className="text-xs font-black uppercase tracking-widest text-emerald-600">
             Manual Monitoring
@@ -329,7 +329,7 @@ export default function BinInspections() {
             className="flex items-center justify-center gap-2 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-100 px-4 py-3 rounded-2xl font-black text-sm border border-slate-200 dark:border-slate-700 cursor-pointer disabled:opacity-50"
           >
             <RefreshCw
-              className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`}
+              className={`w-4 h-4 ${loading ? 'animate-spin [animation-duration:2s]' : ''}`}
             />
             Refresh
           </button>

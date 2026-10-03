@@ -837,7 +837,7 @@ export default function ComplaintsPanel({
         {isMunicipal && (
           <button type="button" onClick={() => void loadData()} disabled={loading || saving}
             className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 disabled:opacity-50">
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin [animation-duration:2s]" : ""}`} />
             Refresh
           </button>
         )}
@@ -999,7 +999,7 @@ export default function ComplaintsPanel({
         <div className="space-y-3 lg:col-span-5">
           {loading ? (
             <div className="rounded-[2rem] border border-slate-100 bg-white p-12 text-center">
-              <Loader2 className="mx-auto h-7 w-7 animate-spin text-amber-600" />
+              <Loader2 className="mx-auto h-7 w-7 animate-spin [animation-duration:2s] text-amber-600" />
               <p className="mt-3 text-sm font-bold text-slate-500">
                 Loading complaints...
               </p>
@@ -1356,7 +1356,7 @@ export default function ComplaintsPanel({
                   <p className="font-black uppercase tracking-wide text-amber-700">
                     Assigned Collector
                   </p>
-                  <p className="mt-1 font-bold text-slate-700">
+                  <p className="mt-1 font-bold !text-slate-900">
                     {
                       selectedComplaint.assigned_collector_name
                     }
@@ -1369,7 +1369,7 @@ export default function ComplaintsPanel({
                   <p className="font-black uppercase tracking-wide text-emerald-700">
                     Resolution
                   </p>
-                  <p className="mt-1 whitespace-pre-line font-medium text-slate-700">
+                  <p className="mt-1 whitespace-pre-line font-medium !text-slate-900">
                     {
                       selectedComplaint.resolution_remark
                     }
@@ -1394,15 +1394,15 @@ export default function ComplaintsPanel({
                         key={
                           message.id
                         }
-                        className="rounded-2xl bg-slate-100 p-3 text-xs"
+                        className="rounded-2xl bg-slate-100 p-3 text-xs dark:bg-slate-800"
                       >
                         <div className="flex items-center justify-between gap-3">
-                          <p className="font-black text-slate-700">
+                          <p className="font-black text-slate-700 dark:text-slate-100">
                             {
                               message.sender_name
                             }
                           </p>
-                          <p className="text-[9px] text-slate-400">
+                          <p className="text-[9px] text-slate-400 dark:text-slate-300">
                             {formatDate(
                               message.created_at,
                             )}
@@ -1623,7 +1623,7 @@ export default function ComplaintsPanel({
                 className="flex w-full items-center justify-center gap-2 rounded-xl border-none bg-amber-600 py-3 text-xs font-black uppercase tracking-widest text-white disabled:opacity-50"
               >
                 {saving ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin [animation-duration:2s]" />
                 ) : (
                   <Send className="h-4 w-4" />
                 )}
