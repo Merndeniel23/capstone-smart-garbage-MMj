@@ -10,7 +10,6 @@ import {
   FileText,
   KeyRound,
   LayoutDashboard,
-  LogOut,
   Map,
   MapPinned,
   MessageSquare,
@@ -52,7 +51,6 @@ export default function Sidebar({
   onTabChange,
   role,
   adminActionCounts,
-  onLogout,
   directoryRoleFilter = "all",
   onOpenDirectory,
 }: SidebarProps) {
@@ -670,11 +668,6 @@ export default function Sidebar({
             : "px-5 py-4"
         }`}
       >
-        {role === "super_admin" && onLogout && (
-          <button type="button" onClick={onLogout} title="Sign Out" aria-label="Sign Out" className={`mb-3 flex min-h-11 w-full items-center rounded-xl text-sm font-bold text-white/80 hover:bg-white/10 ${collapsed ? "justify-center" : "gap-3 px-3"}`}>
-            <LogOut className="h-5 w-5 shrink-0" />{!collapsed && "Sign Out"}
-          </button>
-        )}
         {!collapsed ? (
           <p className="text-center text-[9px] font-bold uppercase tracking-[0.18em] text-white/35 dark:text-emerald-100/30">
             Smart Garbage Monitoring

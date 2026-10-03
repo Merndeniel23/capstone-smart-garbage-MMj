@@ -484,6 +484,144 @@ html.sg-dark .sg-app-shell .sg-form-section-title {
     width: 100%;
   }
 }
+
+/* --------------------------------------------------------------------------
+   Shared dashboard card system
+   --------------------------------------------------------------------------
+   Existing screens already use Tailwind utility classes.  These helpers give
+   new/updated cards one consistent contract, while the scoped compatibility
+   rules below normalize older colored card surfaces in manual sg-dark mode.
+   Authentication is intentionally excluded because everything is scoped to
+   .sg-app-shell.
+---------------------------------------------------------------------------- */
+
+@layer components {
+  .sg-card {
+    border: 1px solid rgb(226 232 240);
+    border-radius: 1.25rem;
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgb(15 23 42 / .05);
+  }
+
+  .sg-card-lg {
+    border: 1px solid rgb(226 232 240);
+    border-radius: 1.5rem;
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgb(15 23 42 / .05);
+  }
+
+  .sg-card-muted {
+    border: 1px solid rgb(226 232 240);
+    border-radius: 1.25rem;
+    background: rgb(248 250 252);
+  }
+
+  .sg-stat-card {
+    border: 1px solid rgb(226 232 240);
+    border-radius: 1.25rem;
+    background: #ffffff;
+    padding: 1rem;
+    box-shadow: 0 1px 2px rgb(15 23 42 / .04);
+  }
+}
+
+/* Manual app dark mode: Collector-dashboard style surface for all shared cards. */
+html.sg-dark .sg-app-shell :is(.sg-card, .sg-card-lg, .sg-card-muted, .sg-stat-card) {
+  background: #111827 !important;
+  border-color: #334155 !important;
+  color: #e2e8f0 !important;
+  box-shadow: none;
+}
+
+/* Compatibility layer for older dashboard cards that still use light status
+   backgrounds directly on a DIV/SECTION/ARTICLE. Badges/buttons are untouched. */
+html.sg-dark .sg-app-shell
+:is(div, section, article)[class*="rounded"][class*="border"]
+:is(
+  [class*="bg-emerald-50"],
+  [class*="bg-emerald-100"],
+  [class*="bg-amber-50"],
+  [class*="bg-amber-100"],
+  [class*="bg-blue-50"],
+  [class*="bg-blue-100"],
+  [class*="bg-indigo-50"],
+  [class*="bg-indigo-100"],
+  [class*="bg-cyan-50"],
+  [class*="bg-cyan-100"],
+  [class*="bg-rose-50"],
+  [class*="bg-rose-100"],
+  [class*="bg-slate-50"],
+  [class*="bg-slate-100"]
+) {
+  background-color: #111827 !important;
+  border-color: #334155 !important;
+}
+
+/* Keep headings/body copy readable when an older colored card used dark status
+   text that was designed only for a pale background. */
+html.sg-dark .sg-app-shell
+:is(div, section, article)[class*="rounded"][class*="border"]
+:is(
+  [class*="bg-emerald-50"],
+  [class*="bg-emerald-100"],
+  [class*="bg-amber-50"],
+  [class*="bg-amber-100"],
+  [class*="bg-blue-50"],
+  [class*="bg-blue-100"],
+  [class*="bg-indigo-50"],
+  [class*="bg-indigo-100"],
+  [class*="bg-cyan-50"],
+  [class*="bg-cyan-100"],
+  [class*="bg-rose-50"],
+  [class*="bg-rose-100"]
+)
+:is(
+  [class*="text-emerald-800"],
+  [class*="text-emerald-900"],
+  [class*="text-emerald-950"],
+  [class*="text-amber-800"],
+  [class*="text-amber-900"],
+  [class*="text-amber-950"],
+  [class*="text-blue-800"],
+  [class*="text-blue-900"],
+  [class*="text-blue-950"],
+  [class*="text-indigo-800"],
+  [class*="text-indigo-900"],
+  [class*="text-cyan-800"],
+  [class*="text-cyan-900"],
+  [class*="text-rose-800"],
+  [class*="text-rose-900"]
+) {
+  color: #e2e8f0 !important;
+}
+
+/* The same readability rule for descendants inside those older cards. */
+html.sg-dark .sg-app-shell
+:is(div, section, article)[class*="rounded"][class*="border"]
+:is(
+  [class*="bg-emerald-50"],
+  [class*="bg-emerald-100"],
+  [class*="bg-amber-50"],
+  [class*="bg-amber-100"],
+  [class*="bg-blue-50"],
+  [class*="bg-blue-100"],
+  [class*="bg-indigo-50"],
+  [class*="bg-indigo-100"],
+  [class*="bg-cyan-50"],
+  [class*="bg-cyan-100"],
+  [class*="bg-rose-50"],
+  [class*="bg-rose-100"]
+)
+:is(
+  [class*="text-slate-950"],
+  [class*="text-slate-900"],
+  [class*="text-slate-800"],
+  [class*="text-slate-700"]
+) {
+  color: #f8fafc !important;
+}
+
+
 /* Slow down status/loading animations across the whole app */
 
 .animate-ping {
@@ -505,4 +643,7 @@ html.sg-dark .sg-app-shell .sg-form-section-title {
   .animate-bounce {
     animation-timing-function: ease-in-out !important;
   }
+}
+.animate-spin {
+  animation-duration: 2.5s !important;
 }
