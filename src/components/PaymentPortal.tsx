@@ -2,6 +2,7 @@ import { PAYMENT_CATEGORY_LABELS, type PaymentCategoryOption } from "../../share
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -1530,10 +1531,59 @@ function Modal({
   onClose: () => void;
   children: React.ReactNode;
 }) {
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      const openModals = document.querySelectorAll(
+        '[data-sg-modal="true"]',
+      );
+
+      const topModal =
+        openModals.length > 0
+          ? openModals[openModals.length - 1]
+          : null;
+
+      if (topModal === modalRef.current) {
+        event.preventDefault();
+        onClose();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/70 p-4">
-      <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-[2rem] bg-white p-6 shadow-2xl">
-        <div className="mb-5 flex items-center justify-between">
+    <div
+      ref={modalRef}
+      data-sg-modal="true"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/70 p-4"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="max-h-[92vh] w-full max-w-xl overflow-hidden rounded-[2rem] bg-white shadow-2xl"
+      >
+        <div className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 bg-white px-6 py-5">
           <h2 className="text-xl font-black text-slate-900">
             {title}
           </h2>
@@ -1541,13 +1591,17 @@ function Modal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-xl bg-slate-100 p-2"
+            aria-label={`Close ${title}`}
+            title="Close"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-700 transition hover:bg-rose-50 hover:text-rose-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        {children}
+        <div className="max-h-[calc(92vh-5rem)] overflow-y-auto px-6 pb-6 pt-5">
+          {children}
+        </div>
       </div>
     </div>
   );

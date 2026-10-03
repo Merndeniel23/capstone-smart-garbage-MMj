@@ -289,11 +289,18 @@ router.get(
         await db.query<any[]>(
           `
           SELECT
-            id,
-            name
-          FROM barangays
-          WHERE is_active = 1
-          ORDER BY name ASC
+            b.id,
+            b.name
+          FROM barangays b
+          WHERE b.is_active = 1
+            AND EXISTS (
+              SELECT 1
+              FROM users admin_user
+              WHERE admin_user.role = 'admin'
+                AND admin_user.status = 'active'
+                AND admin_user.barangay_id = b.id
+            )
+          ORDER BY b.name ASC
           `,
         );
 
@@ -309,6 +316,13 @@ router.get(
           INNER JOIN barangays b
             ON b.id = p.barangay_id
           WHERE b.is_active = 1
+            AND EXISTS (
+              SELECT 1
+              FROM users admin_user
+              WHERE admin_user.role = 'admin'
+                AND admin_user.status = 'active'
+                AND admin_user.barangay_id = b.id
+            )
           ORDER BY
             b.name ASC,
             p.name ASC
@@ -1114,6 +1128,27 @@ router.put(
           return res.status(400).json({
             message:
               "The selected barangay/purok assignment is invalid.",
+          });
+        }
+
+        const [barangayAdminRows] =
+          await db.query<any[]>(
+            `
+            SELECT id
+            FROM users
+            WHERE role = 'admin'
+              AND status = 'active'
+              AND barangay_id = ?
+            LIMIT 1
+            `,
+            [selectedLocation.barangay_id],
+          );
+
+        if (!barangayAdminRows.length) {
+          return res.status(409).json({
+            message:
+              "This barangay is not yet accepting resident registrations because no active Barangay Captain is assigned.",
+            code: "BARANGAY_ADMIN_REQUIRED",
           });
         }
 
