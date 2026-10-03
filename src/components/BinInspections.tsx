@@ -305,17 +305,17 @@ export default function BinInspections() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <p className="text-xs font-black uppercase tracking-widest text-emerald-600">
             Manual Monitoring
           </p>
 
-          <h1 className="text-3xl font-black text-slate-900 dark:text-white">
+          <h1 className="text-3xl font-black text-slate-900 ">
             Garbage Bin Inspections
           </h1>
 
-          <p className="text-sm text-slate-500 dark:text-slate-300 mt-1">
+          <p className="text-sm text-slate-500  mt-1">
             Purok Leaders inspect garbage bins and submit their actual
             field condition.
           </p>
@@ -326,10 +326,10 @@ export default function BinInspections() {
             type="button"
             onClick={loadInspections}
             disabled={loading}
-            className="flex items-center justify-center gap-2 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-100 px-4 py-3 rounded-2xl font-black text-sm border border-slate-200 dark:border-slate-700 cursor-pointer disabled:opacity-50"
+            className="flex items-center justify-center gap-2 bg-white  text-slate-700  px-4 py-3 rounded-2xl font-black text-sm border border-slate-200  cursor-pointer disabled:opacity-50"
           >
             <RefreshCw
-              className={`w-4 h-4 ${loading ? 'animate-spin [animation-duration:2s]' : ''}`}
+              className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`}
             />
             Refresh
           </button>
@@ -369,39 +369,39 @@ export default function BinInspections() {
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-700 rounded-2xl p-4 shadow-sm">
+        <div className="bg-white  border border-slate-100  rounded-2xl p-4 shadow-sm">
           <ClipboardCheck className="w-5 h-5 text-emerald-600 mb-3" />
-          <span className="text-2xl font-black block text-slate-900 dark:text-white">
+          <span className="text-2xl font-black block text-slate-900 ">
             {stats.total}
           </span>
-          <span className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-300">
+          <span className="text-[10px] font-black uppercase text-slate-400 ">
             Total Inspections
           </span>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-700 rounded-2xl p-4 shadow-sm">
+        <div className="bg-white  border border-slate-100  rounded-2xl p-4 shadow-sm">
           <Trash2 className="w-5 h-5 text-rose-600 mb-3" />
-          <span className="text-2xl font-black block text-slate-900 dark:text-white">
+          <span className="text-2xl font-black block text-slate-900 ">
             {stats.urgent}
           </span>
-          <span className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-300">
+          <span className="text-[10px] font-black uppercase text-slate-400 ">
             Needs Collection
           </span>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-700 rounded-2xl p-4 shadow-sm">
+        <div className="bg-white  border border-slate-100  rounded-2xl p-4 shadow-sm">
           <Camera className="w-5 h-5 text-amber-600 mb-3" />
-          <span className="text-2xl font-black block text-slate-900 dark:text-white">
+          <span className="text-2xl font-black block text-slate-900 ">
             {stats.damaged}
           </span>
-          <span className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-300">
+          <span className="text-[10px] font-black uppercase text-slate-400 ">
             Damaged Bins
           </span>
         </div>
       </div>
 
-      <section className="grid gap-3 rounded-2xl border border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 shadow-sm sm:grid-cols-[1fr_190px]" aria-label="Inspection record filters">
-        <label className="text-xs font-bold text-slate-600 dark:text-slate-300">
+      <section className="grid gap-3 rounded-2xl border border-slate-100  bg-white  p-3 shadow-sm sm:grid-cols-[1fr_190px]" aria-label="Inspection record filters">
+        <label className="text-xs font-bold text-slate-600 ">
           Search inspections
           <span className="relative mt-1 block">
             <Search aria-hidden="true" className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -410,16 +410,16 @@ export default function BinInspections() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Bin, inspector, remarks, or ID"
-              className="min-h-10 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 py-2 pl-9 pr-3 text-sm font-normal"
+              className="min-h-10 w-full rounded-xl border border-slate-200  bg-white  text-slate-900  placeholder:text-slate-400  py-2 pl-9 pr-3 text-sm font-normal"
             />
           </span>
         </label>
-        <label className="text-xs font-bold text-slate-600 dark:text-slate-300">
+        <label className="text-xs font-bold text-slate-600 ">
           Status
           <select
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value as InspectionFilter)}
-            className="mt-1 min-h-10 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 px-3 py-2 text-sm font-normal"
+            className="mt-1 min-h-10 w-full rounded-xl border border-slate-200  bg-white  text-slate-900  px-3 py-2 text-sm font-normal"
           >
             <option value="all">All statuses</option>
             {Object.entries(statusLabel).map(([value, label]) => (
@@ -432,20 +432,20 @@ export default function BinInspections() {
       {canCreateInspection && showForm && (
         <form
           onSubmit={submitInspection}
-          className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-xl p-4 space-y-3"
+          className="bg-white  rounded-2xl border border-slate-100  shadow-xl p-4 space-y-3"
         >
           <div>
-            <h2 className="font-black text-xl text-slate-900 dark:text-white">
+            <h2 className="font-black text-xl text-slate-900 ">
               Record Physical Inspection
             </h2>
 
-            <p className="text-xs text-slate-500 dark:text-slate-300 mt-1">
+            <p className="text-xs text-slate-500  mt-1">
               Your Purok Leader account is detected automatically from your login token.
             </p>
           </div>
 
           <div className="grid md:grid-cols-2 gap-3">
-            <label className="text-xs font-bold text-slate-600 dark:text-slate-300">
+            <label className="text-xs font-bold text-slate-600 ">
               Numeric Bin ID
 
               <input
@@ -460,11 +460,11 @@ export default function BinInspections() {
                     binId: event.target.value,
                   }))
                 }
-                className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 px-3 py-2.5"
+                className="mt-1 w-full rounded-xl border border-slate-200  bg-white  text-slate-900  placeholder:text-slate-400  px-3 py-2.5"
               />
             </label>
 
-            <label className="text-xs font-bold text-slate-600 dark:text-slate-300">
+            <label className="text-xs font-bold text-slate-600 ">
               Observed Status
 
               <select
@@ -474,7 +474,7 @@ export default function BinInspections() {
                     event.target.value as DatabaseStatus,
                   )
                 }
-                className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 px-3 py-2.5"
+                className="mt-1 w-full rounded-xl border border-slate-200  bg-white  text-slate-900  px-3 py-2.5"
               >
                 <option value="empty">Empty</option>
                 <option value="half_full">Half-full</option>
@@ -484,7 +484,7 @@ export default function BinInspections() {
               </select>
             </label>
 
-            <label className="text-xs font-bold text-slate-600 dark:text-slate-300">
+            <label className="text-xs font-bold text-slate-600 ">
               Estimated Fill Level (%)
 
               <input
@@ -499,7 +499,7 @@ export default function BinInspections() {
                     estimatedFillLevel: event.target.value,
                   }))
                 }
-                className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 px-3 py-2.5"
+                className="mt-1 w-full rounded-xl border border-slate-200  bg-white  text-slate-900  placeholder:text-slate-400  px-3 py-2.5"
               />
             </label>
 
@@ -516,7 +516,7 @@ export default function BinInspections() {
                     photoPath: event.target.value,
                   }))
                 }
-                className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 px-3 py-2.5"
+                className="mt-1 w-full rounded-xl border border-slate-200  bg-white  text-slate-900  placeholder:text-slate-400  px-3 py-2.5"
               />
             </label>
 
@@ -533,7 +533,7 @@ export default function BinInspections() {
                     remarks: event.target.value,
                   }))
                 }
-                className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 px-3 py-2.5"
+                className="mt-1 w-full rounded-xl border border-slate-200  bg-white  text-slate-900  placeholder:text-slate-400  px-3 py-2.5"
               />
             </label>
           </div>
@@ -548,40 +548,40 @@ export default function BinInspections() {
         </form>
       )}
 
-      <section className="overflow-hidden rounded-2xl border border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-700 px-4 py-3">
+      <section className="overflow-hidden rounded-2xl border border-slate-100  bg-white  shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100  px-4 py-3">
           <div>
-            <h2 className="font-black text-slate-900 dark:text-white">Inspection records</h2>
-            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-300">Showing compact records; use the filters to narrow the list.</p>
+            <h2 className="font-black text-slate-900 ">Inspection records</h2>
+            <p className="mt-0.5 text-xs text-slate-500 ">Showing compact records; use the filters to narrow the list.</p>
           </div>
-          <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2.5 py-1 text-xs font-bold text-slate-600 dark:text-slate-200">
+          <span className="rounded-full bg-slate-100  px-2.5 py-1 text-xs font-bold text-slate-600 ">
             {filteredInspections.length} shown
           </span>
         </div>
         {loading ? (
-          <div className="p-8 text-center text-sm font-bold text-slate-500 dark:text-slate-300">
+          <div className="p-8 text-center text-sm font-bold text-slate-500 ">
             Loading inspection records...
           </div>
         ) : filteredInspections.length === 0 ? (
           <div className="p-8 text-center">
             <ClipboardCheck className="w-10 h-10 text-slate-300 mx-auto mb-3" />
 
-            <h3 className="font-black text-slate-700 dark:text-slate-100">
+            <h3 className="font-black text-slate-700 ">
               {inspections.length === 0 ? 'No inspection records yet' : 'No inspections match these filters'}
             </h3>
 
-            <p className="text-sm text-slate-500 dark:text-slate-300 mt-1">
+            <p className="text-sm text-slate-500  mt-1">
               {inspections.length === 0
                 ? 'Click New Inspection to create the first record.'
                 : 'Try another status or clear the search phrase.'}
             </p>
           </div>
         ) : (
-          <div className="divide-y divide-slate-100 dark:divide-slate-700">
+          <div className="divide-y divide-slate-100 ">
           {paginatedInspections.map((item) => (
             <article
               key={item.id}
-              className="flex flex-col gap-3 px-4 py-3 sm:flex-row text-slate-900 dark:text-slate-100"
+              className="flex flex-col gap-3 px-4 py-3 sm:flex-row text-slate-900 "
             >
               {item.photo_path ? (
                 <img
@@ -590,7 +590,7 @@ export default function BinInspections() {
                   className="h-24 w-full rounded-xl border border-slate-100 object-cover sm:h-24 sm:w-24"
                 />
               ) : (
-                <div className="flex h-20 w-full items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 sm:h-24 sm:w-24">
+                <div className="flex h-20 w-full items-center justify-center rounded-xl bg-slate-100  sm:h-24 sm:w-24">
                   <Camera className="text-slate-300" />
                 </div>
               )}
@@ -610,16 +610,16 @@ export default function BinInspections() {
                   {item.estimated_fill_level ?? 0}% estimated
                 </h3>
 
-                <p className="text-sm text-slate-500 dark:text-slate-300 flex items-center gap-1 mt-1">
+                <p className="text-sm text-slate-500  flex items-center gap-1 mt-1">
                   <MapPin className="w-4 h-4" />
                   Physical garbage-bin inspection
                 </p>
 
-                <p className="mt-2 line-clamp-2 text-sm text-slate-700 dark:text-slate-200">
+                <p className="mt-2 line-clamp-2 text-sm text-slate-700 ">
                   {item.remarks || 'No remarks provided.'}
                 </p>
 
-                <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-400">
+                <p className="mt-2 text-[11px] text-slate-400 ">
                   Inspected by {item.inspector || 'Unknown Purok Leader'}
                   {' · '}
                   {formatDate(item.inspected_at)}

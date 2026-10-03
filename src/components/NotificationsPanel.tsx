@@ -574,7 +574,34 @@ export default function NotificationsPanel({
   };
 
   return (
-    <div className="space-y-4 pb-20 md:pb-0">
+    <>
+      <style>{`
+        html.sg-dark .sg-notification-card {
+          background-color: #111827 !important;
+          border-color: #334155 !important;
+        }
+
+        html.sg-dark .sg-notification-card.sg-notification-card {
+          color: #e2e8f0;
+        }
+
+        html.sg-dark .sg-notification-title {
+          color: #f8fafc !important;
+        }
+
+        html.sg-dark .sg-notification-message {
+          color: #cbd5e1 !important;
+        }
+
+        html.sg-dark .sg-notification-meta {
+          color: #94a3b8 !important;
+        }
+
+        html.sg-dark .sg-notification-area {
+          color: #6ee7b7 !important;
+        }
+      `}</style>
+      <div className="space-y-4 pb-20 md:pb-0">
       <header className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">
@@ -828,7 +855,7 @@ export default function NotificationsPanel({
             return (
               <article
                 key={item.id}
-                className={`relative border-l-4 p-4 transition-colors ${style.container}`}
+                className={`sg-notification-card relative border-l-4 p-4 transition-colors ${style.container}`}
               >
                 {!isRead && (
                   <span
@@ -854,13 +881,13 @@ export default function NotificationsPanel({
                       </span>
                     </div>
 
-                    <h2 className="mt-2 truncate text-sm font-black text-[#0f172a] sm:text-base">
+                    <h2 className="sg-notification-title mt-2 truncate text-sm font-black text-[#0f172a] sm:text-base">
                       {item.title}
                     </h2>
 
                     <p
                       id={`notification-details-${item.id}`}
-                      className={`mt-1 text-sm leading-relaxed text-[#475569] ${
+                      className={`sg-notification-message mt-1 text-sm leading-relaxed text-[#475569] ${
                         isExpanded
                           ? ""
                           : "line-clamp-2"
@@ -869,7 +896,7 @@ export default function NotificationsPanel({
                       {item.message}
                     </p>
 
-                    <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-[#64748b]">
+                    <p className="sg-notification-meta mt-2 text-[10px] font-bold uppercase tracking-wide text-[#64748b]">
                       Issued by{" "}
                       {item.created_by_name ||
                         "System"}
@@ -881,7 +908,7 @@ export default function NotificationsPanel({
 
                     {(item.barangay_name ||
                       item.purok_name) && (
-                      <p className="mt-1 text-[10px] font-bold uppercase text-[#047857]">
+                      <p className="sg-notification-area mt-1 text-[10px] font-bold uppercase text-[#047857]">
                         {[
                           item.purok_name,
                           item.barangay_name,
@@ -1158,6 +1185,7 @@ export default function NotificationsPanel({
           }
         }}
       />
-    </div>
+      </div>
+    </>
   );
 }

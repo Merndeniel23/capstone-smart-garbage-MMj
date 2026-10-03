@@ -664,6 +664,58 @@ export default function Schedule() {
 
   return (
     <div className="sg-page space-y-5 pb-20">
+      <style>{`
+        html.sg-dark .sg-schedule-mode-chip {
+          background-color: #12372f !important;
+          color: #a7f3d0 !important;
+          --tw-ring-color: #14532d !important;
+        }
+
+        html.sg-dark .sg-today-collection {
+          background-color: #0f2a22 !important;
+          border-color: #14532d !important;
+        }
+
+        html.sg-dark .sg-today-kicker,
+        html.sg-dark .sg-today-title {
+          color: #6ee7b7 !important;
+        }
+
+        html.sg-dark .sg-today-copy {
+          color: #a7f3d0 !important;
+        }
+
+        html.sg-dark .sg-today-count,
+        html.sg-dark .sg-today-item,
+        html.sg-dark .sg-today-empty {
+          background-color: #111827 !important;
+          border-color: #334155 !important;
+        }
+
+        html.sg-dark .sg-today-count {
+          color: #6ee7b7 !important;
+          --tw-ring-color: #14532d !important;
+        }
+
+        html.sg-dark .sg-today-item-title {
+          color: #f8fafc !important;
+        }
+
+        html.sg-dark .sg-today-item-time,
+        html.sg-dark .sg-today-item-note {
+          color: #cbd5e1 !important;
+        }
+
+        html.sg-dark .sg-today-empty {
+          color: #a7f3d0 !important;
+          border-color: #166534 !important;
+        }
+
+        html.sg-dark .sg-calendar-scheduled-day {
+          background-color: #12372f !important;
+          color: #6ee7b7 !important;
+        }
+      `}</style>
       <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">
@@ -727,22 +779,22 @@ export default function Schedule() {
         <span className="rounded-full bg-white px-3 py-1.5 shadow-sm ring-1 ring-slate-100">
           {roleLabel(currentUser?.role || "resident")}
         </span>
-        <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-emerald-700 ring-1 ring-emerald-100">
+        <span className="sg-schedule-mode-chip rounded-full bg-emerald-50 px-3 py-1.5 text-emerald-700 ring-1 ring-emerald-100">
           {canManage ? "Schedule manager" : "Read-only schedule"}
         </span>
       </div>
 
       <section
         aria-label="Today's garbage collection"
-        className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 shadow-sm"
+        className="sg-today-collection rounded-2xl border border-emerald-100 bg-emerald-50 p-4 shadow-sm"
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Today's collection</p>
-            <h2 className="mt-1 text-lg font-black text-emerald-950">{todayWeekday}</h2>
-            <p className="mt-1 text-xs text-emerald-800">View-only for all users. Schedule management remains available only to the Municipal Administrator.</p>
+            <p className="sg-today-kicker text-[10px] font-black uppercase tracking-widest text-emerald-700">Today's collection</p>
+            <h2 className="sg-today-title mt-1 text-lg font-black text-emerald-950">{todayWeekday}</h2>
+            <p className="sg-today-copy mt-1 text-xs text-emerald-800">View-only for all users. Schedule management remains available only to the Municipal Administrator.</p>
           </div>
-          <span className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200">
+          <span className="sg-today-count rounded-full bg-white px-3 py-1.5 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200">
             {todaysPublishedSchedules.length} {todaysPublishedSchedules.length === 1 ? "barangay" : "barangays"}
           </span>
         </div>
@@ -754,12 +806,12 @@ export default function Schedule() {
                 key={`today-${schedule.id}`}
                 type="button"
                 onClick={() => setSelectedSchedule(schedule)}
-                className="rounded-xl border border-emerald-200 bg-white p-3 text-left transition hover:border-emerald-400"
+                className="sg-today-item rounded-xl border border-emerald-200 bg-white p-3 text-left transition hover:border-emerald-400"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <p className="font-black text-slate-900">{schedule.barangay_name}</p>
-                    <p className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+                    <p className="sg-today-item-title font-black text-slate-900">{schedule.barangay_name}</p>
+                    <p className="sg-today-item-time mt-1 flex items-center gap-1.5 text-xs font-semibold text-slate-600">
                       <Clock className="h-3.5 w-3.5" />
                       {formatTimeRange(schedule.start_time, schedule.end_time)}
                     </p>
@@ -767,13 +819,13 @@ export default function Schedule() {
                   <Eye className="h-4 w-4 shrink-0 text-emerald-600" />
                 </div>
                 {schedule.notes && (
-                  <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-500">{schedule.notes}</p>
+                  <p className="sg-today-item-note mt-2 line-clamp-2 text-xs leading-relaxed text-slate-500">{schedule.notes}</p>
                 )}
               </button>
             ))}
           </div>
         ) : (
-          <p className="mt-4 rounded-xl border border-dashed border-emerald-200 bg-white/70 px-4 py-5 text-center text-sm font-semibold text-emerald-800">
+          <p className="sg-today-empty mt-4 rounded-xl border border-dashed border-emerald-200 bg-white/70 px-4 py-5 text-center text-sm font-semibold text-emerald-800">
             No active barangay collection is published for today.
           </p>
         )}
@@ -908,7 +960,7 @@ export default function Schedule() {
                   todayCell
                     ? "bg-emerald-500 font-bold text-white shadow-sm ring-2 ring-emerald-100"
                     : scheduledCell
-                      ? "bg-emerald-50 font-bold text-emerald-700"
+                      ? "sg-calendar-scheduled-day bg-emerald-50 font-bold text-emerald-700"
                       : "text-slate-600 hover:bg-slate-50"
                 }`}
                 title={
