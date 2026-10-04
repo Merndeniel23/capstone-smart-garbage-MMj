@@ -678,3 +678,175 @@ html.sg-dark .sg-app-shell
 .animate-spin {
   animation-duration: 2.5s !important;
 }
+
+/* =========================================================
+   GLOBAL DARK-MODE HARDENING
+   The application uses html.sg-dark as the single source of truth.
+   These rules intentionally override component-level Tailwind dark:
+   behavior so light mode is not affected by the OS/browser theme.
+   ========================================================= */
+
+/* Prevent OS-level Tailwind dark variants from visually overriding
+   the app's own light theme when html.sg-dark is NOT present. */
+html:not(.sg-dark) .sg-app-shell [class*="dark:bg-"],
+html:not(.sg-dark) .sg-app-shell [class*="dark:text-"],
+html:not(.sg-dark) .sg-app-shell [class*="dark:border-"] {
+  color-scheme: light;
+}
+
+/* Generic semantic warning / pending cards */
+html.sg-dark .sg-payment-pending-card,
+html.sg-dark .sg-warning-card,
+html.sg-dark .sg-pending-card {
+  background-color: #2a2112 !important;
+  border-color: rgba(245, 158, 11, 0.35) !important;
+}
+
+html.sg-dark .sg-payment-pending-label,
+html.sg-dark .sg-warning-label,
+html.sg-dark .sg-pending-label {
+  color: #fbbf24 !important;
+}
+
+html.sg-dark .sg-payment-pending-amount,
+html.sg-dark .sg-warning-value,
+html.sg-dark .sg-pending-value {
+  color: #fef3c7 !important;
+}
+
+/* Generic semantic success / confirmed cards */
+html.sg-dark .sg-success-card,
+html.sg-dark .sg-confirmed-card {
+  background-color: #0f241c !important;
+  border-color: rgba(16, 185, 129, 0.28) !important;
+}
+
+html.sg-dark .sg-success-card *,
+html.sg-dark .sg-confirmed-card * {
+  color: #f8fafc;
+}
+
+/* Complaint-specific semantic cards */
+html.sg-dark .sg-complaint-assigned-card {
+  background-color: #241b0d !important;
+  border-color: rgba(245, 158, 11, 0.28) !important;
+}
+
+html.sg-dark .sg-complaint-assigned-label {
+  color: #fbbf24 !important;
+}
+
+html.sg-dark .sg-complaint-assigned-value {
+  color: #f8fafc !important;
+}
+
+html.sg-dark .sg-complaint-resolution-card {
+  background-color: #0f241c !important;
+  border-color: rgba(16, 185, 129, 0.28) !important;
+}
+
+html.sg-dark .sg-complaint-resolution-label {
+  color: #34d399 !important;
+}
+
+html.sg-dark .sg-complaint-resolution-value {
+  color: #f8fafc !important;
+}
+
+html.sg-dark .sg-complaint-message-card {
+  background-color: #1e293b !important;
+  border-color: #334155 !important;
+}
+
+html.sg-dark .sg-complaint-message-author {
+  color: #f8fafc !important;
+}
+
+html.sg-dark .sg-complaint-message-date {
+  color: #cbd5e1 !important;
+}
+
+html.sg-dark .sg-complaint-message-text {
+  color: #e2e8f0 !important;
+}
+
+/* Make common light pastel cards readable in app dark mode */
+html.sg-dark .sg-app-shell [class~="bg-amber-50"],
+html.sg-dark .sg-app-shell [class~="bg-yellow-50"] {
+  background-color: #2a2112 !important;
+}
+
+html.sg-dark .sg-app-shell [class~="bg-emerald-50"],
+html.sg-dark .sg-app-shell [class~="bg-green-50"] {
+  background-color: #0f241c !important;
+}
+
+html.sg-dark .sg-app-shell [class~="bg-rose-50"],
+html.sg-dark .sg-app-shell [class~="bg-red-50"] {
+  background-color: #2a1519 !important;
+}
+
+html.sg-dark .sg-app-shell [class~="bg-blue-50"],
+html.sg-dark .sg-app-shell [class~="bg-sky-50"],
+html.sg-dark .sg-app-shell [class~="bg-indigo-50"] {
+  background-color: #111c2d !important;
+}
+
+/* Pastel borders */
+html.sg-dark .sg-app-shell [class~="border-amber-100"],
+html.sg-dark .sg-app-shell [class~="border-amber-200"],
+html.sg-dark .sg-app-shell [class~="border-yellow-100"],
+html.sg-dark .sg-app-shell [class~="border-yellow-200"] {
+  border-color: rgba(245, 158, 11, 0.32) !important;
+}
+
+html.sg-dark .sg-app-shell [class~="border-emerald-100"],
+html.sg-dark .sg-app-shell [class~="border-emerald-200"],
+html.sg-dark .sg-app-shell [class~="border-green-100"],
+html.sg-dark .sg-app-shell [class~="border-green-200"] {
+  border-color: rgba(16, 185, 129, 0.28) !important;
+}
+
+html.sg-dark .sg-app-shell [class~="border-rose-100"],
+html.sg-dark .sg-app-shell [class~="border-rose-200"],
+html.sg-dark .sg-app-shell [class~="border-red-100"],
+html.sg-dark .sg-app-shell [class~="border-red-200"] {
+  border-color: rgba(244, 63, 94, 0.28) !important;
+}
+
+/* Ensure strong foreground contrast for common text colors on dark cards */
+html.sg-dark .sg-app-shell [class~="text-amber-700"],
+html.sg-dark .sg-app-shell [class~="text-amber-800"] {
+  color: #fbbf24 !important;
+}
+
+html.sg-dark .sg-app-shell [class~="text-emerald-700"],
+html.sg-dark .sg-app-shell [class~="text-emerald-800"] {
+  color: #34d399 !important;
+}
+
+html.sg-dark .sg-app-shell [class~="text-rose-700"],
+html.sg-dark .sg-app-shell [class~="text-rose-800"] {
+  color: #fb7185 !important;
+}
+
+/* Buttons/cards that explicitly use white text should remain white */
+html.sg-dark .sg-app-shell [class~="text-white"] {
+  color: #ffffff !important;
+}
+
+/* Modal surfaces */
+html.sg-dark .sg-app-shell [role="dialog"],
+html.sg-dark .sg-app-shell .sg-modal-surface {
+  background-color: #111827 !important;
+  color: #e2e8f0 !important;
+}
+
+/* Scrollable/detail panels */
+html.sg-dark .sg-app-shell .sg-detail-panel,
+html.sg-dark .sg-app-shell .sg-panel {
+  background-color: #111827 !important;
+  border-color: #334155 !important;
+  color: #e2e8f0 !important;
+}
+
