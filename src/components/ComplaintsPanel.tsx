@@ -938,7 +938,52 @@ export default function ComplaintsPanel({
     role === "leader";
 
   return (
-    <div className="space-y-6 pb-20 md:pb-0">
+    <>
+      <style>{`
+        html.sg-dark .sg-complaint-assigned-card {
+          background-color: #241b0d !important;
+          border-color: rgba(245, 158, 11, 0.28) !important;
+        }
+
+        html.sg-dark .sg-complaint-assigned-label {
+          color: #fbbf24 !important;
+        }
+
+        html.sg-dark .sg-complaint-assigned-value {
+          color: #f8fafc !important;
+        }
+
+        html.sg-dark .sg-complaint-resolution-card {
+          background-color: #0f241c !important;
+          border-color: rgba(16, 185, 129, 0.28) !important;
+        }
+
+        html.sg-dark .sg-complaint-resolution-label {
+          color: #34d399 !important;
+        }
+
+        html.sg-dark .sg-complaint-resolution-value {
+          color: #f8fafc !important;
+        }
+
+        html.sg-dark .sg-complaint-message-card {
+          background-color: #1e293b !important;
+        }
+
+        html.sg-dark .sg-complaint-message-author {
+          color: #f8fafc !important;
+        }
+
+        html.sg-dark .sg-complaint-message-date {
+          color: #cbd5e1 !important;
+        }
+
+        html.sg-dark .sg-complaint-message-text {
+          color: #e2e8f0 !important;
+        }
+      `}</style>
+
+      <div className="space-y-6 pb-20 md:pb-0">
       <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <div className="flex items-center gap-2 text-[10px] font-extrabold uppercase tracking-[0.2em] text-amber-600">
@@ -1494,11 +1539,11 @@ export default function ComplaintsPanel({
               )}
 
               {selectedComplaint.assigned_collector_name && (
-                <section className="rounded-2xl border border-amber-100 bg-amber-50 p-4 text-xs">
-                  <p className="font-black uppercase tracking-wide text-amber-700">
+                <section className="sg-complaint-assigned-card rounded-2xl border border-amber-100 bg-amber-50 p-4 text-xs">
+                  <p className="sg-complaint-assigned-label font-black uppercase tracking-wide text-amber-700">
                     Assigned Collector
                   </p>
-                  <p className="mt-1 font-bold !text-slate-900">
+                  <p className="sg-complaint-assigned-value mt-1 font-bold text-slate-900">
                     {
                       selectedComplaint.assigned_collector_name
                     }
@@ -1507,11 +1552,11 @@ export default function ComplaintsPanel({
               )}
 
               {selectedComplaint.resolution_remark && (
-                <section className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-xs">
-                  <p className="font-black uppercase tracking-wide text-emerald-700">
+                <section className="sg-complaint-resolution-card rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-xs">
+                  <p className="sg-complaint-resolution-label font-black uppercase tracking-wide text-emerald-700">
                     Resolution
                   </p>
-                  <p className="mt-1 whitespace-pre-line font-medium !text-slate-900">
+                  <p className="sg-complaint-resolution-value mt-1 whitespace-pre-line font-medium text-slate-900">
                     {
                       selectedComplaint.resolution_remark
                     }
@@ -1536,22 +1581,22 @@ export default function ComplaintsPanel({
                         key={
                           message.id
                         }
-                        className="rounded-2xl bg-slate-100 p-3 text-xs dark:bg-slate-800"
+                        className="sg-complaint-message-card rounded-2xl bg-slate-100 p-3 text-xs"
                       >
                         <div className="flex items-center justify-between gap-3">
-                          <p className="font-black text-slate-700 dark:text-slate-100">
+                          <p className="sg-complaint-message-author font-black text-slate-700">
                             {
                               message.sender_name
                             }
                           </p>
-                          <p className="text-[9px] text-slate-400 dark:text-slate-300">
+                          <p className="sg-complaint-message-date text-[9px] text-slate-400">
                             {formatDate(
                               message.created_at,
                             )}
                           </p>
                         </div>
 
-                        <p className="mt-1 text-slate-700">
+                        <p className="sg-complaint-message-text mt-1 text-slate-700">
                           {
                             message.message
                           }
@@ -1892,7 +1937,8 @@ export default function ComplaintsPanel({
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }
 
