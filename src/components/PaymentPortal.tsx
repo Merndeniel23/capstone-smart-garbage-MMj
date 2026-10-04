@@ -1038,7 +1038,23 @@ export default function PaymentPortal({
   };
 
   return (
-    <div className="sg-page space-y-4">
+    <>
+      <style>{`
+        html.sg-dark .sg-payment-pending-card {
+          background-color: #2a2112 !important;
+          border-color: rgba(245, 158, 11, 0.35) !important;
+        }
+
+        html.sg-dark .sg-payment-pending-label {
+          color: #fbbf24 !important;
+        }
+
+        html.sg-dark .sg-payment-pending-amount {
+          color: #fef3c7 !important;
+        }
+      `}</style>
+
+      <div className="sg-page space-y-4">
       <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">
@@ -1322,11 +1338,11 @@ export default function PaymentPortal({
               </p>
             </div>
 
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-500/30 dark:bg-amber-950/30">
-              <p className="text-[10px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-300">
+            <div className="sg-payment-pending-card rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <p className="sg-payment-pending-label text-[10px] font-black uppercase tracking-wider text-amber-700">
                 Pending Accountability
               </p>
-              <p className="mt-1 text-2xl font-black text-slate-900 dark:text-amber-100">
+              <p className="sg-payment-pending-amount mt-1 text-2xl font-black text-slate-900">
                 ₱{summaryTotals.pendingAmount.toFixed(2)}
               </p>
             </div>
@@ -2431,7 +2447,8 @@ export default function PaymentPortal({
           />
         </Modal>
       )}
-    </div>
+      </div>
+    </>
   );
 }
 
