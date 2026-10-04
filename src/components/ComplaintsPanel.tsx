@@ -6,6 +6,7 @@ import React, {
 } from "react";
 import {
   AlertTriangle,
+  Camera,
   CheckCircle2,
   ChevronDown,
   Clock,
@@ -13,6 +14,7 @@ import {
   MapPin,
   MessageSquare,
   Phone,
+  ImagePlus,
   Plus,
   RefreshCw,
   Search,
@@ -224,7 +226,7 @@ export default function ComplaintsPanel({
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [confirmation, setConfirmation] = useState<{
-    action: "cancel" | "resolve";
+    action: "cancel" | "resolve" | "delete";
     complaintId: number;
     status: ComplaintStatus;
   } | null>(null);
@@ -254,8 +256,14 @@ export default function ComplaintsPanel({
     useState("");
   const [newPhone, setNewPhone] =
     useState("");
-  const [newPhotoUrl, setNewPhotoUrl] =
+  const [newPhotoData, setNewPhotoData] =
     useState("");
+  const [newPhotoName, setNewPhotoName] =
+    useState("");
+  const complaintPhotoInputRef =
+    useRef<HTMLInputElement>(null);
+  const complaintCameraInputRef =
+    useRef<HTMLInputElement>(null);
 
   const [selectedCollectorId, setSelectedCollectorId] =
     useState("");
@@ -452,10 +460,16 @@ export default function ComplaintsPanel({
   );
   const canAssign = canManage && Boolean(selectedComplaint && ["pending", "assigned"].includes(selectedComplaint.status));
   const canResolve = canManage && selectedComplaint?.status === "completed";
-  const canCancel = Boolean(selectedComplaint && (
-    (canManage && ["pending", "assigned"].includes(selectedComplaint.status)) ||
-    (role === "household" && selectedComplaint.status === "pending")
-  ));
+  const canCancel = Boolean(
+    selectedComplaint &&
+      role === "household" &&
+      selectedComplaint.status === "pending",
+  );
+  const canDelete = Boolean(
+    selectedComplaint &&
+      canManage &&
+      selectedComplaint.status === "resolved",
+  );
   const confirmationIsCurrent = Boolean(
     confirmation && selectedComplaint &&
     confirmation.complaintId === selectedComplaint.id &&
@@ -467,7 +481,7 @@ export default function ComplaintsPanel({
     setStatusNotice("This complaint changed while confirmation was open. Review its current status before taking another action.");
   };
 
-  const openConfirmation = (action: "cancel" | "resolve") => {
+  const openConfirmation = (action: "cancel" | "resolve" | "delete") => {
     if (!selectedComplaint) return;
     setError("");
     setStatusNotice("");
@@ -521,6 +535,61 @@ export default function ComplaintsPanel({
     };
   }, [complaints]);
 
+  const handleComplaintPhotoChange = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    const allowedTypes = [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+    ];
+
+    if (!allowedTypes.includes(file.type)) {
+      setError(
+        "Choose a JPG, PNG, or WebP image.",
+      );
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > 3_500_000) {
+      setError(
+        "Complaint photo must be 3.5 MB or smaller.",
+      );
+      event.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        setError(
+          "Unable to read the selected photo.",
+        );
+        return;
+      }
+
+      setNewPhotoData(reader.result);
+      setNewPhotoName(file.name);
+      setError("");
+    };
+
+    reader.onerror = () => {
+      setError(
+        "Unable to read the selected photo.",
+      );
+    };
+
+    reader.readAsDataURL(file);
+  };
+
   const createComplaint = async (
     event: React.FormEvent,
   ) => {
@@ -560,7 +629,7 @@ export default function ComplaintsPanel({
             phone:
               newPhone.trim(),
             photo_url:
-              newPhotoUrl.trim() ||
+              newPhotoData ||
               null,
             purok_id:
               currentUser.purok_id,
@@ -575,7 +644,14 @@ export default function ComplaintsPanel({
 
       setShowSubmitModal(false);
       setNewDescription("");
-      setNewPhotoUrl("");
+      setNewPhotoData("");
+      setNewPhotoName("");
+      if (complaintPhotoInputRef.current) {
+        complaintPhotoInputRef.current.value = "";
+      }
+      if (complaintCameraInputRef.current) {
+        complaintCameraInputRef.current.value = "";
+      }
       setNewPhone(
         currentUser.phone || "",
       );
@@ -813,8 +889,53 @@ export default function ComplaintsPanel({
       }
     };
 
+  const deleteComplaint =
+    async () => {
+      if (
+        !selectedComplaint ||
+        !canDelete ||
+        !confirmationIsCurrent ||
+        confirmation?.action !== "delete"
+      ) {
+        closeStaleConfirmation();
+        return;
+      }
+
+      setSaving(true);
+      setError("");
+      setSuccess("");
+
+      try {
+        const data = await apiRequest(
+          `/complaints/${selectedComplaint.id}`,
+          {
+            method: "DELETE",
+          },
+        );
+
+        setSuccess(
+          data.message ||
+            "Resolved complaint deleted.",
+        );
+
+        setSelectedId(null);
+        setConfirmation(null);
+        await loadData();
+        notifyAdminActionCountsChanged();
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to delete complaint.",
+        );
+      } finally {
+        setSaving(false);
+      }
+    };
+
   const canSubmit =
-    role === "household";
+    role === "household" ||
+    role === "leader";
 
   return (
     <div className="space-y-6 pb-20 md:pb-0">
@@ -830,7 +951,7 @@ export default function ComplaintsPanel({
           </h1>
 
           <p className="mt-1 text-xs text-slate-500">
-            Review resident reports, coordinate collectors, and verify completed work.
+            Submit and review sanitation reports, coordinate collectors, and verify completed work.
           </p>
         </div>
 
@@ -852,6 +973,14 @@ export default function ComplaintsPanel({
                 currentUser?.phone ||
                   "",
               );
+              setNewPhotoData("");
+              setNewPhotoName("");
+              if (complaintPhotoInputRef.current) {
+                complaintPhotoInputRef.current.value = "";
+              }
+              if (complaintCameraInputRef.current) {
+                complaintCameraInputRef.current.value = "";
+              }
             }}
             className="flex items-center justify-center gap-2 rounded-2xl border-none bg-amber-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white shadow-md"
           >
@@ -1124,6 +1253,19 @@ export default function ComplaintsPanel({
                       <Trash2 className="h-4 w-4" />
                     </button>
                   )}
+                {canDelete && (
+                  <button
+                    type="button"
+                    onClick={() => openConfirmation("delete")}
+                    disabled={saving}
+                    title="Delete resolved complaint"
+                    aria-label="Delete resolved complaint"
+                    className="inline-flex items-center gap-1 rounded-xl border border-rose-200 px-3 py-2 text-xs font-black text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </button>
+                )}
               </div>
 
               <section className="space-y-3">
@@ -1472,14 +1614,53 @@ export default function ComplaintsPanel({
 
       <ConfirmDialog
         open={confirmation !== null}
-        title={confirmation?.action === "cancel" ? "Cancel this complaint?" : "Resolve this complaint?"}
-        description={<div className="space-y-3"><p>{confirmation?.action === "cancel" ? "The complaint will be marked cancelled. Its record and messages will remain in the log." : "Confirm that the collector's work has been verified. Your resolution note will be saved with the complaint."}</p>{confirmation?.action === "resolve" && <p className="whitespace-pre-line rounded-xl bg-slate-100 p-3">{resolutionRemark}</p>}{error && <p role="alert" className="text-rose-600">{error}</p>}</div>}
-        confirmLabel={confirmation?.action === "cancel" ? "Cancel Complaint" : "Resolve Complaint"}
+        title={
+          confirmation?.action === "cancel"
+            ? "Cancel this complaint?"
+            : confirmation?.action === "delete"
+              ? "Delete this resolved complaint?"
+              : "Resolve this complaint?"
+        }
+        description={
+          <div className="space-y-3">
+            <p>
+              {confirmation?.action === "cancel"
+                ? "The complaint will be marked cancelled. Its record and messages will remain in the log."
+                : confirmation?.action === "delete"
+                  ? "This resolved complaint, its messages, related notifications, and stored complaint photo will be permanently deleted. This cannot be undone."
+                  : "Confirm that the collector's work has been verified. Your resolution note will be saved with the complaint."}
+            </p>
+            {confirmation?.action === "resolve" && (
+              <p className="whitespace-pre-line rounded-xl bg-slate-100 p-3">
+                {resolutionRemark}
+              </p>
+            )}
+            {error && <p role="alert" className="text-rose-600">{error}</p>}
+          </div>
+        }
+        confirmLabel={
+          confirmation?.action === "cancel"
+            ? "Cancel Complaint"
+            : confirmation?.action === "delete"
+              ? "Delete Complaint"
+              : "Resolve Complaint"
+        }
         cancelLabel="Go Back"
         busy={saving}
-        destructive={confirmation?.action === "cancel"}
+        destructive={
+          confirmation?.action === "cancel" ||
+          confirmation?.action === "delete"
+        }
         onCancel={() => setConfirmation(null)}
-        onConfirm={() => void (confirmation?.action === "cancel" ? cancelComplaint() : resolveComplaint())}
+        onConfirm={() =>
+          void (
+            confirmation?.action === "cancel"
+              ? cancelComplaint()
+              : confirmation?.action === "delete"
+                ? deleteComplaint()
+                : resolveComplaint()
+          )
+        }
       />
 
       {showSubmitModal && (
@@ -1497,11 +1678,19 @@ export default function ComplaintsPanel({
 
               <button
                 type="button"
-                onClick={() =>
+                onClick={() => {
                   setShowSubmitModal(
                     false,
-                  )
-                }
+                  );
+                  setNewPhotoData("");
+                  setNewPhotoName("");
+                  if (complaintPhotoInputRef.current) {
+                    complaintPhotoInputRef.current.value = "";
+                  }
+                  if (complaintCameraInputRef.current) {
+                    complaintCameraInputRef.current.value = "";
+                  }
+                }}
                 className="rounded-xl p-2 text-slate-400 hover:bg-slate-100"
               >
                 <X className="h-5 w-5" />
@@ -1534,8 +1723,8 @@ export default function ComplaintsPanel({
                   <option value="Missed Trash Pickup">
                     Missed Trash Pickup
                   </option>
-                  <option value="Illegal Littering Alert">
-                    Illegal Littering
+                  <option value="House-to-House Pickup">
+                    House-to-House Pickup
                   </option>
                   <option value="Damaged Garbage Bin">
                     Damaged Garbage Bin
@@ -1597,25 +1786,95 @@ export default function ComplaintsPanel({
                 />
               </label>
 
-              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500">
-                Photo URL or Path (optional)
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                    Complaint Photo
+                  </span>
+                  <span className="text-[10px] font-semibold text-slate-400">
+                    Optional
+                  </span>
+                </div>
+
                 <input
-                  type="text"
-                  value={
-                    newPhotoUrl
-                  }
-                  onChange={(
-                    event,
-                  ) =>
-                    setNewPhotoUrl(
-                      event.target
-                        .value,
-                    )
-                  }
-                  placeholder="/uploads/evidence.jpg"
-                  className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs font-semibold text-slate-800"
+                  ref={complaintPhotoInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handleComplaintPhotoChange}
+                  className="hidden"
                 />
-              </label>
+
+                <input
+                  ref={complaintCameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleComplaintPhotoChange}
+                  className="hidden"
+                />
+
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      complaintPhotoInputRef.current?.click()
+                    }
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-xs font-bold text-slate-600 transition hover:border-amber-400 hover:bg-amber-50"
+                  >
+                    <ImagePlus className="h-5 w-5" />
+                    {newPhotoName
+                      ? "Change Photo"
+                      : "Upload Photo"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      complaintCameraInputRef.current?.click()
+                    }
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-xs font-bold text-slate-600 transition hover:border-amber-400 hover:bg-amber-50"
+                  >
+                    <Camera className="h-5 w-5" />
+                    Take Photo
+                  </button>
+                </div>
+
+                <p className="text-[10px] font-medium text-slate-400">
+                  Upload from your device or take a photo with the camera • JPG, PNG, or WebP • Maximum 3.5 MB
+                </p>
+
+                {newPhotoData && (
+                  <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                    <img
+                      src={newPhotoData}
+                      alt="Complaint photo preview"
+                      className="max-h-56 w-full object-cover"
+                    />
+                    <button
+                      type="button"
+                      aria-label="Remove selected complaint photo"
+                      onClick={() => {
+                        setNewPhotoData("");
+                        setNewPhotoName("");
+                        if (complaintPhotoInputRef.current) {
+                          complaintPhotoInputRef.current.value = "";
+                        }
+                        if (complaintCameraInputRef.current) {
+                          complaintCameraInputRef.current.value = "";
+                        }
+                      }}
+                      className="absolute right-3 top-3 rounded-full bg-white/95 p-2 text-slate-700 shadow-md transition hover:bg-rose-50 hover:text-rose-600"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                    {newPhotoName && (
+                      <div className="truncate px-3 py-2 text-[10px] font-semibold text-slate-500">
+                        {newPhotoName}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               <button
                 type="submit"

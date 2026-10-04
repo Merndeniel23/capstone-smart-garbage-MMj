@@ -22,11 +22,13 @@ import {
   Search,
   Send,
   ShieldCheck,
+  Trash2,
   Upload,
   X,
 } from "lucide-react";
 import { notifyAdminActionCountsChanged } from "../hooks/useAdminActionCounts";
 import FeedbackToast from "./FeedbackToast";
+import ConfirmDialog from "./ConfirmDialog";
 
 interface PaymentPortalProps {
   role?:
@@ -78,7 +80,24 @@ interface PaymentRecord {
   created_at: string;
 }
 
+interface WeeklyFeeInfo {
+  amount: number;
+  effective_from: string | null;
+  uses_default: boolean;
+}
 
+interface PaymentReminder {
+  current_weekly_fee: number;
+  last_completed_payment_at: string | null;
+  last_completed_amount: number | null;
+  missed_payment_count: number;
+  outstanding_balance: number;
+  counting_from: string;
+  missed_periods: Array<{
+    due_date: string;
+    fee: number;
+  }>;
+}
 
 function token() {
   return (
@@ -229,6 +248,14 @@ export default function PaymentPortal({
   const [CATEGORY_OPTIONS, setCategoryOptions] = useState<PaymentCategoryOption[]>([]);
   const [payments, setPayments] =
     useState<PaymentRecord[]>([]);
+  const [weeklyFee, setWeeklyFee] =
+    useState<WeeklyFeeInfo | null>(null);
+  const [paymentReminder, setPaymentReminder] =
+    useState<PaymentReminder | null>(null);
+  const [editingWeeklyFee, setEditingWeeklyFee] =
+    useState(false);
+  const [weeklyFeeInput, setWeeklyFeeInput] =
+    useState("");
 
   const [loading, setLoading] =
     useState(true);
@@ -255,6 +282,10 @@ export default function PaymentPortal({
   const [selectedPayment, setSelectedPayment] = useState<number | null>(null);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [barangayFilter, setBarangayFilter] = useState("");
+  const [purokFilter, setPurokFilter] = useState("");
+  const [paymentToDelete, setPaymentToDelete] = useState<PaymentRecord | null>(null);
+  const [deletingPayment, setDeletingPayment] = useState(false);
 
   const [showPaymentForm, setShowPaymentForm] =
     useState(false);
@@ -310,9 +341,13 @@ export default function PaymentPortal({
 
   const isResident = role === "household";
   const isLeader = role === "leader";
-  const isAdmin =
-    role === "admin" ||
+  const isSuperAdmin =
     role === "super_admin";
+  const isBarangayAdmin =
+    role === "admin";
+  const isAdmin =
+    isBarangayAdmin ||
+    isSuperAdmin;
 
   const loadPayments = async () => {
     setLoading(true);
@@ -321,12 +356,34 @@ export default function PaymentPortal({
       const data =
         await apiRequest("/");
 
-      setCategoryOptions(data.categories);
+      setCategoryOptions(
+        Array.isArray(data.categories)
+          ? data.categories
+          : [],
+      );
       setPayments(
         Array.isArray(data.payments)
           ? data.payments
           : [],
       );
+      setWeeklyFee(
+        data.weeklyFee || null,
+      );
+      setPaymentReminder(
+        data.paymentReminder ||
+          null,
+      );
+
+      if (
+        data.weeklyFee?.amount !==
+        undefined
+      ) {
+        setWeeklyFeeInput(
+          String(
+            data.weeklyFee.amount,
+          ),
+        );
+      }
     } catch (error) {
       setMessage({
         type: "error",
@@ -344,6 +401,39 @@ export default function PaymentPortal({
     void loadPayments();
   }, [role]);
 
+  const barangayOptions = useMemo(() => {
+    const values = payments
+      .map((payment) => payment.barangay_name)
+      .filter(
+        (value): value is string =>
+          typeof value === "string" &&
+          value.trim().length > 0,
+      );
+
+    return Array.from(
+      new Set<string>(values),
+    ).sort((a, b) => a.localeCompare(b));
+  }, [payments]);
+
+  const purokOptions = useMemo(() => {
+    const values = payments
+      .filter(
+        (payment) =>
+          !barangayFilter ||
+          payment.barangay_name === barangayFilter,
+      )
+      .map((payment) => payment.purok_name)
+      .filter(
+        (value): value is string =>
+          typeof value === "string" &&
+          value.trim().length > 0,
+      );
+
+    return Array.from(
+      new Set<string>(values),
+    ).sort((a, b) => a.localeCompare(b));
+  }, [barangayFilter, payments]);
+
   const filteredPayments =
     useMemo(() => {
       const query =
@@ -353,6 +443,15 @@ export default function PaymentPortal({
         const created = new Date(payment.created_at);
         const day = [created.getFullYear(), String(created.getMonth() + 1).padStart(2, "0"), String(created.getDate()).padStart(2, "0")].join("-");
         if ((dateFrom && day < dateFrom) || (dateTo && day > dateTo)) return false;
+        if (
+          barangayFilter &&
+          payment.barangay_name !== barangayFilter
+        ) return false;
+        if (
+          purokFilter &&
+          payment.purok_name !== purokFilter
+        ) return false;
+
         const matchesStatus =
           statusFilter === "all" ||
           payment.status === statusFilter;
@@ -379,7 +478,15 @@ export default function PaymentPortal({
             .includes(query),
         );
       });
-    }, [payments, search, statusFilter, dateFrom, dateTo]);
+    }, [
+      payments,
+      search,
+      statusFilter,
+      dateFrom,
+      dateTo,
+      barangayFilter,
+      purokFilter,
+    ]);
 
   const paymentPageCount = Math.max(
     1,
@@ -409,13 +516,29 @@ export default function PaymentPortal({
 
   useEffect(() => {
     setPaymentPage(1);
-  }, [search, statusFilter, dateFrom, dateTo]);
+  }, [
+    search,
+    statusFilter,
+    dateFrom,
+    dateTo,
+    barangayFilter,
+    purokFilter,
+  ]);
 
   useEffect(() => {
     if (paymentPage > paymentPageCount) {
       setPaymentPage(paymentPageCount);
     }
   }, [paymentPage, paymentPageCount]);
+
+  useEffect(() => {
+    if (
+      purokFilter &&
+      !purokOptions.includes(purokFilter)
+    ) {
+      setPurokFilter("");
+    }
+  }, [purokFilter, purokOptions]);
 
   const completedTotal = payments
     .filter(
@@ -455,8 +578,22 @@ export default function PaymentPortal({
   ) => {
     event.preventDefault();
 
-    setSubmitting(true);
     setMessage(null);
+
+    const enteredAmount = Number(amount);
+
+    if (
+      !Number.isFinite(enteredAmount) ||
+      enteredAmount <= 0
+    ) {
+      setMessage({
+        type: "error",
+        text: "Enter a valid payment amount greater than PHP 0.00.",
+      });
+      return;
+    }
+
+    setSubmitting(true);
 
     try {
       const data = await apiRequest(
@@ -466,7 +603,7 @@ export default function PaymentPortal({
           body: JSON.stringify({
             category,
             billingPeriod,
-            amount: Number(amount),
+            amount: enteredAmount,
             paymentMethod: method,
             paymentReference:
               reference.trim(),
@@ -629,6 +766,63 @@ export default function PaymentPortal({
     }
   };
 
+  const saveWeeklyFee = async (
+    event: React.FormEvent,
+  ) => {
+    event.preventDefault();
+
+    const enteredFee =
+      Number(weeklyFeeInput);
+
+    if (
+      !Number.isFinite(enteredFee) ||
+      enteredFee <= 0
+    ) {
+      setMessage({
+        type: "error",
+        text:
+          "Enter a valid weekly pickup fee greater than PHP 0.00.",
+      });
+      return;
+    }
+
+    setSubmitting(true);
+    setMessage(null);
+
+    try {
+      const data =
+        await apiRequest(
+          "/weekly-fee",
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              amount: enteredFee,
+            }),
+          },
+        );
+
+      setMessage({
+        type: "success",
+        text:
+          data.message ||
+          "Weekly pickup fee updated.",
+      });
+
+      setEditingWeeklyFee(false);
+      await loadPayments();
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Unable to update the weekly pickup fee.",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleImage = async (
     file: File | undefined,
     target:
@@ -656,6 +850,48 @@ export default function PaymentPortal({
             ? error.message
             : "Unable to load image.",
       });
+    }
+  };
+
+  const deletePaymentRecord = async () => {
+    if (!isSuperAdmin || !paymentToDelete || deletingPayment) {
+      return;
+    }
+
+    setDeletingPayment(true);
+    setMessage(null);
+
+    try {
+      const data = await apiRequest(
+        `/${paymentToDelete.id}`,
+        { method: "DELETE" },
+      );
+
+      setMessage({
+        type: "success",
+        text:
+          data.message ||
+          "Payment record deleted successfully.",
+      });
+
+      if (selectedPayment === paymentToDelete.id) {
+        setSelectedPayment(null);
+      }
+
+      setPaymentToDelete(null);
+      await loadPayments();
+      notifyAdminActionCountsChanged();
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Unable to delete the payment record.",
+      });
+      setPaymentToDelete(null);
+    } finally {
+      setDeletingPayment(false);
     }
   };
 
@@ -727,6 +963,164 @@ export default function PaymentPortal({
         </div>
       )}
 
+      {isResident && paymentReminder && (
+        <section className="sg-payment-reminder-card rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-700">
+                Weekly Pickup Payment Reminder
+              </p>
+              <h2 className="mt-1 text-lg font-black text-slate-900">
+                {paymentReminder.missed_payment_count > 0
+                  ? `${paymentReminder.missed_payment_count} missed ${
+                      paymentReminder.missed_payment_count === 1
+                        ? "payment"
+                        : "payments"
+                    }`
+                  : "Your weekly pickup payment is up to date"}
+              </h2>
+              <p className="mt-1 text-xs font-medium text-slate-600">
+                {paymentReminder.last_completed_payment_at
+                  ? `Last completed weekly payment: ${new Date(
+                      paymentReminder.last_completed_payment_at,
+                    ).toLocaleDateString()}`
+                  : `No completed weekly payment yet. Counting from ${new Date(
+                      `${paymentReminder.counting_from}T00:00:00`,
+                    ).toLocaleDateString()}.`}
+              </p>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Only completed weekly payments reset the missed-payment counter.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-amber-200 bg-white px-4 py-3">
+                <p className="text-[9px] font-black uppercase text-slate-400">
+                  Weekly Fee
+                </p>
+                <p className="mt-1 text-lg font-black text-slate-900">
+                  ₱{Number(
+                    paymentReminder.current_weekly_fee,
+                  ).toFixed(2)}
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-amber-200 bg-white px-4 py-3">
+                <p className="text-[9px] font-black uppercase text-slate-400">
+                  Missed
+                </p>
+                <p className="mt-1 text-lg font-black text-amber-700">
+                  {paymentReminder.missed_payment_count}
+                </p>
+              </div>
+
+              <div className="col-span-2 rounded-xl border border-amber-200 bg-white px-4 py-3 sm:col-span-1">
+                <p className="text-[9px] font-black uppercase text-slate-400">
+                  Outstanding
+                </p>
+                <p className="mt-1 text-lg font-black text-rose-600">
+                  ₱{Number(
+                    paymentReminder.outstanding_balance,
+                  ).toFixed(2)}
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {isLeader && weeklyFee && (
+        <section className="sg-weekly-fee-card rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-700">
+                Purok Weekly Pickup Fee
+              </p>
+              <h2 className="mt-1 text-xl font-black text-slate-900">
+                ₱{Number(
+                  weeklyFee.amount,
+                ).toFixed(2)} / week
+              </h2>
+              <p className="mt-1 text-xs font-medium text-slate-600">
+                This fee applies to residents assigned to your purok.
+                {weeklyFee.effective_from
+                  ? ` Current rate effective ${new Date(
+                      `${String(weeklyFee.effective_from).slice(0, 10)}T00:00:00`,
+                    ).toLocaleDateString()}.`
+                  : " The system default rate is currently being used."}
+              </p>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Changing the rate today keeps previous fee history unchanged.
+              </p>
+            </div>
+
+            {!editingWeeklyFee ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setWeeklyFeeInput(
+                    String(
+                      weeklyFee.amount,
+                    ),
+                  );
+                  setEditingWeeklyFee(true);
+                }}
+                className="rounded-xl bg-emerald-600 px-5 py-3 text-xs font-black uppercase text-white"
+              >
+                Edit Weekly Fee
+              </button>
+            ) : (
+              <form
+                onSubmit={saveWeeklyFee}
+                className="flex flex-col gap-2 sm:flex-row sm:items-end"
+              >
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-600">
+                  Weekly fee
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={weeklyFeeInput}
+                    onChange={(event) =>
+                      setWeeklyFeeInput(
+                        event.target.value,
+                      )
+                    }
+                    className="mt-1 block min-h-11 w-40 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-bold text-slate-900"
+                    required
+                  />
+                </label>
+
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="min-h-11 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black uppercase text-white disabled:opacity-50"
+                  >
+                    Save Fee
+                  </button>
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => {
+                      setEditingWeeklyFee(false);
+                      setWeeklyFeeInput(
+                        String(
+                          weeklyFee.amount,
+                        ),
+                      );
+                    }}
+                    className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-black uppercase text-slate-600"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </section>
+      )}
+
       <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Metric
           label="Total records"
@@ -750,8 +1144,11 @@ export default function PaymentPortal({
       </section>
       <p className="text-xs text-slate-500">Confirmed collections: PHP {completedTotal.toFixed(2)} · Pending accountability: PHP {pendingTotal.toFixed(2)}</p>
 
-      <section aria-label="Payment filters" className="sg-list-toolbar grid grid-cols-1 items-center gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_190px_auto]">
-        <div className="relative flex-1">
+      <section
+        aria-label="Payment filters"
+        className="sg-list-toolbar flex flex-wrap items-center gap-2"
+      >
+        <div className="relative min-w-[220px] flex-1">
           <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             value={search}
@@ -764,7 +1161,44 @@ export default function PaymentPortal({
           />
         </div>
 
-        <div className="relative">
+        {isSuperAdmin && (
+          <select
+            value={barangayFilter}
+            onChange={(event) => {
+              setBarangayFilter(event.target.value);
+              setPurokFilter("");
+            }}
+            aria-label="Filter payments by barangay"
+            className="h-10 min-w-[165px] rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600"
+          >
+            <option value="">All barangays</option>
+            {barangayOptions.map((barangay) => (
+              <option key={barangay} value={barangay}>
+                {barangay}
+              </option>
+            ))}
+          </select>
+        )}
+
+        {(isSuperAdmin || isBarangayAdmin) && (
+          <select
+            value={purokFilter}
+            onChange={(event) =>
+              setPurokFilter(event.target.value)
+            }
+            aria-label="Filter payments by purok"
+            className="h-10 min-w-[145px] rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600"
+          >
+            <option value="">All puroks</option>
+            {purokOptions.map((purok) => (
+              <option key={purok} value={purok}>
+                {purok}
+              </option>
+            ))}
+          </select>
+        )}
+
+        <div className="relative min-w-[180px]">
           <Filter className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <select
             value={statusFilter}
@@ -796,11 +1230,43 @@ export default function PaymentPortal({
             <option value="completed">Completed</option>
           </select>
         </div>
-        <div className="flex flex-wrap items-center gap-2 sm:col-span-2 xl:col-span-1">
-        <label className="text-[10px] font-semibold text-slate-500"><span className="sr-only">From</span><input type="date" value={dateFrom} max={dateTo || undefined} onChange={e => setDateFrom(e.target.value)} className="block h-10 w-[125px] rounded-lg border border-slate-200 bg-white px-2 py-2 text-slate-700" /></label>
-        <label className="text-[10px] font-semibold text-slate-500"><span className="sr-only">To</span><input type="date" value={dateTo} min={dateFrom || undefined} onChange={e => setDateTo(e.target.value)} className="block h-10 w-[125px] rounded-lg border border-slate-200 bg-white px-2 py-2 text-slate-700" /></label>
-        <button type="button" onClick={() => {setSearch(""); setStatusFilter("all"); setDateFrom(""); setDateTo("");}} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-500">Clear</button>
-        </div>
+
+        <label className="text-[10px] font-semibold text-slate-500">
+          <span className="sr-only">From</span>
+          <input
+            type="date"
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={(event) => setDateFrom(event.target.value)}
+            className="block h-10 w-[125px] rounded-lg border border-slate-200 bg-white px-2 py-2 text-slate-700"
+          />
+        </label>
+
+        <label className="text-[10px] font-semibold text-slate-500">
+          <span className="sr-only">To</span>
+          <input
+            type="date"
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(event) => setDateTo(event.target.value)}
+            className="block h-10 w-[125px] rounded-lg border border-slate-200 bg-white px-2 py-2 text-slate-700"
+          />
+        </label>
+
+        <button
+          type="button"
+          onClick={() => {
+            setSearch("");
+            setStatusFilter("all");
+            setDateFrom("");
+            setDateTo("");
+            setBarangayFilter("");
+            setPurokFilter("");
+          }}
+          className="h-10 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-500"
+        >
+          Clear
+        </button>
       </section>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2" aria-label="Payment status filters">
@@ -808,7 +1274,7 @@ export default function PaymentPortal({
         </div>
         <button type="button" disabled={!filteredPayments.length} onClick={() => {
           const cell = (value: unknown) => '"' + String(value ?? "").replace(/^[\s]*[=+@-]/, "'$&").replace(/"/g, '""') + '"';
-          const rows = [["Date", "Transaction", "Resident", "Purok", "Category", "Amount (PHP)", "Status"], ...filteredPayments.map(p => [p.created_at,p.transaction_code,p.resident_name,p.purok_name,categoryLabel(p.category),p.amount,statusLabel(p.status)])];
+          const rows = [["Date", "Transaction", "Resident", "Barangay", "Purok", "Category", "Amount (PHP)", "Status"], ...filteredPayments.map(p => [p.created_at,p.transaction_code,p.resident_name,p.barangay_name,p.purok_name,categoryLabel(p.category),p.amount,statusLabel(p.status)])];
           const url = URL.createObjectURL(new Blob(["\uFEFF" + rows.map(row => row.map(cell).join(",")).join("\r\n")], {type:"text/csv;charset=utf-8"}));
           const link = document.createElement("a"); link.href=url; link.download="payments.csv"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
         }} className="inline-flex items-center gap-2 rounded-lg border border-emerald-500 px-3 py-2 text-xs font-bold text-emerald-600 disabled:opacity-40"><Download className="h-4 w-4" />Export CSV</button>
@@ -821,17 +1287,53 @@ export default function PaymentPortal({
       ) : (
         <div className="space-y-1">
           <div className="sg-desktop-table overflow-hidden rounded-xl border border-slate-200 bg-white">
-            <table className="w-full table-fixed text-left text-xs">
-              <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500"><tr>{["Date & time","Transaction #","Resident","Purok","Category","Amount","Status","Actions"].map(title => <th key={title} scope="col" className="px-4 py-3 font-bold">{title}</th>)}</tr></thead>
+            <table className="w-full table-fixed text-left text-[11px] xl:text-xs">
+              <colgroup>
+                <col className="w-[10%]" />
+                <col className="w-[13%]" />
+                <col className="w-[13%]" />
+                <col className="w-[8%]" />
+                <col className="w-[18%]" />
+                <col className="w-[9%]" />
+                <col className="w-[19%]" />
+                <col className="w-[10%]" />
+              </colgroup>
+              <thead className="bg-slate-50 text-[9px] uppercase tracking-wide text-slate-500 xl:text-[10px]">
+                <tr>
+                  <th scope="col" className="px-3 py-3 font-bold">Date & time</th>
+                  <th scope="col" className="px-3 py-3 font-bold">Transaction #</th>
+                  <th scope="col" className="px-3 py-3 font-bold">Resident</th>
+                  <th scope="col" className="px-3 py-3 font-bold">Purok</th>
+                  <th scope="col" className="px-3 py-3 font-bold">Category</th>
+                  <th scope="col" className="px-3 py-3 font-bold">Amount</th>
+                  <th scope="col" className="px-3 py-3 font-bold">Status</th>
+                  <th scope="col" className="px-3 py-3 text-center font-bold">Actions</th>
+                </tr>
+              </thead>
               <tbody className="divide-y divide-slate-100">{visiblePayments.map(payment => <tr key={payment.id} className="transition hover:bg-emerald-500/5">
-                <td className="whitespace-nowrap px-4 py-3 text-slate-700">{new Date(payment.created_at).toLocaleDateString()}<span className="mt-1 block text-[10px] text-slate-400">{new Date(payment.created_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</span></td>
-                <td className="truncate px-4 py-3 font-mono text-[10px] text-slate-700" title={payment.transaction_code}>{payment.transaction_code}</td>
-                <td className="truncate px-4 py-3 font-semibold text-slate-700" title={payment.resident_name}>{payment.resident_name}</td>
-                <td className="truncate px-4 py-3 text-slate-500" title={payment.purok_name}>{payment.purok_name}</td>
-                <td className="truncate px-4 py-3 text-slate-500" title={categoryLabel(payment.category)}>{categoryLabel(payment.category)}</td>
-                <td className="whitespace-nowrap px-4 py-3 font-bold tabular-nums text-slate-700">₱{Number(payment.amount).toFixed(2)}</td>
-                <td className="px-4 py-3"><span className={`inline-block whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-bold ${statusClasses(payment.status)}`}>{statusLabel(payment.status)}</span></td>
-                <td className="px-4 py-3"><button type="button" aria-label={`View payment ${payment.transaction_code}`} onClick={() => {resetForm(); setSelectedPayment(payment.id);}} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2 py-1.5 text-slate-600 hover:border-emerald-500 hover:text-emerald-600"><Eye className="h-3.5 w-3.5" />View</button></td>
+                <td className="whitespace-nowrap px-3 py-3 text-slate-700">{new Date(payment.created_at).toLocaleDateString()}<span className="mt-1 block text-[10px] text-slate-400">{new Date(payment.created_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</span></td>
+                <td className="truncate px-3 py-3 font-mono text-[9px] text-slate-700 xl:text-[10px]" title={payment.transaction_code}>{payment.transaction_code}</td>
+                <td className="truncate px-3 py-3 font-semibold text-slate-700" title={payment.resident_name}>{payment.resident_name}</td>
+                <td className="truncate px-3 py-3 text-slate-500" title={payment.purok_name}>{payment.purok_name}</td>
+                <td className="truncate px-3 py-3 text-slate-500" title={categoryLabel(payment.category)}>{categoryLabel(payment.category)}</td>
+                <td className="whitespace-nowrap px-3 py-3 font-bold tabular-nums text-slate-700">₱{Number(payment.amount).toFixed(2)}</td>
+                <td className="px-3 py-3"><span className={`inline-flex whitespace-nowrap rounded-full border px-3 py-1.5 text-[10px] font-bold ${statusClasses(payment.status)}`}>{statusLabel(payment.status)}</span></td>
+                <td className="px-3 py-3 text-center">
+                  <div className="flex items-center justify-center gap-1">
+                    <button type="button" aria-label={`View payment ${payment.transaction_code}`} onClick={() => {resetForm(); setSelectedPayment(payment.id);}} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-200 px-2.5 py-1.5 text-[10px] text-slate-600 transition hover:border-emerald-500 hover:text-emerald-600 xl:px-3 xl:py-2 xl:text-xs"><Eye className="h-3.5 w-3.5" />View</button>
+                    {isSuperAdmin && (
+                      <button
+                        type="button"
+                        aria-label={`Delete payment ${payment.transaction_code}`}
+                        title="Delete payment record"
+                        onClick={() => setPaymentToDelete(payment)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </td>
               </tr>)}</tbody>
             </table>
           </div>
@@ -848,7 +1350,19 @@ export default function PaymentPortal({
                 </div>
                 <div className="mt-3 flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
                   <span className="font-bold tabular-nums text-slate-800">₱{Number(payment.amount).toFixed(2)}</span>
-                  <button type="button" aria-label={`View payment ${payment.transaction_code}`} onClick={() => { resetForm(); setSelectedPayment(payment.id); }} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700">View details</button>
+                  <div className="flex items-center gap-2">
+                    <button type="button" aria-label={`View payment ${payment.transaction_code}`} onClick={() => { resetForm(); setSelectedPayment(payment.id); }} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700">View details</button>
+                    {isSuperAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => setPaymentToDelete(payment)}
+                        aria-label={`Delete payment ${payment.transaction_code}`}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-rose-200 text-rose-600"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </article>
             ))}
@@ -1273,7 +1787,7 @@ export default function PaymentPortal({
                     key={item.value}
                     value={item.value}
                   >
-                    {item.label} — ₱{item.amount}
+                    {item.label} — Suggested ₱{item.amount}
                   </option>
                 ),
               )}
@@ -1295,7 +1809,7 @@ export default function PaymentPortal({
             <input
               aria-label="Amount in Philippine pesos"
               type="number"
-              min="1"
+              min="0.01"
               step="0.01"
               value={amount}
               onChange={(event) =>
@@ -1303,10 +1817,14 @@ export default function PaymentPortal({
                   event.target.value,
                 )
               }
+              placeholder="Enter any payment amount"
               className="min-h-11 w-full rounded-xl border px-3 py-2 text-sm"
               required
             />
               </div>
+              <p className="mt-2 text-[11px] font-medium text-slate-500">
+                You may enter any positive amount. The category fee shown above is only a suggested reference.
+              </p>
             </fieldset>
 
             <fieldset className="sg-form-section">
@@ -1399,6 +1917,25 @@ export default function PaymentPortal({
           </form>
         </Modal>
       )}
+
+      <ConfirmDialog
+        open={Boolean(paymentToDelete)}
+        title="Delete payment record?"
+        description={
+          paymentToDelete
+            ? `Delete ${paymentToDelete.transaction_code} for ${paymentToDelete.resident_name}? This permanently removes the payment record and its stored proof images.`
+            : ""
+        }
+        confirmLabel="Delete Payment"
+        destructive
+        busy={deletingPayment}
+        onCancel={() => {
+          if (!deletingPayment) {
+            setPaymentToDelete(null);
+          }
+        }}
+        onConfirm={() => void deletePaymentRecord()}
+      />
 
       {showImage && (
         <Modal

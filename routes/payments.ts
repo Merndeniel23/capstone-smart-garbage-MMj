@@ -14,7 +14,7 @@ import {
   storeProof,
 } from "../config/storage.js";
 
-import { CATEGORY_AMOUNTS, paymentCategories } from "../config/paymentFees.js";
+import { paymentCategories } from "../config/paymentFees.js";
 
 const router = Router();
 
@@ -97,7 +97,8 @@ async function getViewer(
       full_name,
       role,
       barangay_id,
-      purok_id
+      purok_id,
+      created_at
     FROM users
     WHERE id = ?
       AND status = 'active'
@@ -109,6 +110,340 @@ async function getViewer(
 
   return rows[0] || null;
 }
+
+
+function defaultWeeklyFee() {
+  const option = paymentCategories.find(
+    (item: any) => item.value === "weekly_fee",
+  );
+
+  const amount = Number(option?.amount);
+
+  return Number.isFinite(amount) && amount > 0
+    ? amount
+    : 5;
+}
+
+function localDateString(
+  value: Date | string,
+) {
+  const date =
+    value instanceof Date
+      ? value
+      : new Date(value);
+
+  const year = date.getFullYear();
+  const month = String(
+    date.getMonth() + 1,
+  ).padStart(2, "0");
+  const day = String(
+    date.getDate(),
+  ).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function startOfLocalDay(
+  value: Date | string,
+) {
+  const date =
+    value instanceof Date
+      ? new Date(value)
+      : new Date(value);
+
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+let weeklyFeeTableReady: Promise<void> | null = null;
+
+async function ensureWeeklyFeeTable() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS purok_weekly_fees (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      purok_id INT UNSIGNED NOT NULL,
+      weekly_fee DECIMAL(10,2) NOT NULL,
+      effective_from DATE NOT NULL,
+      set_by INT UNSIGNED NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_purok_weekly_fee_date (purok_id, effective_from),
+      KEY idx_purok_weekly_fee_lookup (purok_id, effective_from),
+      CONSTRAINT fk_purok_weekly_fee_purok
+        FOREIGN KEY (purok_id) REFERENCES puroks(id) ON DELETE CASCADE,
+      CONSTRAINT fk_purok_weekly_fee_set_by
+        FOREIGN KEY (set_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB;
+  `);
+}
+
+async function weeklyFeeHistory(
+  purokId: number,
+  executor: any = db,
+) {
+  const [rows] = await executor.query(
+    `
+    SELECT
+      id,
+      purok_id,
+      weekly_fee,
+      effective_from,
+      set_by,
+      created_at
+    FROM purok_weekly_fees
+    WHERE purok_id = ?
+    ORDER BY effective_from ASC, id ASC
+    `,
+    [purokId],
+  );
+
+  return rows as any[];
+}
+
+function feeForDate(
+  history: any[],
+  date: Date,
+) {
+  const dateKey = localDateString(date);
+  let amount = defaultWeeklyFee();
+
+  for (const row of history) {
+    const effectiveKey =
+      localDateString(row.effective_from);
+
+    if (effectiveKey > dateKey) {
+      break;
+    }
+
+    const candidate =
+      Number(row.weekly_fee);
+
+    if (
+      Number.isFinite(candidate) &&
+      candidate > 0
+    ) {
+      amount = candidate;
+    }
+  }
+
+  return amount;
+}
+
+async function paymentFeeInfo(
+  purokId: number,
+  executor: any = db,
+) {
+  const history =
+    await weeklyFeeHistory(
+      purokId,
+      executor,
+    );
+
+  const amount =
+    feeForDate(
+      history,
+      new Date(),
+    );
+
+  const currentRecord =
+    [...history]
+      .reverse()
+      .find(
+        (row) =>
+          localDateString(
+            row.effective_from,
+          ) <=
+          localDateString(
+            new Date(),
+          ),
+      );
+
+  return {
+    amount,
+    effective_from:
+      currentRecord?.effective_from ||
+      null,
+    uses_default:
+      !currentRecord,
+  };
+}
+
+async function residentPaymentReminder(
+  viewer: any,
+) {
+  if (
+    viewer.role !== "resident" ||
+    !viewer.purok_id
+  ) {
+    return null;
+  }
+
+  const [paymentRows] =
+    await db.query<any[]>(
+      `
+      SELECT
+        amount,
+        COALESCE(
+          admin_confirmed_at,
+          updated_at,
+          created_at
+        ) AS completed_at
+      FROM payments
+      WHERE resident_id = ?
+        AND category = 'weekly_fee'
+        AND status = 'completed'
+      ORDER BY
+        COALESCE(
+          admin_confirmed_at,
+          updated_at,
+          created_at
+        ) DESC,
+        id DESC
+      LIMIT 1
+      `,
+      [viewer.id],
+    );
+
+  const lastPayment =
+    paymentRows[0] || null;
+
+  const accountStart =
+    viewer.created_at
+      ? startOfLocalDay(
+          viewer.created_at,
+        )
+      : startOfLocalDay(
+          new Date(),
+        );
+
+  const baseDate =
+    lastPayment?.completed_at
+      ? startOfLocalDay(
+          lastPayment.completed_at,
+        )
+      : accountStart;
+
+  const today =
+    startOfLocalDay(new Date());
+
+  const weekMs =
+    7 * 24 * 60 * 60 * 1000;
+
+  const elapsedMs =
+    Math.max(
+      0,
+      today.getTime() -
+        baseDate.getTime(),
+    );
+
+  const missedCount =
+    Math.floor(
+      elapsedMs / weekMs,
+    );
+
+  const history =
+    await weeklyFeeHistory(
+      Number(viewer.purok_id),
+    );
+
+  const missedPeriods: {
+    due_date: string;
+    fee: number;
+  }[] = [];
+
+  let outstandingBalance = 0;
+
+  for (
+    let index = 1;
+    index <= missedCount;
+    index += 1
+  ) {
+    const dueDate =
+      new Date(
+        baseDate.getTime() +
+          index * weekMs,
+      );
+
+    const fee =
+      feeForDate(
+        history,
+        dueDate,
+      );
+
+    outstandingBalance += fee;
+
+    missedPeriods.push({
+      due_date:
+        localDateString(
+          dueDate,
+        ),
+      fee:
+        Math.round(
+          fee * 100,
+        ) / 100,
+    });
+  }
+
+  const feeInfo =
+    await paymentFeeInfo(
+      Number(viewer.purok_id),
+    );
+
+  return {
+    current_weekly_fee:
+      Math.round(
+        Number(feeInfo.amount) * 100,
+      ) / 100,
+    last_completed_payment_at:
+      lastPayment?.completed_at ||
+      null,
+    last_completed_amount:
+      lastPayment
+        ? Number(lastPayment.amount)
+        : null,
+    missed_payment_count:
+      missedCount,
+    outstanding_balance:
+      Math.round(
+        outstandingBalance * 100,
+      ) / 100,
+    counting_from:
+      localDateString(
+        baseDate,
+      ),
+    missed_periods:
+      missedPeriods,
+  };
+}
+
+async function ensureWeeklyFeeTableOnce() {
+  if (!weeklyFeeTableReady) {
+    weeklyFeeTableReady = ensureWeeklyFeeTable().catch((error) => {
+      weeklyFeeTableReady = null;
+      throw error;
+    });
+  }
+
+  await weeklyFeeTableReady;
+}
+
+router.use(async (_req, res, next) => {
+  try {
+    await ensureWeeklyFeeTableOnce();
+    next();
+  } catch (error) {
+    console.error(
+      "Weekly pickup fee table error:",
+      error,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Unable to prepare weekly pickup fee settings.",
+    });
+  }
+});
 
 function selectPaymentFields() {
   return `
@@ -247,10 +582,39 @@ router.get(
 
       const payments = await hydratePaymentProofUrls(rows);
 
+      const feeInfo =
+        viewer.purok_id
+          ? await paymentFeeInfo(
+              Number(viewer.purok_id),
+            )
+          : null;
+
+      const categories =
+        paymentCategories.map(
+          (item: any) =>
+            item.value === "weekly_fee" &&
+            feeInfo
+              ? {
+                  ...item,
+                  amount:
+                    feeInfo.amount,
+                }
+              : item,
+        );
+
+      const paymentReminder =
+        viewer.role === "resident"
+          ? await residentPaymentReminder(
+              viewer,
+            )
+          : null;
+
       return res.json({
         success: true,
         payments,
-        categories: paymentCategories,
+        categories,
+        weeklyFee: feeInfo,
+        paymentReminder,
       });
     } catch (error) {
       console.error(
@@ -263,6 +627,142 @@ router.get(
         message:
           "Unable to load payments.",
       });
+    }
+  },
+);
+
+
+router.patch(
+  "/weekly-fee",
+  requireAuth,
+  async (
+    req: AuthRequest,
+    res,
+  ) => {
+    let connection:
+      PoolConnection | null = null;
+
+    try {
+      const userId =
+        positiveInteger(
+          req.user?.id,
+        );
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message:
+            "Authentication required.",
+        });
+      }
+
+      const amount =
+        Number(
+          req.body.amount ??
+            req.body.weeklyFee ??
+            req.body.weekly_fee,
+        );
+
+      if (
+        !Number.isFinite(amount) ||
+        amount <= 0 ||
+        amount > 100000
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Enter a valid weekly pickup fee greater than PHP 0.00.",
+        });
+      }
+
+      connection =
+        await db.getConnection();
+
+      await connection.beginTransaction();
+
+      const viewer =
+        await getViewer(
+          userId,
+          connection,
+          true,
+        );
+
+      if (
+        !viewer ||
+        viewer.role !==
+          "purok_leader" ||
+        !viewer.purok_id
+      ) {
+        await connection.rollback();
+
+        return res.status(403).json({
+          success: false,
+          message:
+            "Purok Leader access with an assigned purok is required.",
+        });
+      }
+
+      const roundedAmount =
+        Math.round(
+          amount * 100,
+        ) / 100;
+
+      await connection.execute(
+        `
+        INSERT INTO purok_weekly_fees
+        (
+          purok_id,
+          weekly_fee,
+          effective_from,
+          set_by
+        )
+        VALUES (?, ?, CURDATE(), ?)
+        ON DUPLICATE KEY UPDATE
+          weekly_fee = VALUES(weekly_fee),
+          set_by = VALUES(set_by),
+          created_at = CURRENT_TIMESTAMP
+        `,
+        [
+          viewer.purok_id,
+          roundedAmount,
+          viewer.id,
+        ],
+      );
+
+      await connection.commit();
+
+      return res.json({
+        success: true,
+        message:
+          `Weekly pickup fee updated to PHP ${roundedAmount.toFixed(2)}.`,
+        weeklyFee: {
+          amount:
+            roundedAmount,
+          effective_from:
+            localDateString(
+              new Date(),
+            ),
+          uses_default:
+            false,
+        },
+      });
+    } catch (error) {
+      if (connection) {
+        await connection.rollback();
+      }
+
+      console.error(
+        "Update weekly pickup fee error:",
+        error,
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          "Unable to update the weekly pickup fee.",
+      });
+    } finally {
+      connection?.release();
     }
   },
 );
@@ -339,18 +839,21 @@ router.post(
         });
       }
 
-      const amount = CATEGORY_AMOUNTS[category];
-
       if (
         !Number.isFinite(submittedAmount) ||
-        Math.abs(submittedAmount - amount) > 0.001
+        submittedAmount <= 0
       ) {
         return res.status(400).json({
           success: false,
           message:
-            "The submitted amount does not match the official fee for this category.",
+            "Enter a valid payment amount greater than PHP 0.00.",
         });
       }
+
+      // Residents may submit any positive contribution amount.
+      // Category fees are references only and do not limit the amount paid.
+      const amount =
+        Math.round(submittedAmount * 100) / 100;
 
       if (
         !ALLOWED_METHODS.has(
@@ -1199,5 +1702,163 @@ router.patch(
     }
   },
 );
+
+
+router.delete(
+  "/:id",
+  requireAuth,
+  async (
+    req: AuthRequest,
+    res,
+  ) => {
+    let connection:
+      PoolConnection | null = null;
+
+    let receiptProof: string | null = null;
+    let remittanceProof: string | null = null;
+
+    try {
+      const userId =
+        positiveInteger(req.user?.id);
+
+      const paymentId =
+        positiveInteger(req.params.id);
+
+      if (!userId || !paymentId) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "A valid payment ID is required.",
+        });
+      }
+
+      connection =
+        await db.getConnection();
+
+      await connection.beginTransaction();
+
+      const viewer =
+        await getViewer(
+          userId,
+          connection,
+          true,
+        );
+
+      if (
+        !viewer ||
+        viewer.role !== "super_admin"
+      ) {
+        await connection.rollback();
+
+        return res.status(403).json({
+          success: false,
+          message:
+            "Municipal Administrator access is required to delete payment records.",
+        });
+      }
+
+      const [rows] =
+        await connection.query<any[]>(
+          `
+          SELECT
+            id,
+            transaction_code,
+            receipt_proof,
+            remittance_proof
+          FROM payments
+          WHERE id = ?
+          LIMIT 1
+          FOR UPDATE
+          `,
+          [paymentId],
+        );
+
+      const payment = rows[0];
+
+      if (!payment) {
+        await connection.rollback();
+
+        return res.status(404).json({
+          success: false,
+          message:
+            "Payment record was not found.",
+        });
+      }
+
+      receiptProof =
+        typeof payment.receipt_proof === "string"
+          ? payment.receipt_proof
+          : null;
+
+      remittanceProof =
+        typeof payment.remittance_proof === "string"
+          ? payment.remittance_proof
+          : null;
+
+      const [result] =
+        await connection.execute<any>(
+          `
+          DELETE FROM payments
+          WHERE id = ?
+          `,
+          [paymentId],
+        );
+
+      if (result.affectedRows !== 1) {
+        await connection.rollback();
+
+        return res.status(409).json({
+          success: false,
+          message:
+            "Payment record could not be deleted.",
+        });
+      }
+
+      await connection.commit();
+
+      for (const proof of [
+        receiptProof,
+        remittanceProof,
+      ]) {
+        if (
+          proof &&
+          isStorageReference(proof)
+        ) {
+          await deleteStoredProof(proof).catch(
+            (cleanupError) =>
+              console.error(
+                "Deleted payment proof cleanup error:",
+                cleanupError,
+              ),
+          );
+        }
+      }
+
+      return res.json({
+        success: true,
+        message:
+          `Payment ${payment.transaction_code} was deleted successfully.`,
+      });
+    } catch (error) {
+      if (connection) {
+        await connection.rollback();
+      }
+
+      console.error(
+        "Delete payment error:",
+        error,
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          "Unable to delete the payment record.",
+      });
+    } finally {
+      connection?.release();
+    }
+  },
+);
+
 
 export default router;

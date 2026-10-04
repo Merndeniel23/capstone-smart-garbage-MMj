@@ -2657,6 +2657,477 @@ router.post("/truck-crews", requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
+
+router.patch(
+  "/truck-crews/:id",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    let connection: PoolConnection | undefined;
+
+    try {
+      if (!requireSuperAdmin(req, res)) return;
+      connection = await db.getConnection();
+
+      const truckId = parsePositiveInteger(req.params.id);
+      const truckCode = String(req.body.truckCode || "").trim();
+      const plateNumber = String(req.body.plateNumber || "").trim();
+      const vehicleDescription =
+        String(req.body.vehicleDescription || "").trim() || null;
+      const barangayId = parsePositiveInteger(req.body.barangayId);
+      const collectorUserId = parsePositiveInteger(
+        req.body.existingCollectorId ??
+          req.body.collectorUserId ??
+          req.body.collectorId,
+      );
+      const collectorCrewRole =
+        req.body?.collector?.crewRole === "crew_leader" ||
+        req.body.collectorCrewRole === "crew_leader"
+          ? "crew_leader"
+          : "driver";
+      const crewMembers = Array.isArray(req.body.crewMembers)
+        ? req.body.crewMembers
+        : [];
+
+      if (
+        !truckId ||
+        !truckCode ||
+        !plateNumber ||
+        !barangayId ||
+        !collectorUserId
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Complete the truck, barangay, and existing collector fields before saving.",
+        });
+      }
+
+      if (
+        truckCode.length > 40 ||
+        plateNumber.length > 30 ||
+        (vehicleDescription && vehicleDescription.length > 255) ||
+        crewMembers.length > 20
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Enter valid truck and crew information.",
+        });
+      }
+
+      for (const rawMember of crewMembers) {
+        const fullName = String(rawMember?.fullName || "").trim();
+        const phone = String(rawMember?.phone || "").trim();
+
+        if (
+          fullName.length > 150 ||
+          (phone && !/^\+?\d{7,15}$/.test(phone))
+        ) {
+          return res.status(400).json({
+            success: false,
+            message: "Enter valid crew names and phone numbers.",
+          });
+        }
+      }
+
+      await connection.beginTransaction();
+
+      const [truckRows]: any = await connection.query(
+        `
+        SELECT
+          id,
+          truck_code,
+          status,
+          barangay_id,
+          collector_user_id
+        FROM garbage_trucks
+        WHERE id = ?
+        LIMIT 1
+        FOR UPDATE
+        `,
+        [truckId],
+      );
+
+      const truck = truckRows[0];
+
+      if (!truck) {
+        await connection.rollback();
+
+        return res.status(404).json({
+          success: false,
+          message: "Truck was not found.",
+        });
+      }
+
+      const [barangayRows]: any = await connection.query(
+        `
+        SELECT id
+        FROM barangays
+        WHERE id = ?
+          AND is_active = 1
+        LIMIT 1
+        `,
+        [barangayId],
+      );
+
+      if (!barangayRows.length) {
+        await connection.rollback();
+
+        return res.status(404).json({
+          success: false,
+          message: "Selected barangay was not found or is inactive.",
+        });
+      }
+
+      const [duplicateRows]: any = await connection.query(
+        `
+        SELECT id
+        FROM garbage_trucks
+        WHERE id <> ?
+          AND (
+            LOWER(truck_code) = LOWER(?)
+            OR LOWER(plate_number) = LOWER(?)
+          )
+        LIMIT 1
+        `,
+        [truckId, truckCode, plateNumber],
+      );
+
+      if (duplicateRows.length) {
+        await connection.rollback();
+
+        return res.status(400).json({
+          success: false,
+          message: "Truck code or plate number already exists.",
+        });
+      }
+
+      if (truck.status !== "inactive") {
+        const [barangayConflictRows]: any = await connection.query(
+          `
+          SELECT id, truck_code
+          FROM garbage_trucks
+          WHERE barangay_id = ?
+            AND id <> ?
+            AND status IN ('active', 'maintenance')
+          LIMIT 1
+          `,
+          [barangayId, truckId],
+        );
+
+        if (barangayConflictRows.length) {
+          await connection.rollback();
+
+          return res.status(400).json({
+            success: false,
+            message:
+              `This barangay is already assigned to truck ${barangayConflictRows[0].truck_code}.`,
+          });
+        }
+      }
+
+      const [collectorRows]: any = await connection.query(
+        `
+        SELECT
+          id,
+          full_name,
+          phone,
+          role,
+          status,
+          barangay_id,
+          email_verified_at,
+          EXISTS(
+            SELECT 1
+            FROM email_verifications ev
+            WHERE ev.user_id = users.id
+          ) AS has_email_verification
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+        FOR UPDATE
+        `,
+        [collectorUserId],
+      );
+
+      const collector = collectorRows[0];
+
+      if (!collector || collector.role !== "collector") {
+        await connection.rollback();
+
+        return res.status(404).json({
+          success: false,
+          message: "Selected Garbage Collector account was not found.",
+        });
+      }
+
+      const isCurrentCollector =
+        Number(truck.collector_user_id) === Number(collectorUserId);
+
+      if (
+        (!isCurrentCollector && collector.status !== "active") ||
+        requiresEmailVerification(collector)
+      ) {
+        await connection.rollback();
+
+        return res.status(400).json({
+          success: false,
+          message:
+            "The selected Garbage Collector account must be active and email-verified.",
+        });
+      }
+
+      if (Number(collector.barangay_id) !== Number(barangayId)) {
+        await connection.rollback();
+
+        return res.status(400).json({
+          success: false,
+          message:
+            "The selected collector must belong to the assigned barangay.",
+        });
+      }
+
+      const [collectorConflictRows]: any = await connection.query(
+        `
+        SELECT id, truck_code
+        FROM garbage_trucks
+        WHERE collector_user_id = ?
+          AND id <> ?
+          AND status IN ('active', 'maintenance')
+        LIMIT 1
+        `,
+        [collectorUserId, truckId],
+      );
+
+      if (collectorConflictRows.length) {
+        await connection.rollback();
+
+        return res.status(400).json({
+          success: false,
+          message:
+            `The selected collector is already assigned to truck ${collectorConflictRows[0].truck_code}.`,
+        });
+      }
+
+      await connection.execute(
+        `
+        UPDATE garbage_trucks
+        SET
+          truck_code = ?,
+          plate_number = ?,
+          vehicle_description = ?,
+          barangay_id = ?,
+          collector_user_id = ?
+        WHERE id = ?
+        `,
+        [
+          truckCode,
+          plateNumber,
+          vehicleDescription,
+          barangayId,
+          collectorUserId,
+          truckId,
+        ],
+      );
+
+      await connection.execute(
+        `
+        DELETE FROM truck_crew_members
+        WHERE truck_id = ?
+        `,
+        [truckId],
+      );
+
+      await connection.execute(
+        `
+        INSERT INTO truck_crew_members
+        (
+          truck_id,
+          full_name,
+          crew_role,
+          phone,
+          status
+        )
+        VALUES (?, ?, ?, ?, ?)
+        `,
+        [
+          truckId,
+          String(collector.full_name || "Collector"),
+          collectorCrewRole,
+          collector.phone || null,
+          truck.status === "inactive" ? "inactive" : "active",
+        ],
+      );
+
+      for (const rawMember of crewMembers) {
+        const fullName = String(rawMember?.fullName || "").trim();
+        if (!fullName) continue;
+
+        const role =
+          rawMember?.role === "loader"
+            ? "loader"
+            : "helper";
+        const phone =
+          String(rawMember?.phone || "").trim() || null;
+
+        await connection.execute(
+          `
+          INSERT INTO truck_crew_members
+          (
+            truck_id,
+            full_name,
+            crew_role,
+            phone,
+            status
+          )
+          VALUES (?, ?, ?, ?, ?)
+          `,
+          [
+            truckId,
+            fullName,
+            role,
+            phone,
+            truck.status === "inactive" ? "inactive" : "active",
+          ],
+        );
+      }
+
+      await connection.commit();
+
+      return res.json({
+        success: true,
+        message: `${truckCode} and its crew assignment were updated successfully.`,
+      });
+    } catch (error: any) {
+      await connection?.rollback();
+      console.error("Update truck crew error:", error);
+
+      if (error?.code === "ER_DUP_ENTRY") {
+        return res.status(400).json({
+          success: false,
+          message: "Truck code or plate number already exists.",
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Unable to update the truck and crew assignment.",
+      });
+    } finally {
+      connection?.release();
+    }
+  },
+);
+
+router.delete(
+  "/truck-crews/:id",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    let connection: PoolConnection | undefined;
+
+    try {
+      if (!requireSuperAdmin(req, res)) return;
+      connection = await db.getConnection();
+
+      const truckId = parsePositiveInteger(req.params.id);
+
+      if (!truckId) {
+        return res.status(400).json({
+          success: false,
+          message: "A valid truck ID is required.",
+        });
+      }
+
+      await connection.beginTransaction();
+
+      const [truckRows]: any = await connection.query(
+        `
+        SELECT
+          id,
+          truck_code,
+          collector_user_id
+        FROM garbage_trucks
+        WHERE id = ?
+        LIMIT 1
+        FOR UPDATE
+        `,
+        [truckId],
+      );
+
+      const truck = truckRows[0];
+
+      if (!truck) {
+        await connection.rollback();
+
+        return res.status(404).json({
+          success: false,
+          message: "Truck was not found.",
+        });
+      }
+
+      const [historyRows]: any = await connection.query(
+        `
+        SELECT COUNT(*) AS total
+        FROM collection_runs
+        WHERE truck_id = ?
+        `,
+        [truckId],
+      );
+
+      if (Number(historyRows[0]?.total || 0) > 0) {
+        await connection.rollback();
+
+        return res.status(409).json({
+          success: false,
+          message:
+            "This truck already has collection-run history and cannot be deleted. Set it to Inactive instead so historical records remain intact.",
+        });
+      }
+
+      await connection.execute(
+        `
+        DELETE FROM truck_crew_members
+        WHERE truck_id = ?
+        `,
+        [truckId],
+      );
+
+      const [deleteResult]: any = await connection.execute(
+        `
+        DELETE FROM garbage_trucks
+        WHERE id = ?
+        `,
+        [truckId],
+      );
+
+      if (deleteResult.affectedRows !== 1) {
+        await connection.rollback();
+
+        return res.status(409).json({
+          success: false,
+          message: "Truck could not be deleted.",
+        });
+      }
+
+      await connection.commit();
+
+      return res.json({
+        success: true,
+        message:
+          `${truck.truck_code} and its crew roster were deleted. The collector login account was kept for reassignment.`,
+      });
+    } catch (error) {
+      await connection?.rollback();
+      console.error("Delete truck crew error:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Unable to delete the truck and crew roster.",
+      });
+    } finally {
+      connection?.release();
+    }
+  },
+);
+
 router.patch(
   "/truck-crews/:id/status",
   requireAuth,
@@ -2756,6 +3227,34 @@ router.patch(
             success: false,
             message:
               `Barangay is already assigned to truck ${conflictRows[0].truck_code}.`,
+          });
+        }
+      }
+
+      if (
+        status !== "inactive" &&
+        truck.collector_user_id
+      ) {
+        const [collectorConflictRows]: any =
+          await connection.query(
+            `
+            SELECT id, truck_code
+            FROM garbage_trucks
+            WHERE collector_user_id = ?
+              AND id <> ?
+              AND status IN ('active', 'maintenance')
+            LIMIT 1
+            `,
+            [truck.collector_user_id, truckId],
+          );
+
+        if (collectorConflictRows.length) {
+          await connection.rollback();
+
+          return res.status(400).json({
+            success: false,
+            message:
+              `The assigned collector is already active on truck ${collectorConflictRows[0].truck_code}.`,
           });
         }
       }

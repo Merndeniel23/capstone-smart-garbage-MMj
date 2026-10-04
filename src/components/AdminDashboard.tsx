@@ -456,7 +456,7 @@ export default function AdminDashboard({
           adminActionCounts.pendingPayments > 0) && (
           <section
             aria-live="polite"
-            className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm"
+            className="sg-admin-attention-card rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm"
           >
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>

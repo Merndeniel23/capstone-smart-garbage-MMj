@@ -361,7 +361,7 @@ export default function NotificationsPanel({
   }> = [
     {
       id: "all",
-      label: "All alerts",
+      label: "All notifications",
       count: filterCounts.all,
     },
     {
@@ -610,7 +610,7 @@ export default function NotificationsPanel({
           </div>
 
           <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-900 md:text-3xl">
-            System Alerts & Notices
+            Notifications
           </h1>
 
           <p className="mt-1 text-sm text-slate-500">
@@ -761,7 +761,7 @@ export default function NotificationsPanel({
               }
               aria-label="Search notifications"
               className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-9 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white"
-              placeholder="Search alerts, sender, or area"
+              placeholder="Search notifications, sender, or area"
             />
             {searchTerm && (
               <button
@@ -787,7 +787,7 @@ export default function NotificationsPanel({
         <div className="flex min-h-12 items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
           <p className="text-xs font-semibold text-slate-500">
             Showing {visibleNotifications.length} of{" "}
-            {filteredNotifications.length} matching alert
+            {filteredNotifications.length} matching notification
             {filteredNotifications.length === 1
               ? ""
               : "s"}
@@ -988,7 +988,7 @@ export default function NotificationsPanel({
           <div className="flex flex-col items-center gap-2 border-t border-slate-100 p-3 sm:flex-row sm:justify-between">
             <p className="text-xs text-slate-500">
               {filteredNotifications.length -
-                visibleNotifications.length} more alert
+                visibleNotifications.length} more notification
               {filteredNotifications.length -
                 visibleNotifications.length ===
               1

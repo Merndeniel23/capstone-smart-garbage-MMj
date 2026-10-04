@@ -1908,11 +1908,11 @@ router.post(
       }
 
       if (
-        Number(resetRequest.attempt_count || 0) >= 5 ||
-        !otpMatches(accountEmail, otp, resetRequest.otp_hash)
+        Number(resetRequest.attempt_count || 0) >= 5
       ) {
-        return res.status(400).json({
-          message: "Incorrect or expired OTP.",
+        return res.status(429).json({
+          message:
+            "Too many incorrect OTP attempts. Request a new code.",
         });
       }
 
@@ -1935,9 +1935,32 @@ router.post(
         });
       }
 
-      if (!resetRequest.verified_at) {
+      /*
+       * The reset form submits the OTP and new password together.
+       * Therefore /reset-password must be able to validate the OTP itself
+       * instead of requiring a separate /verify-otp request first.
+       */
+      if (!otpMatches(accountEmail, otp, resetRequest.otp_hash)) {
+        const [attemptResult] = await db.execute<any>(
+          `
+          UPDATE password_resets
+          SET attempt_count = attempt_count + 1
+          WHERE id = ?
+            AND consumed_at IS NULL
+            AND attempt_count < 5
+          `,
+          [resetRequest.id],
+        );
+
+        if (Number(attemptResult.affectedRows) !== 1) {
+          return res.status(429).json({
+            message:
+              "Too many incorrect OTP attempts. Request a new code.",
+          });
+        }
+
         return res.status(400).json({
-          message: "Verify the OTP before resetting the password.",
+          message: "Incorrect or expired OTP.",
         });
       }
 
@@ -1956,10 +1979,12 @@ router.post(
         const [consumeResult] = await connection.execute<any>(
           `
           UPDATE password_resets
-          SET consumed_at = NOW()
+          SET
+            verified_at = COALESCE(verified_at, NOW()),
+            consumed_at = NOW()
           WHERE id = ?
             AND consumed_at IS NULL
-            AND verified_at IS NOT NULL
+            AND attempt_count < 5
             AND expires_at > NOW()
           `,
           [resetRequest.id],

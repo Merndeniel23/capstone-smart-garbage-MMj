@@ -51,6 +51,37 @@ html.sg-dark .sg-app-shell [class~="text-gray-500"] {
   color: #cbd5e1 !important;
 }
 
+/* Purpose-built dark surfaces for alert/reminder cards that intentionally
+   use amber/emerald light-mode backgrounds. Without these overrides, the
+   global dark text mapping can place light text on a light tinted card. */
+html.sg-dark .sg-app-shell .sg-payment-reminder-card {
+  background-color: #2a1d0b !important;
+  border-color: #92400e !important;
+}
+
+html.sg-dark .sg-app-shell .sg-weekly-fee-card {
+  background-color: #062d24 !important;
+  border-color: #047857 !important;
+}
+
+html.sg-dark .sg-app-shell .sg-admin-attention-card {
+  background-color: #2a1d0b !important;
+  border-color: #92400e !important;
+}
+
+html.sg-dark .sg-app-shell .sg-payment-reminder-card [class~="text-amber-700"],
+html.sg-dark .sg-app-shell .sg-admin-attention-card [class~="text-amber-700"] {
+  color: #fbbf24 !important;
+}
+
+html.sg-dark .sg-app-shell .sg-weekly-fee-card [class~="text-emerald-700"] {
+  color: #6ee7b7 !important;
+}
+
+html.sg-dark .sg-app-shell .sg-admin-attention-card [class~="text-amber-800"] {
+  color: #fcd34d !important;
+}
+
 html.sg-dark .sg-app-shell [class*="hover:bg-white"]:hover,
 html.sg-dark .sg-app-shell [class*="hover:bg-slate-50"]:hover,
 html.sg-dark .sg-app-shell [class*="hover:bg-slate-100"]:hover,

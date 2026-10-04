@@ -5,6 +5,7 @@ import {
   Eye,
   Loader2,
   Plus,
+  Pencil,
   RefreshCw,
   Save,
   Trash2,
@@ -115,6 +116,9 @@ export default function TruckCrewManagement() {
   const [fleetPage, setFleetPage] = useState(1);
   const [fleetPageSize, setFleetPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [selectedTruckId, setSelectedTruckId] = useState<number | null>(null);
+  const [editingTruckId, setEditingTruckId] = useState<number | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<TruckRecord | null>(null);
+  const [deletingTruck, setDeletingTruck] = useState(false);
 
   const [truckCode, setTruckCode] = useState("");
   const [plateNumber, setPlateNumber] = useState("");
@@ -132,20 +136,54 @@ export default function TruckCrewManagement() {
     { fullName: "", role: "loader", phone: "" },
   ]);
 
+  const editingTruck = useMemo(
+    () =>
+      trucks.find(
+        (truck) =>
+          Number(truck.id) === Number(editingTruckId),
+      ) || null,
+    [editingTruckId, trucks],
+  );
+
+  const enforceBarangayExclusivity =
+    !editingTruck ||
+    editingTruck.status !== "inactive";
+
   const activeTruckBarangays = useMemo(
-    () => new Set(trucks.filter((truck) => truck.status !== "inactive").map((truck) => Number(truck.barangay_id))),
-    [trucks],
+    () =>
+      new Set(
+        trucks
+          .filter(
+            (truck) =>
+              truck.status !== "inactive" &&
+              Number(truck.id) !== Number(editingTruckId),
+          )
+          .map((truck) => Number(truck.barangay_id)),
+      ),
+    [editingTruckId, trucks],
   );
 
   const availableCollectors = useMemo(
     () =>
       collectors.filter(
         (collector) =>
-          collector.status === "active" &&
+          (
+            collector.status === "active" ||
+            trucks.some(
+              (truck) =>
+                Number(truck.id) === Number(editingTruckId) &&
+                Number(truck.collector_user_id) === Number(collector.id),
+            )
+          ) &&
           Number(collector.barangay_id) === Number(barangayId) &&
-          !trucks.some((truck) => truck.status !== "inactive" && Number(truck.collector_user_id) === Number(collector.id)),
+          !trucks.some(
+            (truck) =>
+              truck.status !== "inactive" &&
+              Number(truck.id) !== Number(editingTruckId) &&
+              Number(truck.collector_user_id) === Number(collector.id),
+          ),
       ),
-    [collectors, barangayId, trucks],
+    [collectors, barangayId, editingTruckId, trucks],
   );
 
   const fleetPageCount = Math.max(1, Math.ceil(trucks.length / fleetPageSize));
@@ -198,21 +236,106 @@ export default function TruckCrewManagement() {
     setCrew([{ fullName: "", role: "loader", phone: "" }]);
     setShowValidation(false);
     setShowReview(false);
+    setEditingTruckId(null);
   };
 
   const updateCrew = (index: number, patch: Partial<CrewDraft>) => {
     setCrew((current) => current.map((item, i) => (i === index ? { ...item, ...patch } : item)));
   };
 
+  const startEditTruck = (truck: TruckRecord) => {
+    const primaryCrew = truck.crew_members.find(
+      (member) =>
+        member.crew_role === "driver" ||
+        member.crew_role === "crew_leader",
+    );
+
+    setEditingTruckId(truck.id);
+    setTruckCode(truck.truck_code || "");
+    setPlateNumber(truck.plate_number || "");
+    setVehicleDescription(truck.vehicle_description || "");
+    setBarangayId(truck.barangay_id ? String(truck.barangay_id) : "");
+    setCollectorMode("existing");
+    setExistingCollectorId(
+      truck.collector_user_id ? String(truck.collector_user_id) : "",
+    );
+    setCollectorName("");
+    setCollectorEmail("");
+    setCollectorPhone("");
+    setTemporaryPassword("");
+    setCollectorCrewRole(
+      primaryCrew?.crew_role === "crew_leader"
+        ? "crew_leader"
+        : "driver",
+    );
+    setCrew(
+      truck.crew_members
+        .filter(
+          (member) =>
+            member.crew_role === "loader" ||
+            member.crew_role === "helper",
+        )
+        .map((member) => ({
+          fullName: member.full_name,
+          role: member.crew_role as "loader" | "helper",
+          phone: member.phone || "",
+        })),
+    );
+    setShowValidation(false);
+    setShowReview(false);
+    setError("");
+    setNotice("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const deleteTruck = async () => {
+    if (!deleteConfirmation || deletingTruck) return;
+
+    setDeletingTruck(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const data = await apiRequest(
+        `/admin/truck-crews/${deleteConfirmation.id}`,
+        { method: "DELETE" },
+      );
+
+      setNotice(
+        data.message ||
+          `${deleteConfirmation.truck_code} was deleted.`,
+      );
+
+      if (editingTruckId === deleteConfirmation.id) {
+        resetForm();
+      }
+
+      setSelectedTruckId((current) =>
+        current === deleteConfirmation.id ? null : current,
+      );
+      setDeleteConfirmation(null);
+      await loadData();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to delete truck and crew.",
+      );
+      setDeleteConfirmation(null);
+    } finally {
+      setDeletingTruck(false);
+    }
+  };
+
   const validationErrors: Record<string, string> = {};
   if (!truckCode.trim()) validationErrors.truckCode = "Enter a truck code.";
-  else if (trucks.some((truck) => truck.truck_code.toLowerCase() === truckCode.trim().toLowerCase())) validationErrors.truckCode = "This truck code is already registered.";
+  else if (trucks.some((truck) => Number(truck.id) !== Number(editingTruckId) && truck.truck_code.toLowerCase() === truckCode.trim().toLowerCase())) validationErrors.truckCode = "This truck code is already registered.";
   if (!plateNumber.trim()) validationErrors.plateNumber = "Enter a plate number.";
-  else if (trucks.some((truck) => truck.plate_number.toLowerCase() === plateNumber.trim().toLowerCase())) validationErrors.plateNumber = "This plate number is already registered.";
+  else if (trucks.some((truck) => Number(truck.id) !== Number(editingTruckId) && truck.plate_number.toLowerCase() === plateNumber.trim().toLowerCase())) validationErrors.plateNumber = "This plate number is already registered.";
   if (!barangayId) validationErrors.barangay = "Select the assigned barangay.";
-  else if (activeTruckBarangays.has(Number(barangayId))) validationErrors.barangay = "This barangay already has an active or maintenance assignment.";
-  if (collectorMode === "existing") {
-    if (!availableCollectors.some((collector) => Number(collector.id) === Number(existingCollectorId))) validationErrors.collector = "Select an available collector in this barangay, or create a new account.";
+  else if (enforceBarangayExclusivity && activeTruckBarangays.has(Number(barangayId))) validationErrors.barangay = "This barangay already has an active or maintenance assignment.";
+  if (collectorMode === "existing" || editingTruckId) {
+    if (!availableCollectors.some((collector) => Number(collector.id) === Number(existingCollectorId))) validationErrors.collector = "Select an available collector in this barangay.";
   } else {
     if (!collectorName.trim()) validationErrors.collectorName = "Enter the collector's full name.";
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(collectorEmail.trim())) validationErrors.collectorEmail = "Enter a valid collector email address.";
@@ -278,15 +401,22 @@ export default function TruckCrewManagement() {
           .filter((member) => member.fullName),
       };
 
-      const data = await apiRequest("/admin/truck-crews", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
+      const data = await apiRequest(
+        editingTruckId
+          ? `/admin/truck-crews/${editingTruckId}`
+          : "/admin/truck-crews",
+        {
+          method: editingTruckId ? "PATCH" : "POST",
+          body: JSON.stringify(payload),
+        },
+      );
 
-      setNotice(data.message || (data.requiresEmailVerification
-        ? "Truck and crew registered. The new collector must verify their email before signing in."
-        : "Truck and crew registered successfully."));
-      if (data.requiresEmailVerification) {
+      setNotice(data.message || (editingTruckId
+        ? "Truck and crew updated successfully."
+        : data.requiresEmailVerification
+          ? "Truck and crew registered. The new collector must verify their email before signing in."
+          : "Truck and crew registered successfully."));
+      if (!editingTruckId && data.requiresEmailVerification) {
         setVerification({ email: data.email || collectorEmail.trim().toLowerCase(), resendAfter: Number(data.resendAfter) || 60 });
       }
       resetForm();
@@ -361,8 +491,28 @@ export default function TruckCrewManagement() {
       <div className="grid items-start gap-7 2xl:grid-cols-[1.15fr_1fr]">
         <form noValidate onSubmit={reviewRegistration} className="space-y-5 rounded-[2rem] border border-slate-100 bg-white p-5 shadow-sm sm:p-6">
           <div>
-            <h2 className="text-xl font-black text-slate-900">Register Truck & Collection Crew</h2>
-            <p className="mt-1 text-sm text-slate-500">Complete the sections, then review before registering. Fields marked * are required.</p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-black text-slate-900">
+                  {editingTruckId ? "Edit Truck & Collection Crew" : "Register Truck & Collection Crew"}
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {editingTruckId
+                    ? "Update the truck, assigned collector, or crew roster, then review and save."
+                    : "Complete the sections, then review before registering. Fields marked * are required."}
+                </p>
+              </div>
+              {editingTruckId && (
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  disabled={saving}
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel Edit
+                </button>
+              )}
+            </div>
           </div>
 
           <fieldset disabled={saving} className="space-y-4">
@@ -381,8 +531,19 @@ export default function TruckCrewManagement() {
             <select required aria-invalid={showValidation && !!validationErrors.barangay} value={barangayId} onChange={(e) => { setBarangayId(e.target.value); setExistingCollectorId(""); }} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-800 outline-none focus:border-emerald-500">
               <option value="">Select barangay</option>
               {barangays.map((barangay) => (
-                <option key={barangay.id} value={barangay.id} disabled={activeTruckBarangays.has(Number(barangay.id))}>
-                  {barangay.name}{activeTruckBarangays.has(Number(barangay.id)) ? " — already assigned" : ""}
+                <option
+                  key={barangay.id}
+                  value={barangay.id}
+                  disabled={
+                    enforceBarangayExclusivity &&
+                    activeTruckBarangays.has(Number(barangay.id))
+                  }
+                >
+                  {barangay.name}
+                  {enforceBarangayExclusivity &&
+                  activeTruckBarangays.has(Number(barangay.id))
+                    ? " — already assigned"
+                    : ""}
                 </option>
               ))}
             </select>
@@ -398,42 +559,48 @@ export default function TruckCrewManagement() {
             </legend>
             <p className="mb-4 text-xs text-slate-500">This person uses the Collector login account.</p>
 
-            <div className="mb-4 grid gap-3 sm:grid-cols-2">
-              <button
-                type="button"
-                aria-pressed={collectorMode === "existing"}
-                onClick={() => {
-                  setCollectorMode("existing");
-                  setCollectorName("");
-                  setCollectorEmail("");
-                  setCollectorPhone("");
-                  setTemporaryPassword("");
-                }}
-                className={`rounded-xl border px-4 py-3 text-sm font-black ${
-                  collectorMode === "existing"
-                    ? "border-emerald-600 bg-emerald-50 text-emerald-700"
-                    : "border-slate-200 bg-white text-slate-600"
-                }`}
-              >
-                Select Existing Collector
-              </button>
+            {!editingTruckId ? (
+              <div className="mb-4 grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  aria-pressed={collectorMode === "existing"}
+                  onClick={() => {
+                    setCollectorMode("existing");
+                    setCollectorName("");
+                    setCollectorEmail("");
+                    setCollectorPhone("");
+                    setTemporaryPassword("");
+                  }}
+                  className={`rounded-xl border px-4 py-3 text-sm font-black ${
+                    collectorMode === "existing"
+                      ? "border-emerald-600 bg-emerald-50 text-emerald-700"
+                      : "border-slate-200 bg-white text-slate-600"
+                  }`}
+                >
+                  Select Existing Collector
+                </button>
 
-              <button
-                type="button"
-                aria-pressed={collectorMode === "new"}
-                onClick={() => {
-                  setCollectorMode("new");
-                  setExistingCollectorId("");
-                }}
-                className={`rounded-xl border px-4 py-3 text-sm font-black ${
-                  collectorMode === "new"
-                    ? "border-emerald-600 bg-emerald-50 text-emerald-700"
-                    : "border-slate-200 bg-white text-slate-600"
-                }`}
-              >
-                Create New Collector Account
-              </button>
-            </div>
+                <button
+                  type="button"
+                  aria-pressed={collectorMode === "new"}
+                  onClick={() => {
+                    setCollectorMode("new");
+                    setExistingCollectorId("");
+                  }}
+                  className={`rounded-xl border px-4 py-3 text-sm font-black ${
+                    collectorMode === "new"
+                      ? "border-emerald-600 bg-emerald-50 text-emerald-700"
+                      : "border-slate-200 bg-white text-slate-600"
+                  }`}
+                >
+                  Create New Collector Account
+                </button>
+              </div>
+            ) : (
+              <p className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-bold text-emerald-700">
+                Editing uses an existing active collector account. To create a new collector account, finish or cancel this edit first.
+              </p>
+            )}
 
             {collectorMode === "existing" ? (
               <label className="block">
@@ -520,13 +687,21 @@ export default function TruckCrewManagement() {
           </fieldset>
 
           <div className="border-t border-slate-100 pt-5">
-          <h3 className="font-black text-slate-900">5. Review & Register</h3>
+          <h3 className="font-black text-slate-900">
+            5. {editingTruckId ? "Review & Save Changes" : "Review & Register"}
+          </h3>
           <p className="mb-4 mt-1 text-xs text-slate-500">Review the vehicle, assignment, and crew before saving.</p>
           {error && <p role="alert" className="mb-3 rounded-xl bg-rose-50 p-3 text-sm font-bold text-rose-700">{error}</p>}
           {showValidation && Object.keys(validationErrors).length > 0 && <p role="alert" className="mb-3 rounded-xl bg-rose-50 p-3 text-sm font-bold text-rose-700">Please correct the highlighted fields before continuing.</p>}
           <button type="submit" disabled={saving} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3.5 text-sm font-black text-white disabled:opacity-60">
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            {saving ? "Registering..." : "Review Truck & Crew"}
+            {saving
+              ? editingTruckId
+                ? "Saving Changes..."
+                : "Registering..."
+              : editingTruckId
+                ? "Review Changes"
+                : "Review Truck & Crew"}
           </button>
           </div>
         </form>
@@ -559,11 +734,29 @@ export default function TruckCrewManagement() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                   <button type="button" onClick={() => setSelectedTruckId((current) => current === truck.id ? null : truck.id)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-2 text-[10px] font-black uppercase text-slate-700 hover:border-emerald-400 hover:text-emerald-700" title={selectedTruckId === truck.id ? "Hide truck details" : "View truck details"} aria-expanded={selectedTruckId === truck.id}>
                     <Eye className="h-3.5 w-3.5" /> {selectedTruckId === truck.id ? "Hide" : "Details"}
                   </button>
-                  <select aria-label={`Status for truck ${truck.truck_code}`} value={truck.status} disabled={updatingStatus || saving} onChange={(e) => setStatusConfirmation({ truck, status: e.target.value as TruckRecord["status"] })} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 outline-none disabled:opacity-50">
+                  <button
+                    type="button"
+                    onClick={() => startEditTruck(truck)}
+                    disabled={saving || deletingTruck}
+                    className="inline-flex items-center gap-1 rounded-lg border border-blue-200 px-2.5 py-2 text-[10px] font-black uppercase text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                    title={`Edit ${truck.truck_code}`}
+                  >
+                    <Pencil className="h-3.5 w-3.5" /> Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeleteConfirmation(truck)}
+                    disabled={saving || deletingTruck}
+                    className="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2.5 py-2 text-[10px] font-black uppercase text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                    title={`Delete ${truck.truck_code}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Delete
+                  </button>
+                  <select aria-label={`Status for truck ${truck.truck_code}`} value={truck.status} disabled={updatingStatus || saving || deletingTruck} onChange={(e) => setStatusConfirmation({ truck, status: e.target.value as TruckRecord["status"] })} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 outline-none disabled:opacity-50">
                     <option value="active">Active</option>
                     <option value="maintenance">Maintenance</option>
                     <option value="inactive">Inactive</option>
@@ -603,7 +796,7 @@ export default function TruckCrewManagement() {
       </div>
       <ConfirmDialog
         open={showReview}
-        title="Review Truck & Crew"
+        title={editingTruckId ? "Review Truck & Crew Changes" : "Review Truck & Crew"}
         description={
           <div className="space-y-4">
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
@@ -619,7 +812,7 @@ export default function TruckCrewManagement() {
             <p className="text-xs">Helpers and loaders receive no login accounts. {collectorMode === "new" && "The collector must verify their email with a 6-digit code before signing in. Share the temporary password securely; they must change it on first login."}</p>
           </div>
         }
-        confirmLabel="Register Truck & Crew"
+        confirmLabel={editingTruckId ? "Save Changes" : "Register Truck & Crew"}
         cancelLabel="Back to Form"
         busy={saving}
         onCancel={() => setShowReview(false)}
@@ -634,6 +827,22 @@ export default function TruckCrewManagement() {
         busy={updatingStatus}
         onCancel={() => setStatusConfirmation(null)}
         onConfirm={() => { if (statusConfirmation) void changeTruckStatus(statusConfirmation.truck, statusConfirmation.status); }}
+      />
+      <ConfirmDialog
+        open={!!deleteConfirmation}
+        title="Delete truck and crew?"
+        description={
+          deleteConfirmation
+            ? `Delete ${deleteConfirmation.truck_code} and its crew roster? The collector login account will be kept for reassignment. Trucks with collection-run history cannot be deleted and should be set to Inactive instead.`
+            : ""
+        }
+        confirmLabel="Delete Truck"
+        destructive
+        busy={deletingTruck}
+        onCancel={() => {
+          if (!deletingTruck) setDeleteConfirmation(null);
+        }}
+        onConfirm={() => void deleteTruck()}
       />
       {verification && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">

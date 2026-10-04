@@ -1,5 +1,13 @@
 import express from "express";
+import crypto from "crypto";
 import { db } from "../config/db.js";
+import {
+  deleteStoredProof,
+  imageExtensionForDataUrl,
+  isCloudStorageConfigured,
+  signedProofUrl,
+  storeProof,
+} from "../config/storage.js";
 import {
   requireAuth,
   type AuthRequest,
@@ -18,6 +26,14 @@ function normalizeStatus(value: unknown): string {
 function needsCollection(status: string): boolean {
   return ["full", "overflowing", "overflow"].includes(status);
 }
+
+const fillLevelByStatus: Record<string, number> = {
+  empty: 10,
+  half_full: 50,
+  full: 90,
+  overflowing: 100,
+  damaged: 0,
+};
 
 // GET all inspections
 router.get(
@@ -94,7 +110,14 @@ router.get(
         LIMIT 500
       `, values);
 
-      return res.json(rows);
+      const inspections = await Promise.all(
+        (rows as any[]).map(async (inspection: any) => ({
+          ...inspection,
+          photo_path: await signedProofUrl(inspection.photo_path),
+        })),
+      );
+
+      return res.json(inspections);
     } catch (error) {
       console.error("Load inspections error:", error);
 
@@ -111,15 +134,13 @@ router.post(
   requireAuth,
   async (req: AuthRequest, res) => {
     const connection = await db.getConnection();
+    let uploadedPhotoReference: string | null = null;
 
     try {
       const binId = Number(req.body.bin_id);
       const status = normalizeStatus(req.body.status);
-      const estimatedFillLevel = Number(
-        req.body.estimated_fill_level ?? 0,
-      );
       const remarks = String(req.body.remarks || "").trim();
-      const photoPath = req.body.photo_path || null;
+      const photoInput = String(req.body.photo_path || "").trim();
       const leaderId = req.user?.id;
 
       if (!["purok_leader", "leader"].includes(String(req.user?.role || "").toLowerCase())) {
@@ -150,18 +171,6 @@ router.post(
         });
       }
 
-      if (
-        photoPath !== null &&
-        (typeof photoPath !== "string" ||
-          photoPath.length > 255 ||
-          !/^(?:https?:\/\/|data:image\/)/i.test(photoPath))
-      ) {
-        return res.status(400).json({
-          success: false,
-          message: "Inspection photo must be an HTTPS URL or image data.",
-        });
-      }
-
       const allowedStatuses = [
         "empty",
         "half_full",
@@ -177,14 +186,12 @@ router.post(
         });
       }
 
-      if (
-        !Number.isInteger(estimatedFillLevel) ||
-        estimatedFillLevel < 0 ||
-        estimatedFillLevel > 100
-      ) {
+      const estimatedFillLevel = fillLevelByStatus[status];
+
+      if (estimatedFillLevel === undefined) {
         return res.status(400).json({
           success: false,
-          message: "Estimated fill level must be from 0 to 100.",
+          message: "Unable to determine the inspection fill level.",
         });
       }
 
@@ -227,6 +234,62 @@ router.post(
         });
       }
 
+      let photoReference: string | null = null;
+
+      if (photoInput) {
+        if (/^data:image\//i.test(photoInput)) {
+          if (!isCloudStorageConfigured()) {
+            return res.status(503).json({
+              success: false,
+              message:
+                "Inspection image storage is not configured. Submit without a photo or configure Supabase Storage.",
+            });
+          }
+
+          let extension: "png" | "jpg" | "webp";
+
+          try {
+            extension = imageExtensionForDataUrl(photoInput);
+          } catch {
+            return res.status(400).json({
+              success: false,
+              message:
+                "Choose a valid JPG, PNG, or WebP image up to 3.5 MB.",
+            });
+          }
+
+          const storagePath =
+            `inspections/${leaderId}/${Date.now()}-${crypto.randomUUID()}.${extension}`;
+
+          try {
+            photoReference = await storeProof(photoInput, storagePath);
+            uploadedPhotoReference = photoReference;
+          } catch (storageError) {
+            console.error("Inspection photo upload error:", storageError);
+
+            return res.status(500).json({
+              success: false,
+              message: "Unable to upload the inspection photo.",
+            });
+          }
+        } else if (/^https:\/\//i.test(photoInput)) {
+          // Backward compatibility for older records/API clients.
+          if (photoInput.length > 255) {
+            return res.status(400).json({
+              success: false,
+              message: "Inspection photo URL is too long.",
+            });
+          }
+
+          photoReference = photoInput;
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: "Choose a JPG, PNG, or WebP inspection photo.",
+          });
+        }
+      }
+
       await connection.beginTransaction();
 
       const [inspectionResult]: any =
@@ -248,7 +311,7 @@ router.post(
             status,
             estimatedFillLevel,
             remarks || null,
-            photoPath,
+            photoReference,
           ],
         );
 
@@ -368,6 +431,14 @@ router.post(
       });
     } catch (error) {
       await connection.rollback();
+
+      if (uploadedPhotoReference) {
+        try {
+          await deleteStoredProof(uploadedPhotoReference);
+        } catch (cleanupError) {
+          console.error("Inspection photo cleanup error:", cleanupError);
+        }
+      }
 
       console.error("Save inspection error:", error);
 

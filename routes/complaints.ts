@@ -1,5 +1,13 @@
 import { Router } from "express";
+import crypto from "crypto";
 import { db } from "../config/db.js";
+import {
+  deleteStoredProof,
+  imageExtensionForDataUrl,
+  isCloudStorageConfigured,
+  signedProofUrl,
+  storeProof,
+} from "../config/storage.js";
 import {
   requireAuth,
   type AuthRequest,
@@ -487,16 +495,22 @@ router.get(
       }
 
       const complaints =
-        complaintRows.map(
-          (complaint: any) => ({
-            ...complaint,
-            messages:
-              messagesByComplaint.get(
-                Number(
-                  complaint.id,
+        await Promise.all(
+          complaintRows.map(
+            async (complaint: any) => ({
+              ...complaint,
+              photo_url:
+                await signedProofUrl(
+                  complaint.photo_url,
                 ),
-              ) || [],
-          }),
+              messages:
+                messagesByComplaint.get(
+                  Number(
+                    complaint.id,
+                  ),
+                ) || [],
+            }),
+          ),
         );
 
       return res.json({
@@ -534,6 +548,9 @@ router.post(
     const connection =
       await db.getConnection();
 
+    let uploadedPhotoReference:
+      string | null = null;
+
     try {
       const viewer =
         await getCurrentDatabaseUser(req);
@@ -546,11 +563,14 @@ router.post(
         });
       }
 
-      if (!isResident(viewer.role)) {
+      if (
+        !isResident(viewer.role) &&
+        !isPurokLeader(viewer.role)
+      ) {
         return res.status(403).json({
           success: false,
           message:
-            "Only residents can submit complaints.",
+            "Only residents and Purok Leaders can submit complaints.",
         });
       }
 
@@ -569,7 +589,7 @@ router.post(
         req.body.phone || "",
       ).trim();
 
-      const photoUrl = String(
+      const photoInput = String(
         req.body.photo_url ||
           req.body.visualMockUrl ||
           "",
@@ -582,18 +602,81 @@ router.post(
         });
       }
 
-      if (phone.length > 30 || photoUrl.length > 255) {
+      if (phone.length > 30) {
         return res.status(400).json({
           success: false,
-          message: "Contact number or photo reference is too long.",
+          message: "Contact number is too long.",
         });
       }
 
-      if (photoUrl && !/^(?:https?:\/\/|data:image\/)/i.test(photoUrl)) {
-        return res.status(400).json({
-          success: false,
-          message: "Photo reference must be an HTTPS URL or image data.",
-        });
+      let photoReference: string | null = null;
+
+      if (photoInput) {
+        if (/^data:image\//i.test(photoInput)) {
+          if (!isCloudStorageConfigured()) {
+            return res.status(503).json({
+              success: false,
+              message:
+                "Complaint image storage is not configured. Submit without a photo or configure Supabase Storage.",
+            });
+          }
+
+          let extension: "png" | "jpg" | "webp";
+
+          try {
+            extension =
+              imageExtensionForDataUrl(
+                photoInput,
+              );
+          } catch {
+            return res.status(400).json({
+              success: false,
+              message:
+                "Choose a valid JPG, PNG, or WebP image up to 3.5 MB.",
+            });
+          }
+
+          const storagePath =
+            `complaints/${viewer.id}/${Date.now()}-${crypto.randomUUID()}.${extension}`;
+
+          try {
+            photoReference =
+              await storeProof(
+                photoInput,
+                storagePath,
+              );
+            uploadedPhotoReference =
+              photoReference;
+          } catch (storageError) {
+            console.error(
+              "Complaint photo upload error:",
+              storageError,
+            );
+
+            return res.status(500).json({
+              success: false,
+              message:
+                "Unable to upload the complaint photo.",
+            });
+          }
+        } else if (/^https:\/\//i.test(photoInput)) {
+          // Keep backward compatibility with older API clients that already send HTTPS evidence URLs.
+          if (photoInput.length > 255) {
+            return res.status(400).json({
+              success: false,
+              message:
+                "Complaint photo URL is too long.",
+            });
+          }
+
+          photoReference = photoInput;
+        } else {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Choose a JPG, PNG, or WebP complaint photo.",
+          });
+        }
       }
 
       const purokId =
@@ -679,7 +762,7 @@ router.post(
             complaintType,
             description,
             phone || null,
-            photoUrl || null,
+            photoReference,
           ],
         );
 
@@ -689,8 +772,12 @@ router.post(
         barangayId,
         sender: viewer,
         notificationType: "new_complaint",
-        title: "New resident complaint",
-        message: `A resident submitted a ${complaintType} complaint. Review and assign it in Complaints & Tickets.`,
+        title: "New sanitation complaint",
+        message: `${
+          isPurokLeader(viewer.role)
+            ? "A Purok Leader"
+            : "A resident"
+        } submitted a ${complaintType} complaint. Review and assign it in Complaints & Tickets.`,
       });
 
       await connection.execute(
@@ -721,6 +808,19 @@ router.post(
       });
     } catch (error) {
       await connection.rollback();
+
+      if (uploadedPhotoReference) {
+        try {
+          await deleteStoredProof(
+            uploadedPhotoReference,
+          );
+        } catch (cleanupError) {
+          console.error(
+            "Complaint photo cleanup error:",
+            cleanupError,
+          );
+        }
+      }
 
       console.error(
         "Create complaint error:",
@@ -1516,9 +1616,11 @@ router.delete(
     const connection =
       await db.getConnection();
 
+    let deletedPhotoReference: string | null = null;
+
     try {
       const viewer =
-        await getCurrentDatabaseUser(req);
+        getCurrentDatabaseUser(req);
 
       const complaintId =
         parsePositiveInteger(
@@ -1542,7 +1644,7 @@ router.delete(
         return res.status(403).json({
           success: false,
           message:
-            "You are not allowed to cancel complaints.",
+            "You are not allowed to delete or cancel complaints.",
         });
       }
 
@@ -1556,6 +1658,7 @@ router.delete(
           c.purok_id,
           c.assigned_collector_id,
           c.status,
+          c.photo_url,
           p.barangay_id
         FROM complaints c
         LEFT JOIN puroks p ON p.id = c.purok_id
@@ -1574,21 +1677,89 @@ router.delete(
         return res.status(404).json({
           success: false,
           message:
-            "Complaint was not found or cannot be cancelled.",
+            "Complaint was not found or is outside your assigned area.",
         });
       }
 
-      const cancellable = isResident(role)
-        ? complaint.status === "pending"
-        : ["pending", "assigned"].includes(String(complaint.status));
+      if (isAdmin(role)) {
+        if (String(complaint.status) !== "resolved") {
+          await connection.rollback();
 
-      if (!cancellable) {
+          return res.status(409).json({
+            success: false,
+            message:
+              "Only resolved complaints can be deleted.",
+          });
+        }
+
+        deletedPhotoReference =
+          typeof complaint.photo_url === "string"
+            ? complaint.photo_url
+            : null;
+
+        await connection.execute(
+          `
+          DELETE FROM notifications
+          WHERE related_entity_type = 'complaint'
+            AND related_entity_id = ?
+          `,
+          [complaintId],
+        );
+
+        await connection.execute(
+          `
+          DELETE FROM complaint_messages
+          WHERE complaint_id = ?
+          `,
+          [complaintId],
+        );
+
+        const [deleteResult]: any = await connection.execute(
+          `
+          DELETE FROM complaints
+          WHERE id = ?
+            AND status = 'resolved'
+          `,
+          [complaintId],
+        );
+
+        if (deleteResult.affectedRows !== 1) {
+          await connection.rollback();
+
+          return res.status(409).json({
+            success: false,
+            message:
+              "Complaint status changed before deletion. Refresh and try again.",
+          });
+        }
+
+        await connection.commit();
+
+        if (deletedPhotoReference) {
+          try {
+            await deleteStoredProof(deletedPhotoReference);
+          } catch (cleanupError) {
+            console.error(
+              "Deleted complaint photo cleanup error:",
+              cleanupError,
+            );
+          }
+        }
+
+        return res.json({
+          success: true,
+          message:
+            "Resolved complaint deleted successfully.",
+        });
+      }
+
+      if (complaint.status !== "pending") {
         await connection.rollback();
 
         return res.status(409).json({
           success: false,
           message:
-            "Only a pending or not-yet-started complaint can be cancelled.",
+            "Residents can cancel only pending complaints.",
         });
       }
 
@@ -1597,20 +1768,20 @@ router.delete(
         UPDATE complaints
         SET status = 'cancelled'
         WHERE id = ?
-          AND status = ?
+          AND status = 'pending'
         `,
-        [complaintId, complaint.status],
+        [complaintId],
       );
 
       if (
-        result.affectedRows === 0
+        result.affectedRows !== 1
       ) {
         await connection.rollback();
 
-        return res.status(404).json({
+        return res.status(409).json({
           success: false,
           message:
-            "Complaint was not found or cannot be cancelled.",
+            "Complaint status changed before cancellation. Refresh and try again.",
         });
       }
 
@@ -1645,14 +1816,14 @@ router.delete(
       await connection.rollback();
 
       console.error(
-        "Cancel complaint error:",
+        "Delete or cancel complaint error:",
         error,
       );
 
       return res.status(500).json({
         success: false,
         message:
-          "Failed to cancel complaint.",
+          "Failed to update the complaint.",
       });
     } finally {
       connection.release();

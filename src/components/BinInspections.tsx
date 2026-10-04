@@ -1,12 +1,15 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
+  type ChangeEvent,
   type FormEvent,
 } from 'react';
 import {
   Camera,
   ClipboardCheck,
+  ImagePlus,
   MapPin,
   Plus,
   RefreshCw,
@@ -39,9 +42,7 @@ interface InspectionRecord {
 interface InspectionForm {
   binId: string;
   status: DatabaseStatus;
-  estimatedFillLevel: string;
   remarks: string;
-  photoPath: string;
 }
 
 const API_URL = '/api/inspections';
@@ -89,17 +90,7 @@ async function apiRequest(
 const defaultForm: InspectionForm = {
   binId: '',
   status: 'half_full',
-  estimatedFillLevel: '50',
   remarks: '',
-  photoPath: '',
-};
-
-const fillLevelByStatus: Record<DatabaseStatus, number> = {
-  empty: 10,
-  half_full: 50,
-  full: 90,
-  overflowing: 100,
-  damaged: 0,
 };
 
 const statusLabel: Record<DatabaseStatus, string> = {
@@ -118,6 +109,10 @@ export default function BinInspections() {
   const [inspections, setInspections] = useState<InspectionRecord[]>([]);
   const [form, setForm] = useState<InspectionForm>(defaultForm);
   const [showForm, setShowForm] = useState(false);
+  const [photoData, setPhotoData] = useState('');
+  const [photoName, setPhotoName] = useState('');
+  const uploadPhotoInputRef = useRef<HTMLInputElement>(null);
+  const cameraPhotoInputRef = useRef<HTMLInputElement>(null);
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -209,8 +204,67 @@ export default function BinInspections() {
     setForm((previous) => ({
       ...previous,
       status,
-      estimatedFillLevel: String(fillLevelByStatus[status]),
     }));
+  };
+
+  const handlePhotoChange = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    const allowedTypes = [
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+    ];
+
+    if (!allowedTypes.includes(file.type)) {
+      setError('Choose a JPG, PNG, or WebP image.');
+      event.target.value = '';
+      return;
+    }
+
+    if (file.size > 3_500_000) {
+      setError('Inspection photo must be 3.5 MB or smaller.');
+      event.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        setError('Unable to read the selected inspection photo.');
+        return;
+      }
+
+      setPhotoData(reader.result);
+      setPhotoName(file.name);
+      setError('');
+    };
+
+    reader.onerror = () => {
+      setError('Unable to read the selected inspection photo.');
+    };
+
+    reader.readAsDataURL(file);
+  };
+
+  const clearPhoto = () => {
+    setPhotoData('');
+    setPhotoName('');
+
+    if (uploadPhotoInputRef.current) {
+      uploadPhotoInputRef.current.value = '';
+    }
+
+    if (cameraPhotoInputRef.current) {
+      cameraPhotoInputRef.current.value = '';
+    }
   };
 
   const submitInspection = async (event: FormEvent) => {
@@ -220,19 +274,9 @@ export default function BinInspections() {
     setSuccessMessage('');
 
     const binId = Number(form.binId);
-    const estimatedFillLevel = Number(form.estimatedFillLevel);
 
     if (!Number.isInteger(binId) || binId <= 0) {
       setError('Please enter a valid numeric Bin ID.');
-      return;
-    }
-
-    if (
-      !Number.isInteger(estimatedFillLevel) ||
-      estimatedFillLevel < 0 ||
-      estimatedFillLevel > 100
-    ) {
-      setError('Estimated fill level must be from 0 to 100.');
       return;
     }
 
@@ -244,9 +288,8 @@ export default function BinInspections() {
         body: JSON.stringify({
           bin_id: binId,
           status: form.status,
-          estimated_fill_level: estimatedFillLevel,
           remarks: form.remarks.trim() || null,
-          photo_path: form.photoPath.trim() || null,
+          photo_path: photoData || null,
         }),
       });
 
@@ -255,6 +298,7 @@ export default function BinInspections() {
       );
 
       setForm(defaultForm);
+      clearPhoto();
       setShowForm(false);
 
       await loadInspections();
@@ -484,41 +528,82 @@ export default function BinInspections() {
               </select>
             </label>
 
-            <label className="text-xs font-bold text-slate-600 ">
-              Estimated Fill Level (%)
+            <div className="space-y-2 md:col-span-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-600">
+                  Inspection Photo
+                </span>
+                <span className="text-[10px] font-semibold text-slate-400">
+                  Optional
+                </span>
+              </div>
 
               <input
-                type="number"
-                min="0"
-                max="100"
-                required
-                value={form.estimatedFillLevel}
-                onChange={(event) =>
-                  setForm((previous) => ({
-                    ...previous,
-                    estimatedFillLevel: event.target.value,
-                  }))
-                }
-                className="mt-1 w-full rounded-xl border border-slate-200  bg-white  text-slate-900  placeholder:text-slate-400  px-3 py-2.5"
+                ref={uploadPhotoInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handlePhotoChange}
+                className="hidden"
               />
-            </label>
-
-            <label className="text-xs font-bold text-slate-600 md:col-span-2">
-              Photo Path or URL (optional)
 
               <input
-                type="text"
-                placeholder="Example: /uploads/bin-photo.jpg"
-                value={form.photoPath}
-                onChange={(event) =>
-                  setForm((previous) => ({
-                    ...previous,
-                    photoPath: event.target.value,
-                  }))
-                }
-                className="mt-1 w-full rounded-xl border border-slate-200  bg-white  text-slate-900  placeholder:text-slate-400  px-3 py-2.5"
+                ref={cameraPhotoInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={handlePhotoChange}
+                className="hidden"
               />
-            </label>
+
+              <div className="grid gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => uploadPhotoInputRef.current?.click()}
+                  className="flex min-h-12 items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs font-black text-slate-600 transition hover:border-emerald-400 hover:bg-emerald-50"
+                >
+                  <ImagePlus className="h-5 w-5" />
+                  {photoName ? 'Change Photo' : 'Upload Photo'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => cameraPhotoInputRef.current?.click()}
+                  className="flex min-h-12 items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs font-black text-slate-600 transition hover:border-emerald-400 hover:bg-emerald-50"
+                >
+                  <Camera className="h-5 w-5" />
+                  Take Photo
+                </button>
+              </div>
+
+              <p className="text-[10px] font-medium text-slate-400">
+                JPG, PNG, or WebP • Maximum 3.5 MB
+              </p>
+
+              {photoData && (
+                <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                  <img
+                    src={photoData}
+                    alt="Selected garbage-bin inspection"
+                    className="h-48 w-full object-cover"
+                  />
+
+                  <div className="flex items-center justify-between gap-3 border-t border-slate-200 bg-white px-3 py-2">
+                    <p className="min-w-0 truncate text-[10px] font-bold text-slate-500">
+                      {photoName || 'Inspection photo'}
+                    </p>
+
+                    <button
+                      type="button"
+                      onClick={clearPhoto}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-rose-50 px-2.5 py-1.5 text-[10px] font-black uppercase text-rose-600 transition hover:bg-rose-100"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
             <label className="text-xs font-bold text-slate-600 md:col-span-2">
               Remarks
@@ -606,8 +691,6 @@ export default function BinInspections() {
 
                 <h3 className="font-black text-base">
                   {item.bin_code || `Bin ID ${item.bin_id || 'Unknown'}`}
-                  {' · '}
-                  {item.estimated_fill_level ?? 0}% estimated
                 </h3>
 
                 <p className="text-sm text-slate-500  flex items-center gap-1 mt-1">
