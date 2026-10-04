@@ -80,6 +80,21 @@ interface PaymentRecord {
   created_at: string;
 }
 
+interface ContributionSummaryRow {
+  scope_id: number;
+  scope_name: string;
+  parent_name: string | null;
+  total_records: number;
+  completed_records: number;
+  pending_records: number;
+  to_confirm_records: number;
+  rejected_records: number;
+  discrepancy_records: number;
+  confirmed_contribution: number;
+  pending_contribution: number;
+  to_confirm_amount: number;
+}
+
 interface WeeklyFeeInfo {
   amount: number;
   effective_from: string | null;
@@ -248,6 +263,14 @@ export default function PaymentPortal({
   const [CATEGORY_OPTIONS, setCategoryOptions] = useState<PaymentCategoryOption[]>([]);
   const [payments, setPayments] =
     useState<PaymentRecord[]>([]);
+  const [contributionSummary, setContributionSummary] =
+    useState<ContributionSummaryRow[]>([]);
+  const [viewMode, setViewMode] =
+    useState<
+      "resident_payments" |
+      "barangay_summary" |
+      "purok_summary"
+    >("resident_payments");
   const [weeklyFee, setWeeklyFee] =
     useState<WeeklyFeeInfo | null>(null);
   const [paymentReminder, setPaymentReminder] =
@@ -349,6 +372,73 @@ export default function PaymentPortal({
     isBarangayAdmin ||
     isSuperAdmin;
 
+  const isSummaryView =
+    viewMode === "barangay_summary" ||
+    viewMode === "purok_summary";
+
+  const filteredContributionSummary =
+    useMemo(() => {
+      const query =
+        search.trim().toLowerCase();
+
+      if (!query) {
+        return contributionSummary;
+      }
+
+      return contributionSummary.filter(
+        (row) =>
+          [
+            row.scope_name,
+            row.parent_name,
+            String(row.confirmed_contribution),
+            String(row.pending_contribution),
+          ].some((value) =>
+            String(value || "")
+              .toLowerCase()
+              .includes(query),
+          ),
+      );
+    }, [
+      contributionSummary,
+      search,
+    ]);
+
+  const summaryTotals =
+    useMemo(
+      () =>
+        contributionSummary.reduce(
+          (totals, row) => ({
+            records:
+              totals.records +
+              Number(row.total_records || 0),
+            completed:
+              totals.completed +
+              Number(row.completed_records || 0),
+            pending:
+              totals.pending +
+              Number(row.pending_records || 0),
+            confirmedAmount:
+              totals.confirmedAmount +
+              Number(
+                row.confirmed_contribution || 0,
+              ),
+            pendingAmount:
+              totals.pendingAmount +
+              Number(
+                row.pending_contribution || 0,
+              ),
+          }),
+          {
+            records: 0,
+            completed: 0,
+            pending: 0,
+            confirmedAmount: 0,
+            pendingAmount: 0,
+          },
+        ),
+      [contributionSummary],
+    );
+
   const loadPayments = async () => {
     setLoading(true);
 
@@ -365,6 +455,17 @@ export default function PaymentPortal({
         Array.isArray(data.payments)
           ? data.payments
           : [],
+      );
+      setContributionSummary(
+        Array.isArray(data.contributionSummary)
+          ? data.contributionSummary
+          : [],
+      );
+      setViewMode(
+        data.viewMode === "barangay_summary" ||
+        data.viewMode === "purok_summary"
+          ? data.viewMode
+          : "resident_payments",
       );
       setWeeklyFee(
         data.weeklyFee || null,
@@ -853,6 +954,47 @@ export default function PaymentPortal({
     }
   };
 
+  const confirmPurokRemittance = async (
+    purokId: number,
+  ) => {
+    if (!isBarangayAdmin || submitting) {
+      return;
+    }
+
+    setSubmitting(true);
+    setMessage(null);
+
+    try {
+      const data = await apiRequest(
+        `/summary/purok/${purokId}/confirm`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({}),
+        },
+      );
+
+      setMessage({
+        type: "success",
+        text:
+          data.message ||
+          "Purok remittance confirmed.",
+      });
+
+      await loadPayments();
+      notifyAdminActionCountsChanged();
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Unable to confirm the Purok remittance.",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const deletePaymentRecord = async () => {
     if (!isSuperAdmin || !paymentToDelete || deletingPayment) {
       return;
@@ -907,12 +1049,20 @@ export default function PaymentPortal({
             {isResident
               ? "My Payments"
               : isLeader
-                ? "Payments"
-                : "Payments"}
+                ? "Resident Payments"
+                : isSuperAdmin
+                  ? "Barangay Payment Contributions"
+                  : "Purok Payment Contributions"}
           </h1>
 
           <p className="mt-1 text-xs font-medium text-slate-500">
-            Every payment records who submitted, verified, remitted, and confirmed it.
+            {isSuperAdmin
+              ? "View confirmed and pending payment contributions summarized per barangay."
+              : isBarangayAdmin
+                ? "View payment contributions summarized per purok without exposing resident-level payment records."
+                : isLeader
+                  ? "Review resident payments from your assigned purok."
+                  : "Track your submitted, verified, remitted, and completed payments."}
           </p>
         </div>
 
@@ -1121,6 +1271,334 @@ export default function PaymentPortal({
         </section>
       )}
 
+      {isSummaryView ? (
+        <>
+          <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+            <Metric
+              label={
+                isSuperAdmin
+                  ? "Barangays"
+                  : "Puroks"
+              }
+              icon={CreditCard}
+              tone="bg-blue-500/10 text-blue-500"
+              value={String(
+                contributionSummary.length,
+              )}
+            />
+            <Metric
+              label="Payment records"
+              icon={CheckCircle2}
+              tone="bg-emerald-500/10 text-emerald-500"
+              value={String(
+                summaryTotals.records,
+              )}
+            />
+            <Metric
+              label="Completed"
+              icon={CheckCircle2}
+              tone="bg-emerald-500/10 text-emerald-500"
+              value={String(
+                summaryTotals.completed,
+              )}
+            />
+            <Metric
+              label="Pending"
+              icon={Clock3}
+              tone="bg-amber-500/10 text-amber-500"
+              value={String(
+                summaryTotals.pending,
+              )}
+            />
+          </section>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+              <p className="text-[10px] font-black uppercase tracking-wider text-emerald-700">
+                Confirmed Contributions
+              </p>
+              <p className="mt-1 text-2xl font-black text-slate-900">
+                ₱{summaryTotals.confirmedAmount.toFixed(2)}
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <p className="text-[10px] font-black uppercase tracking-wider text-amber-700">
+                Pending Accountability
+              </p>
+              <p className="mt-1 text-2xl font-black text-slate-900">
+                ₱{summaryTotals.pendingAmount.toFixed(2)}
+              </p>
+            </div>
+          </div>
+
+          <section
+            aria-label="Contribution summary filters"
+            className="sg-list-toolbar flex flex-wrap items-center gap-2"
+          >
+            <div className="relative min-w-[220px] flex-1">
+              <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                value={search}
+                aria-label={
+                  isSuperAdmin
+                    ? "Search barangay contributions"
+                    : "Search purok contributions"
+                }
+                onChange={(event) =>
+                  setSearch(event.target.value)
+                }
+                placeholder={
+                  isSuperAdmin
+                    ? "Search barangay..."
+                    : "Search purok..."
+                }
+                className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-11 pr-4 text-xs outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              className="h-10 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-500"
+            >
+              Clear
+            </button>
+
+            <button
+              type="button"
+              disabled={!filteredContributionSummary.length}
+              onClick={() => {
+                const cell = (value: unknown) =>
+                  '"' +
+                  String(value ?? "")
+                    .replace(
+                      /^[\s]*[=+@-]/,
+                      "'$&",
+                    )
+                    .replace(/"/g, '""') +
+                  '"';
+
+                const rows = [
+                  [
+                    isSuperAdmin
+                      ? "Barangay"
+                      : "Purok",
+                    "Payment Records",
+                    "Completed Records",
+                    "Pending Records",
+                    "Confirmed Contribution (PHP)",
+                    "Pending Accountability (PHP)",
+                    "Awaiting Captain Confirmation",
+                  ],
+                  ...filteredContributionSummary.map(
+                    (row) => [
+                      row.scope_name,
+                      row.total_records,
+                      row.completed_records,
+                      row.pending_records,
+                      row.confirmed_contribution,
+                      row.pending_contribution,
+                      row.to_confirm_records,
+                    ],
+                  ),
+                ];
+
+                const url =
+                  URL.createObjectURL(
+                    new Blob(
+                      [
+                        "\uFEFF" +
+                          rows
+                            .map((row) =>
+                              row
+                                .map(cell)
+                                .join(","),
+                            )
+                            .join("\r\n"),
+                      ],
+                      {
+                        type:
+                          "text/csv;charset=utf-8",
+                      },
+                    ),
+                  );
+
+                const link =
+                  document.createElement("a");
+
+                link.href = url;
+                link.download =
+                  isSuperAdmin
+                    ? "barangay-contributions.csv"
+                    : "purok-contributions.csv";
+                link.click();
+
+                setTimeout(
+                  () =>
+                    URL.revokeObjectURL(
+                      url,
+                    ),
+                  1000,
+                );
+              }}
+              className="inline-flex h-10 items-center gap-2 rounded-lg border border-emerald-500 px-3 text-xs font-bold text-emerald-600 disabled:opacity-40"
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </button>
+          </section>
+
+          {loading ? (
+            <div className="flex min-h-[260px] items-center justify-center rounded-2xl border border-slate-200 bg-white">
+              <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
+            </div>
+          ) : (
+            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[800px] text-left text-xs">
+                  <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-4 py-3 font-black">
+                        {isSuperAdmin
+                          ? "Barangay"
+                          : "Purok"}
+                      </th>
+                      <th className="px-4 py-3 text-center font-black">
+                        Records
+                      </th>
+                      <th className="px-4 py-3 text-center font-black">
+                        Completed
+                      </th>
+                      <th className="px-4 py-3 text-center font-black">
+                        Pending
+                      </th>
+                      <th className="px-4 py-3 text-right font-black">
+                        Confirmed Contribution
+                      </th>
+                      <th className="px-4 py-3 text-right font-black">
+                        Pending Accountability
+                      </th>
+                      {isBarangayAdmin && (
+                        <th className="px-4 py-3 text-center font-black">
+                          Action
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
+
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredContributionSummary.map(
+                      (row) => (
+                        <tr
+                          key={row.scope_id}
+                          className="transition hover:bg-emerald-500/5"
+                        >
+                          <td className="px-4 py-4">
+                            <p className="font-black text-slate-900">
+                              {row.scope_name}
+                            </p>
+                            {row.parent_name && (
+                              <p className="mt-0.5 text-[10px] font-semibold text-slate-400">
+                                {row.parent_name}
+                              </p>
+                            )}
+                          </td>
+
+                          <td className="px-4 py-4 text-center font-bold text-slate-600">
+                            {row.total_records}
+                          </td>
+
+                          <td className="px-4 py-4 text-center font-black text-emerald-600">
+                            {row.completed_records}
+                          </td>
+
+                          <td className="px-4 py-4 text-center">
+                            <span className="font-black text-amber-600">
+                              {row.pending_records}
+                            </span>
+                            {row.discrepancy_records > 0 && (
+                              <span className="ml-1 text-[9px] font-black text-rose-600">
+                                + {row.discrepancy_records} issue
+                                {row.discrepancy_records === 1
+                                  ? ""
+                                  : "s"}
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="px-4 py-4 text-right font-black tabular-nums text-emerald-600">
+                            ₱{Number(
+                              row.confirmed_contribution,
+                            ).toFixed(2)}
+                          </td>
+
+                          <td className="px-4 py-4 text-right">
+                            <p className="font-black tabular-nums text-amber-600">
+                              ₱{Number(
+                                row.pending_contribution,
+                              ).toFixed(2)}
+                            </p>
+                            {row.to_confirm_records > 0 && (
+                              <p className="mt-0.5 text-[9px] font-bold text-slate-400">
+                                {row.to_confirm_records} waiting for captain confirmation
+                              </p>
+                            )}
+                          </td>
+
+                          {isBarangayAdmin && (
+                            <td className="px-4 py-4 text-center">
+                              <button
+                                type="button"
+                                disabled={
+                                  submitting ||
+                                  row.to_confirm_records <= 0
+                                }
+                                onClick={() =>
+                                  void confirmPurokRemittance(
+                                    row.scope_id,
+                                  )
+                                }
+                                className="rounded-lg bg-emerald-600 px-3 py-2 text-[10px] font-black uppercase text-white disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                {row.to_confirm_records > 0
+                                  ? `Confirm ${row.to_confirm_records}`
+                                  : "Nothing to confirm"}
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      ),
+                    )}
+
+                    {filteredContributionSummary.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={
+                            isBarangayAdmin
+                              ? 7
+                              : 6
+                          }
+                          className="px-4 py-10 text-center text-sm font-bold text-slate-400"
+                        >
+                          No contribution summary matches your search.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          <p className="text-[11px] font-semibold text-slate-500">
+            {isSuperAdmin
+              ? "Municipal Administrator sees barangay totals only. Resident-level payment details remain hidden."
+              : "Barangay Captain sees purok totals only. Resident-level payment details are handled by the assigned Purok Leader."}
+          </p>
+        </>
+      ) : (
+        <>
       <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Metric
           label="Total records"
@@ -1742,6 +2220,8 @@ export default function PaymentPortal({
             </div>
           )}
         </div>
+      )}
+        </>
       )}
 
       {showPaymentForm && (

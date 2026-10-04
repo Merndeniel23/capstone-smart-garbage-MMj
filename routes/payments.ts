@@ -493,6 +493,184 @@ function selectPaymentFields() {
   `;
 }
 
+
+type ContributionSummaryRow = {
+  scope_id: number;
+  scope_name: string;
+  parent_name: string | null;
+  total_records: number;
+  completed_records: number;
+  pending_records: number;
+  to_confirm_records: number;
+  rejected_records: number;
+  discrepancy_records: number;
+  confirmed_contribution: number;
+  pending_contribution: number;
+  to_confirm_amount: number;
+};
+
+async function loadContributionSummary(
+  viewer: any,
+): Promise<ContributionSummaryRow[]> {
+  if (viewer.role === "super_admin") {
+    const [rows] = await db.query<any[]>(`
+      SELECT
+        b.id AS scope_id,
+        b.name AS scope_name,
+        NULL AS parent_name,
+        COUNT(pay.id) AS total_records,
+        SUM(CASE WHEN pay.status = 'completed' THEN 1 ELSE 0 END) AS completed_records,
+        SUM(
+          CASE
+            WHEN pay.status IN (
+              'pending_leader_verification',
+              'pending_remittance',
+              'pending_admin_confirmation'
+            )
+            THEN 1
+            ELSE 0
+          END
+        ) AS pending_records,
+        SUM(CASE WHEN pay.status = 'pending_admin_confirmation' THEN 1 ELSE 0 END) AS to_confirm_records,
+        SUM(CASE WHEN pay.status = 'rejected_by_leader' THEN 1 ELSE 0 END) AS rejected_records,
+        SUM(CASE WHEN pay.status = 'discrepancy' THEN 1 ELSE 0 END) AS discrepancy_records,
+        COALESCE(
+          SUM(CASE WHEN pay.status = 'completed' THEN pay.amount ELSE 0 END),
+          0
+        ) AS confirmed_contribution,
+        COALESCE(
+          SUM(
+            CASE
+              WHEN pay.status IN (
+                'pending_leader_verification',
+                'pending_remittance',
+                'pending_admin_confirmation'
+              )
+              THEN pay.amount
+              ELSE 0
+            END
+          ),
+          0
+        ) AS pending_contribution,
+        COALESCE(
+          SUM(
+            CASE
+              WHEN pay.status = 'pending_admin_confirmation'
+              THEN pay.amount
+              ELSE 0
+            END
+          ),
+          0
+        ) AS to_confirm_amount
+      FROM barangays b
+      LEFT JOIN payments pay
+        ON pay.barangay_id = b.id
+      GROUP BY b.id, b.name
+      ORDER BY b.name ASC
+    `);
+
+    return rows.map((row: any) => ({
+      scope_id: Number(row.scope_id),
+      scope_name: String(row.scope_name || ""),
+      parent_name: null,
+      total_records: Number(row.total_records || 0),
+      completed_records: Number(row.completed_records || 0),
+      pending_records: Number(row.pending_records || 0),
+      to_confirm_records: Number(row.to_confirm_records || 0),
+      rejected_records: Number(row.rejected_records || 0),
+      discrepancy_records: Number(row.discrepancy_records || 0),
+      confirmed_contribution: Number(row.confirmed_contribution || 0),
+      pending_contribution: Number(row.pending_contribution || 0),
+      to_confirm_amount: Number(row.to_confirm_amount || 0),
+    }));
+  }
+
+  if (viewer.role === "admin") {
+    if (!viewer.barangay_id) {
+      throw new Error("Barangay Captain account has no assigned barangay.");
+    }
+
+    const [rows] = await db.query<any[]>(
+      `
+      SELECT
+        p.id AS scope_id,
+        p.name AS scope_name,
+        b.name AS parent_name,
+        COUNT(pay.id) AS total_records,
+        SUM(CASE WHEN pay.status = 'completed' THEN 1 ELSE 0 END) AS completed_records,
+        SUM(
+          CASE
+            WHEN pay.status IN (
+              'pending_leader_verification',
+              'pending_remittance',
+              'pending_admin_confirmation'
+            )
+            THEN 1
+            ELSE 0
+          END
+        ) AS pending_records,
+        SUM(CASE WHEN pay.status = 'pending_admin_confirmation' THEN 1 ELSE 0 END) AS to_confirm_records,
+        SUM(CASE WHEN pay.status = 'rejected_by_leader' THEN 1 ELSE 0 END) AS rejected_records,
+        SUM(CASE WHEN pay.status = 'discrepancy' THEN 1 ELSE 0 END) AS discrepancy_records,
+        COALESCE(
+          SUM(CASE WHEN pay.status = 'completed' THEN pay.amount ELSE 0 END),
+          0
+        ) AS confirmed_contribution,
+        COALESCE(
+          SUM(
+            CASE
+              WHEN pay.status IN (
+                'pending_leader_verification',
+                'pending_remittance',
+                'pending_admin_confirmation'
+              )
+              THEN pay.amount
+              ELSE 0
+            END
+          ),
+          0
+        ) AS pending_contribution,
+        COALESCE(
+          SUM(
+            CASE
+              WHEN pay.status = 'pending_admin_confirmation'
+              THEN pay.amount
+              ELSE 0
+            END
+          ),
+          0
+        ) AS to_confirm_amount
+      FROM puroks p
+      INNER JOIN barangays b
+        ON b.id = p.barangay_id
+      LEFT JOIN payments pay
+        ON pay.purok_id = p.id
+      WHERE p.barangay_id = ?
+      GROUP BY p.id, p.name, b.name
+      ORDER BY p.name ASC
+      `,
+      [viewer.barangay_id],
+    );
+
+    return rows.map((row: any) => ({
+      scope_id: Number(row.scope_id),
+      scope_name: String(row.scope_name || ""),
+      parent_name: String(row.parent_name || "") || null,
+      total_records: Number(row.total_records || 0),
+      completed_records: Number(row.completed_records || 0),
+      pending_records: Number(row.pending_records || 0),
+      to_confirm_records: Number(row.to_confirm_records || 0),
+      rejected_records: Number(row.rejected_records || 0),
+      discrepancy_records: Number(row.discrepancy_records || 0),
+      confirmed_contribution: Number(row.confirmed_contribution || 0),
+      pending_contribution: Number(row.pending_contribution || 0),
+      to_confirm_amount: Number(row.to_confirm_amount || 0),
+    }));
+  }
+
+  return [];
+}
+
 router.get(
   "/",
   requireAuth,
@@ -523,6 +701,38 @@ router.get(
         });
       }
 
+      if (
+        viewer.role === "super_admin" ||
+        viewer.role === "admin"
+      ) {
+        if (
+          viewer.role === "admin" &&
+          !viewer.barangay_id
+        ) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Your account has no assigned barangay.",
+          });
+        }
+
+        const contributionSummary =
+          await loadContributionSummary(viewer);
+
+        return res.json({
+          success: true,
+          payments: [],
+          categories: paymentCategories,
+          weeklyFee: null,
+          paymentReminder: null,
+          contributionSummary,
+          viewMode:
+            viewer.role === "super_admin"
+              ? "barangay_summary"
+              : "purok_summary",
+        });
+      }
+
       let whereClause = "";
       let parameters: unknown[] = [];
 
@@ -544,27 +754,11 @@ router.get(
         whereClause =
           "WHERE pay.purok_id = ?";
         parameters = [viewer.purok_id];
-      } else if (viewer.role === "admin") {
-        if (!viewer.barangay_id) {
-          return res.status(400).json({
-            success: false,
-            message:
-              "Your account has no assigned barangay.",
-          });
-        }
-
-        whereClause =
-          "WHERE pay.barangay_id = ?";
-        parameters = [
-          viewer.barangay_id,
-        ];
-      } else if (
-        viewer.role !== "super_admin"
-      ) {
+      } else {
         return res.status(403).json({
           success: false,
           message:
-            "You do not have permission to view payments.",
+            "You do not have permission to view resident payment records.",
         });
       }
 
@@ -615,6 +809,8 @@ router.get(
         categories,
         weeklyFee: feeInfo,
         paymentReminder,
+        contributionSummary: [],
+        viewMode: "resident_payments",
       });
     } catch (error) {
       console.error(
@@ -1453,6 +1649,149 @@ router.patch(
         success: false,
         message:
           "Unable to submit the remittance.",
+      });
+    } finally {
+      connection.release();
+    }
+  },
+);
+
+
+router.patch(
+  "/summary/purok/:purokId/confirm",
+  requireAuth,
+  async (
+    req: AuthRequest,
+    res,
+  ) => {
+    const connection =
+      await db.getConnection();
+
+    try {
+      const userId =
+        positiveInteger(req.user?.id);
+
+      const purokId =
+        positiveInteger(req.params.purokId);
+
+      if (!userId || !purokId) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "A valid purok is required.",
+        });
+      }
+
+      await connection.beginTransaction();
+
+      const viewer =
+        await getViewer(
+          userId,
+          connection,
+          true,
+        );
+
+      if (
+        !viewer ||
+        viewer.role !== "admin" ||
+        !viewer.barangay_id
+      ) {
+        await connection.rollback();
+
+        return res.status(403).json({
+          success: false,
+          message:
+            "Barangay Captain access with an assigned barangay is required.",
+        });
+      }
+
+      const [purokRows] =
+        await connection.query<any[]>(
+          `
+          SELECT id
+          FROM puroks
+          WHERE id = ?
+            AND barangay_id = ?
+          LIMIT 1
+          FOR UPDATE
+          `,
+          [
+            purokId,
+            viewer.barangay_id,
+          ],
+        );
+
+      if (!purokRows[0]) {
+        await connection.rollback();
+
+        return res.status(404).json({
+          success: false,
+          message:
+            "That purok is outside your assigned barangay.",
+        });
+      }
+
+      const remarks = cleanText(
+        req.body.remarks,
+        500,
+      );
+
+      const [result] =
+        await connection.execute<any>(
+          `
+          UPDATE payments
+          SET
+            status = 'completed',
+            admin_confirmed_by = ?,
+            admin_confirmed_at = NOW(),
+            admin_remarks = COALESCE(NULLIF(?, ''), admin_remarks)
+          WHERE purok_id = ?
+            AND barangay_id = ?
+            AND status = 'pending_admin_confirmation'
+          `,
+          [
+            viewer.id,
+            remarks,
+            purokId,
+            viewer.barangay_id,
+          ],
+        );
+
+      if (!result.affectedRows) {
+        await connection.rollback();
+
+        return res.status(409).json({
+          success: false,
+          message:
+            "There are no Purok remittances waiting for confirmation.",
+        });
+      }
+
+      await connection.commit();
+
+      return res.json({
+        success: true,
+        message:
+          `${result.affectedRows} remittance ${
+            result.affectedRows === 1
+              ? "record was"
+              : "records were"
+          } confirmed for this purok.`,
+        confirmedCount:
+          Number(result.affectedRows),
+      });
+    } catch (error) {
+      await connection.rollback();
+
+      console.error(
+        "Confirm Purok remittance error:",
+        error,
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          "Unable to confirm the Purok remittance.",
       });
     } finally {
       connection.release();
