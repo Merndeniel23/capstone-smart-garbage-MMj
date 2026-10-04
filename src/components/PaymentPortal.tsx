@@ -1322,11 +1322,11 @@ export default function PaymentPortal({
               </p>
             </div>
 
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-              <p className="text-[10px] font-black uppercase tracking-wider text-amber-700">
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-500/30 dark:bg-amber-950/30">
+              <p className="text-[10px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-300">
                 Pending Accountability
               </p>
-              <p className="mt-1 text-2xl font-black text-slate-900">
+              <p className="mt-1 text-2xl font-black text-slate-900 dark:text-amber-100">
                 ₱{summaryTotals.pendingAmount.toFixed(2)}
               </p>
             </div>
