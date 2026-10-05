@@ -27,6 +27,14 @@ type DatabaseStatus =
   | 'overflowing'
   | 'damaged';
 
+interface GarbageBinOption {
+  id: number;
+  bin_code: string;
+  location_name: string | null;
+  purok_name: string | null;
+  is_active: number | boolean;
+}
+
 interface InspectionRecord {
   id: number;
   bin_id?: number;
@@ -46,6 +54,7 @@ interface InspectionForm {
 }
 
 const API_URL = '/api/inspections';
+const GARBAGE_BINS_API_URL = '/api/garbage-bins';
 
 function getToken(): string {
   return (
@@ -107,6 +116,8 @@ export default function BinInspections() {
   const { userRole } = useAppState();
   const canCreateInspection = userRole === 'leader';
   const [inspections, setInspections] = useState<InspectionRecord[]>([]);
+  const [availableBins, setAvailableBins] = useState<GarbageBinOption[]>([]);
+  const [binsLoading, setBinsLoading] = useState(false);
   const [form, setForm] = useState<InspectionForm>(defaultForm);
   const [showForm, setShowForm] = useState(false);
   const [photoData, setPhotoData] = useState('');
@@ -123,6 +134,72 @@ export default function BinInspections() {
   const [statusFilter, setStatusFilter] = useState<InspectionFilter>('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+
+  const loadAvailableBins = async () => {
+    if (!canCreateInspection) {
+      setAvailableBins([]);
+      return;
+    }
+
+    setBinsLoading(true);
+
+    try {
+      const data = await apiRequest(GARBAGE_BINS_API_URL);
+      const bins = Array.isArray(data?.bins) ? data.bins : [];
+
+      const activeBins = bins
+        .filter(
+          (item: GarbageBinOption) =>
+            Number(item.is_active) === 1 ||
+            item.is_active === true,
+        )
+        .map((item: GarbageBinOption) => ({
+          id: Number(item.id),
+          bin_code: String(item.bin_code || ''),
+          location_name: item.location_name
+            ? String(item.location_name)
+            : null,
+          purok_name: item.purok_name
+            ? String(item.purok_name)
+            : null,
+          is_active: item.is_active,
+        }))
+        .filter(
+          (item: GarbageBinOption) =>
+            Number.isInteger(item.id) &&
+            item.id > 0,
+        );
+
+      setAvailableBins(activeBins);
+
+      setForm((previous) => {
+        if (
+          previous.binId &&
+          activeBins.some(
+            (item: GarbageBinOption) =>
+              String(item.id) === previous.binId,
+          )
+        ) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          binId: '',
+        };
+      });
+    } catch (err) {
+      console.error(err);
+      setAvailableBins([]);
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Cannot load garbage bins for inspection.',
+      );
+    } finally {
+      setBinsLoading(false);
+    }
+  };
 
   const loadInspections = async () => {
     setLoading(true);
@@ -152,7 +229,11 @@ export default function BinInspections() {
 
   useEffect(() => {
     loadInspections();
-  }, []);
+
+    if (canCreateInspection) {
+      loadAvailableBins();
+    }
+  }, [canCreateInspection]);
 
   const stats = useMemo(
     () => ({
@@ -276,7 +357,7 @@ export default function BinInspections() {
     const binId = Number(form.binId);
 
     if (!Number.isInteger(binId) || binId <= 0) {
-      setError('Please enter a valid numeric Bin ID.');
+      setError('Please select a garbage bin from your assigned purok.');
       return;
     }
 
@@ -382,9 +463,14 @@ export default function BinInspections() {
             <button
               type="button"
               onClick={() => {
-                setShowForm((previous) => !previous);
+                const opening = !showForm;
+                setShowForm(opening);
                 setError('');
                 setSuccessMessage('');
+
+                if (opening) {
+                  void loadAvailableBins();
+                }
               }}
               className="flex items-center justify-center gap-2 bg-emerald-600 text-white px-5 py-3 rounded-2xl font-black text-sm border-none cursor-pointer shadow-lg shadow-emerald-600/20"
             >
@@ -490,22 +576,46 @@ export default function BinInspections() {
 
           <div className="grid md:grid-cols-2 gap-3">
             <label className="text-xs font-bold text-slate-600 ">
-              Numeric Bin ID
+              Garbage Bin
 
-              <input
-                type="number"
-                min="1"
+              <select
                 required
-                placeholder="Example: 1"
                 value={form.binId}
+                disabled={binsLoading || availableBins.length === 0}
                 onChange={(event) =>
                   setForm((previous) => ({
                     ...previous,
                     binId: event.target.value,
                   }))
                 }
-                className="mt-1 w-full rounded-xl border border-slate-200  bg-white  text-slate-900  placeholder:text-slate-400  px-3 py-2.5"
-              />
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <option value="">
+                  {binsLoading
+                    ? 'Loading garbage bins...'
+                    : availableBins.length === 0
+                      ? 'No active garbage bins found'
+                      : 'Select a garbage bin'}
+                </option>
+
+                {availableBins.map((bin) => (
+                  <option
+                    key={bin.id}
+                    value={String(bin.id)}
+                  >
+                    {bin.bin_code}
+                    {bin.location_name
+                      ? ` — ${bin.location_name}`
+                      : ''}
+                  </option>
+                ))}
+              </select>
+
+              {!binsLoading && availableBins.length === 0 && (
+                <span className="mt-1 block text-[10px] font-semibold text-amber-600">
+                  Register or reactivate a garbage bin in your assigned purok before recording an inspection.
+                </span>
+              )}
             </label>
 
             <label className="text-xs font-bold text-slate-600 ">
@@ -625,8 +735,8 @@ export default function BinInspections() {
 
           <button
             type="submit"
-            disabled={submitting}
-            className="w-full md:w-auto bg-slate-900 text-white px-6 py-3 rounded-xl font-black border-none cursor-pointer disabled:opacity-50"
+            disabled={submitting || binsLoading || availableBins.length === 0}
+            className="w-full md:w-auto bg-emerald-500 hover:bg-emerald-600 active:scale-[0.98] text-white px-6 py-3 rounded-xl font-black border-none cursor-pointer shadow-lg shadow-emerald-500/15 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {submitting ? 'Saving Inspection...' : 'Submit Inspection'}
           </button>

@@ -285,7 +285,6 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
   const selectedType: EndorsementType =
     'Barangay Service Endorsement';
-  const [requestedService, setRequestedService] = useState('');
   const [desc, setDesc] = useState('');
   const [notification, setNotification] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -387,11 +386,6 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
       return;
     }
 
-    if (requestedService.trim().length < 2) {
-      setErrorMessage('Please specify the barangay service or document you need.');
-      return;
-    }
-
     if (desc.trim().length < 10) {
       setErrorMessage('Please describe your request justification using at least 10 characters.');
       return;
@@ -405,13 +399,12 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
         method: 'POST',
         body: JSON.stringify({
           requestType: selectedType,
-          requestedService: requestedService.trim(),
+          requestedService: selectedType,
           purpose: desc.trim(),
         }),
       });
 
       setDesc('');
-      setRequestedService('');
       showNotification(data.message);
       notifyAdminActionCountsChanged();
       await loadEndorsements(true);
@@ -570,7 +563,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
         item.householdName,
         item.purok,
         item.barangay,
-        item.requestedService,
+        item.description,
         item.status,
       ]
         .filter(Boolean)
@@ -828,21 +821,6 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
-                    <label className="text-slate-500 font-extrabold text-[10px] uppercase tracking-wider block font-bold">Barangay Service or Document Needed</label>
-                  </div>
-                  <input
-                    type="text"
-                    value={requestedService}
-                    onChange={(e) => setRequestedService(e.target.value)}
-                    placeholder="Example: certificate, permit, assistance, or document release"
-                    maxLength={255}
-                    className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:bg-white transition-all"
-                    required
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <div className="flex justify-between items-center">
                     <label className="text-slate-500 font-extrabold text-[10px] uppercase tracking-wider block font-bold">Request Details or Purpose</label>
                     <span className="text-[10px] text-emerald-600 font-bold">Describe why you need this endorsement</span>
                   </div>
@@ -909,9 +887,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                     </div>
 
                     <div className="bg-white p-3 rounded-xl border border-slate-100 text-xs text-slate-500 leading-relaxed">
-                      <strong className="text-slate-700">Requested service:</strong>{' '}
-                      {selectedRequest.requestedService || 'Barangay service or document'}
-                      <br />
+                      <strong className="text-slate-700">Request details / purpose:</strong>{' '}
                       <span className="italic">"{selectedRequest.description}"</span>
                     </div>
 
@@ -1206,7 +1182,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       )}
                     </h4>
                     <p className="mb-1 line-clamp-1 text-xs font-medium text-slate-400">{getSubtextFromType(item.type)}</p>
-                    <p className="truncate text-xs font-bold text-slate-600">Requested: {item.requestedService || 'Barangay service or document'}</p>
+                    <p className="truncate text-xs font-bold text-slate-600">Purpose: {item.description}</p>
                   </div>
 
                   {role === 'admin' && item.outstandingPaymentCount > 0 && (
@@ -1640,7 +1616,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                     </p>
 
                     <p className="indent-8">
-                      The resident submitted an endorsement request for the following barangay service or document: <strong className="font-sans font-bold text-slate-950">{activeCertificate.requestedService || 'Barangay service or document'}</strong>. Request details: <strong className="font-sans font-bold text-slate-950">“{activeCertificate.description}”</strong>
+                      The resident submitted this barangay service endorsement request for the following stated purpose: <strong className="font-sans font-bold text-slate-950">“{activeCertificate.description}”</strong>
                     </p>
 
                     <p className="indent-8">

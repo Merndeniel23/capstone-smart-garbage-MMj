@@ -981,6 +981,35 @@ export default function ComplaintsPanel({
         html.sg-dark .sg-complaint-message-text {
           color: #e2e8f0 !important;
         }
+
+        html.sg-dark .sg-complaint-modal,
+        html.sg-dark .sg-complaint-modal-header {
+          background-color: #111827 !important;
+          border-color: #334155 !important;
+        }
+
+        html.sg-dark .sg-complaint-modal-title {
+          color: #ffffff !important;
+        }
+
+        html.sg-dark .sg-complaint-modal-subtitle,
+        html.sg-dark .sg-complaint-modal-label {
+          color: #cbd5e1 !important;
+        }
+
+        html.sg-dark .sg-complaint-modal-muted,
+        html.sg-dark .sg-complaint-modal-helper,
+        html.sg-dark .sg-complaint-modal-filename {
+          color: #b8c4d6 !important;
+        }
+
+        html.sg-dark .sg-complaint-modal-disabled {
+          color: #e2e8f0 !important;
+          background-color: #1e293b !important;
+          border-color: #475569 !important;
+          opacity: 1 !important;
+          -webkit-text-fill-color: #e2e8f0 !important;
+        }
       `}</style>
 
       <div className="space-y-6 pb-20 md:pb-0">
@@ -1710,13 +1739,13 @@ export default function ComplaintsPanel({
 
       {showSubmitModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/60 p-3 backdrop-blur-sm sm:p-4">
-          <div className="mx-auto my-3 max-h-[calc(100dvh-1.5rem)] w-full max-w-lg overflow-y-auto overscroll-contain rounded-2xl border border-slate-100 bg-white p-4 shadow-2xl sm:my-4 sm:max-h-[calc(100dvh-2rem)] md:p-5">
-            <div className="sticky top-0 z-10 -mx-4 -mt-4 mb-4 flex items-start justify-between border-b border-slate-100 bg-white px-4 py-4 md:-mx-5 md:-mt-5 md:px-5">
+          <div className="sg-complaint-modal mx-auto my-3 max-h-[calc(100dvh-1.5rem)] w-full max-w-lg overflow-y-auto overscroll-contain rounded-2xl border border-slate-100 bg-white p-4 shadow-2xl sm:my-4 sm:max-h-[calc(100dvh-2rem)] md:p-5">
+            <div className="sg-complaint-modal-header sticky top-0 z-10 -mx-4 -mt-4 mb-4 flex items-start justify-between border-b border-slate-100 bg-white px-4 py-4 md:-mx-5 md:-mt-5 md:px-5">
               <div>
-                <h2 className="text-2xl font-black text-slate-900">
+                <h2 className="sg-complaint-modal-title text-2xl font-black text-slate-900">
                   Report Garbage Issue
                 </h2>
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="sg-complaint-modal-subtitle mt-1 text-xs text-slate-500">
                   Your registered barangay and purok will be used automatically.
                 </p>
               </div>
@@ -1748,7 +1777,7 @@ export default function ComplaintsPanel({
               }
               className="sg-compact-form"
             >
-              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500">
+              <label className="sg-complaint-modal-label block text-[10px] font-black uppercase tracking-widest text-slate-500">
                 Issue Category
                 <select
                   value={newType}
@@ -1778,7 +1807,7 @@ export default function ComplaintsPanel({
               </label>
 
               <div className="grid gap-4 md:grid-cols-2">
-                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500">
+                <label className="sg-complaint-modal-label block text-[10px] font-black uppercase tracking-widest text-slate-500">
                   Assigned Area
                   <input
                     type="text"
@@ -1789,11 +1818,11 @@ export default function ComplaintsPanel({
                       .filter(Boolean)
                       .join(", ")}
                     disabled
-                    className="mt-2 w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-100 p-3 text-xs font-bold text-slate-500"
+                    className="sg-complaint-modal-disabled mt-2 w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-100 p-3 text-xs font-bold text-slate-500"
                   />
                 </label>
 
-                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500">
+                <label className="sg-complaint-modal-label block text-[10px] font-black uppercase tracking-widest text-slate-500">
                   Contact Phone
                   <input
                     type="text"
@@ -1811,7 +1840,7 @@ export default function ComplaintsPanel({
                 </label>
               </div>
 
-              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500">
+              <label className="sg-complaint-modal-label block text-[10px] font-black uppercase tracking-widest text-slate-500">
                 Description
                 <textarea
                   rows={3}
@@ -1833,10 +1862,10 @@ export default function ComplaintsPanel({
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                  <span className="sg-complaint-modal-label text-[10px] font-black uppercase tracking-widest text-slate-500">
                     Complaint Photo
                   </span>
-                  <span className="text-[10px] font-semibold text-slate-400">
+                  <span className="sg-complaint-modal-muted text-[10px] font-semibold text-slate-400">
                     Optional
                   </span>
                 </div>
@@ -1884,7 +1913,7 @@ export default function ComplaintsPanel({
                   </button>
                 </div>
 
-                <p className="text-[10px] font-medium text-slate-400">
+                <p className="sg-complaint-modal-helper text-[10px] font-medium text-slate-400">
                   Upload from your device or take a photo with the camera • JPG, PNG, or WebP • Maximum 3.5 MB
                 </p>
 
@@ -1913,7 +1942,7 @@ export default function ComplaintsPanel({
                       <X className="h-4 w-4" />
                     </button>
                     {newPhotoName && (
-                      <div className="truncate px-3 py-2 text-[10px] font-semibold text-slate-500">
+                      <div className="sg-complaint-modal-filename truncate px-3 py-2 text-[10px] font-semibold text-slate-500">
                         {newPhotoName}
                       </div>
                     )}
