@@ -1259,7 +1259,7 @@ export default function ComplaintsPanel({
 
         <div ref={detailsRef} className="scroll-mt-6 lg:col-span-7">
           {!selectedComplaint ? (
-            <div className="flex min-h-[430px] flex-col items-center justify-center rounded-[2.5rem] border-2 border-dashed border-slate-200 bg-slate-50/50 p-12 text-center">
+            <div className="flex min-h-[250px] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/50 p-6 text-center">
               <MessageSquare className="h-10 w-10 text-slate-300" />
               <p className="mt-3 text-sm font-black text-slate-700">
                 Select a complaint
@@ -1269,7 +1269,7 @@ export default function ComplaintsPanel({
               </p>
             </div>
           ) : (
-            <div className="space-y-6 rounded-[2rem] border border-slate-100 bg-white p-6 shadow-sm md:p-8">
+            <div className="space-y-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm md:p-5">
               <div className="flex items-center justify-between border-b border-slate-50 pb-4">
                 <div className="flex items-center gap-2">
                   <span className="rounded-lg border border-slate-200 bg-slate-100 px-3 py-1 font-mono text-xs font-black text-slate-600">
@@ -1383,7 +1383,7 @@ export default function ComplaintsPanel({
 
                   {canAssign && <>
                   {collectorError && <p role="alert" className="text-sm text-rose-300">{collectorError} Refresh to try again.</p>}
-                  <div className="grid gap-4 md:grid-cols-2">
+                  <div className="grid gap-3 md:grid-cols-2">
                     <label className="text-[9px] font-black uppercase text-slate-400">
                       Collector
                       <div className="relative mt-2">
@@ -1709,9 +1709,9 @@ export default function ComplaintsPanel({
       />
 
       {showSubmitModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-[2rem] border border-slate-100 bg-white p-6 shadow-2xl md:p-8">
-            <div className="mb-6 flex items-start justify-between">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/60 p-3 backdrop-blur-sm sm:p-4">
+          <div className="mx-auto my-3 max-h-[calc(100dvh-1.5rem)] w-full max-w-lg overflow-y-auto overscroll-contain rounded-2xl border border-slate-100 bg-white p-4 shadow-2xl sm:my-4 sm:max-h-[calc(100dvh-2rem)] md:p-5">
+            <div className="sticky top-0 z-10 -mx-4 -mt-4 mb-4 flex items-start justify-between border-b border-slate-100 bg-white px-4 py-4 md:-mx-5 md:-mt-5 md:px-5">
               <div>
                 <h2 className="text-2xl font-black text-slate-900">
                   Report Garbage Issue
@@ -1814,7 +1814,7 @@ export default function ComplaintsPanel({
               <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500">
                 Description
                 <textarea
-                  rows={4}
+                  rows={3}
                   value={
                     newDescription
                   }
@@ -1864,7 +1864,7 @@ export default function ComplaintsPanel({
                     onClick={() =>
                       complaintPhotoInputRef.current?.click()
                     }
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-xs font-bold text-slate-600 transition hover:border-amber-400 hover:bg-amber-50"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-600 transition hover:border-amber-400 hover:bg-amber-50"
                   >
                     <ImagePlus className="h-5 w-5" />
                     {newPhotoName
@@ -1877,7 +1877,7 @@ export default function ComplaintsPanel({
                     onClick={() =>
                       complaintCameraInputRef.current?.click()
                     }
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-xs font-bold text-slate-600 transition hover:border-amber-400 hover:bg-amber-50"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-600 transition hover:border-amber-400 hover:bg-amber-50"
                   >
                     <Camera className="h-5 w-5" />
                     Take Photo
@@ -1893,7 +1893,7 @@ export default function ComplaintsPanel({
                     <img
                       src={newPhotoData}
                       alt="Complaint photo preview"
-                      className="max-h-56 w-full object-cover"
+                      className="max-h-40 w-full object-cover"
                     />
                     <button
                       type="button"
