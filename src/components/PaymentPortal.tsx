@@ -93,6 +93,29 @@ interface ContributionSummaryRow {
   confirmed_contribution: number;
   pending_contribution: number;
   to_confirm_amount: number;
+  resident_count: number;
+  unpaid_residents: number;
+  underpaid_residents: number;
+  outstanding_obligation: number;
+}
+
+interface ResidentComplianceRow {
+  resident_id: number;
+  resident_name: string;
+  resident_email: string;
+  barangay_id: number;
+  barangay_name: string;
+  purok_id: number;
+  purok_name: string;
+  current_weekly_fee: number;
+  last_completed_payment_at: string | null;
+  last_completed_amount: number | null;
+  expected_last_fee: number | null;
+  missed_payment_count: number;
+  underpaid_amount: number;
+  outstanding_balance: number;
+  pending_verification_count: number;
+  counting_from: string;
 }
 
 interface WeeklyFeeInfo {
@@ -105,7 +128,9 @@ interface PaymentReminder {
   current_weekly_fee: number;
   last_completed_payment_at: string | null;
   last_completed_amount: number | null;
+  expected_last_fee: number | null;
   missed_payment_count: number;
+  underpaid_amount: number;
   outstanding_balance: number;
   counting_from: string;
   missed_periods: Array<{
@@ -275,6 +300,10 @@ export default function PaymentPortal({
     useState<WeeklyFeeInfo | null>(null);
   const [paymentReminder, setPaymentReminder] =
     useState<PaymentReminder | null>(null);
+  const [residentCompliance, setResidentCompliance] =
+    useState<ResidentComplianceRow[]>([]);
+  const [complianceSearch, setComplianceSearch] =
+    useState("");
   const [editingWeeklyFee, setEditingWeeklyFee] =
     useState(false);
   const [weeklyFeeInput, setWeeklyFeeInput] =
@@ -427,6 +456,26 @@ export default function PaymentPortal({
               Number(
                 row.pending_contribution || 0,
               ),
+            residents:
+              totals.residents +
+              Number(
+                row.resident_count || 0,
+              ),
+            unpaidResidents:
+              totals.unpaidResidents +
+              Number(
+                row.unpaid_residents || 0,
+              ),
+            underpaidResidents:
+              totals.underpaidResidents +
+              Number(
+                row.underpaid_residents || 0,
+              ),
+            outstandingObligation:
+              totals.outstandingObligation +
+              Number(
+                row.outstanding_obligation || 0,
+              ),
           }),
           {
             records: 0,
@@ -434,9 +483,82 @@ export default function PaymentPortal({
             pending: 0,
             confirmedAmount: 0,
             pendingAmount: 0,
+            residents: 0,
+            unpaidResidents: 0,
+            underpaidResidents: 0,
+            outstandingObligation: 0,
           },
         ),
       [contributionSummary],
+    );
+
+  const filteredResidentCompliance =
+    useMemo(() => {
+      const query =
+        complianceSearch
+          .trim()
+          .toLowerCase();
+
+      if (!query) {
+        return residentCompliance;
+      }
+
+      return residentCompliance.filter(
+        (row) =>
+          [
+            row.resident_name,
+            row.resident_email,
+            row.purok_name,
+          ].some((value) =>
+            String(value || "")
+              .toLowerCase()
+              .includes(query),
+          ),
+      );
+    }, [
+      residentCompliance,
+      complianceSearch,
+    ]);
+
+  const leaderComplianceTotals =
+    useMemo(
+      () =>
+        residentCompliance.reduce(
+          (totals, row) => ({
+            residents:
+              totals.residents + 1,
+            unpaid:
+              totals.unpaid +
+              (row.missed_payment_count > 0
+                ? 1
+                : 0),
+            underpaid:
+              totals.underpaid +
+              (row.underpaid_amount > 0
+                ? 1
+                : 0),
+            outstanding:
+              totals.outstanding +
+              Number(
+                row.outstanding_balance ||
+                  0,
+              ),
+            pendingVerification:
+              totals.pendingVerification +
+              Number(
+                row.pending_verification_count ||
+                  0,
+              ),
+          }),
+          {
+            residents: 0,
+            unpaid: 0,
+            underpaid: 0,
+            outstanding: 0,
+            pendingVerification: 0,
+          },
+        ),
+      [residentCompliance],
     );
 
   const loadPayments = async () => {
@@ -473,6 +595,13 @@ export default function PaymentPortal({
       setPaymentReminder(
         data.paymentReminder ||
           null,
+      );
+      setResidentCompliance(
+        Array.isArray(
+          data.residentCompliance,
+        )
+          ? data.residentCompliance
+          : [],
       );
 
       if (
@@ -1038,23 +1167,7 @@ export default function PaymentPortal({
   };
 
   return (
-    <>
-      <style>{`
-        html.sg-dark .sg-payment-pending-card {
-          background-color: #2a2112 !important;
-          border-color: rgba(245, 158, 11, 0.35) !important;
-        }
-
-        html.sg-dark .sg-payment-pending-label {
-          color: #fbbf24 !important;
-        }
-
-        html.sg-dark .sg-payment-pending-amount {
-          color: #fef3c7 !important;
-        }
-      `}</style>
-
-      <div className="sg-page space-y-4">
+    <div className="sg-page space-y-4">
       <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">
@@ -1157,6 +1270,13 @@ export default function PaymentPortal({
               <p className="mt-1 text-[11px] text-slate-500">
                 Only completed weekly payments reset the missed-payment counter.
               </p>
+              {Number(paymentReminder.underpaid_amount || 0) > 0 && (
+                <p className="mt-1 text-[11px] font-bold text-rose-600">
+                  Previous weekly payment is short by ₱{Number(
+                    paymentReminder.underpaid_amount,
+                  ).toFixed(2)}. This shortfall is included in the outstanding balance.
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -1287,6 +1407,195 @@ export default function PaymentPortal({
         </section>
       )}
 
+
+      {isLeader && (
+        <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-600">
+                Resident Weekly Payment Status
+              </p>
+              <h2 className="mt-1 text-lg font-black text-slate-900">
+                Unpaid, underpaid, and pending verification
+              </h2>
+              <p className="mt-1 text-xs text-slate-500">
+                Only residents assigned to your purok are shown here.
+              </p>
+            </div>
+
+            <div className="relative w-full lg:max-w-sm">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                value={complianceSearch}
+                onChange={(event) =>
+                  setComplianceSearch(
+                    event.target.value,
+                  )
+                }
+                placeholder="Search resident..."
+                className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-xs outline-none focus:border-emerald-500"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 xl:grid-cols-5">
+            <Metric
+              label="Residents"
+              icon={CreditCard}
+              tone="bg-blue-500/10 text-blue-500"
+              value={String(
+                leaderComplianceTotals.residents,
+              )}
+            />
+            <Metric
+              label="Missed / unpaid"
+              icon={AlertTriangle}
+              tone="bg-rose-500/10 text-rose-500"
+              value={String(
+                leaderComplianceTotals.unpaid,
+              )}
+            />
+            <Metric
+              label="Underpaid"
+              icon={AlertTriangle}
+              tone="bg-orange-500/10 text-orange-500"
+              value={String(
+                leaderComplianceTotals.underpaid,
+              )}
+            />
+            <Metric
+              label="Needs verification"
+              icon={Clock3}
+              tone="bg-amber-500/10 text-amber-500"
+              value={String(
+                leaderComplianceTotals.pendingVerification,
+              )}
+            />
+            <Metric
+              label="Outstanding due"
+              icon={CreditCard}
+              tone="bg-violet-500/10 text-violet-500"
+              value={`₱${leaderComplianceTotals.outstanding.toFixed(2)}`}
+            />
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-slate-200">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[860px] text-left text-xs">
+                <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-3 py-3 font-black">Resident</th>
+                    <th className="px-3 py-3 text-center font-black">Last completed</th>
+                    <th className="px-3 py-3 text-center font-black">Missed</th>
+                    <th className="px-3 py-3 text-right font-black">Underpaid</th>
+                    <th className="px-3 py-3 text-right font-black">Outstanding</th>
+                    <th className="px-3 py-3 text-center font-black">Pending verification</th>
+                    <th className="px-3 py-3 text-center font-black">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredResidentCompliance.map((row) => {
+                    const hasMissed =
+                      Number(
+                        row.missed_payment_count,
+                      ) > 0;
+                    const hasShortfall =
+                      Number(
+                        row.underpaid_amount,
+                      ) > 0;
+                    const needsVerification =
+                      Number(
+                        row.pending_verification_count,
+                      ) > 0;
+
+                    const statusText =
+                      needsVerification
+                        ? "Needs verification"
+                        : hasMissed &&
+                            hasShortfall
+                          ? "Missed + underpaid"
+                          : hasMissed
+                            ? "Missed payment"
+                            : hasShortfall
+                              ? "Underpaid"
+                              : "Up to date";
+
+                    const statusClass =
+                      needsVerification
+                        ? "border-amber-200 bg-amber-50 text-amber-700"
+                        : hasMissed ||
+                            hasShortfall
+                          ? "border-rose-200 bg-rose-50 text-rose-700"
+                          : "border-emerald-200 bg-emerald-50 text-emerald-700";
+
+                    return (
+                      <tr
+                        key={row.resident_id}
+                        className="hover:bg-emerald-500/5"
+                      >
+                        <td className="px-3 py-3">
+                          <p className="font-black text-slate-900">
+                            {row.resident_name}
+                          </p>
+                          <p className="mt-0.5 text-[10px] text-slate-400">
+                            {row.resident_email}
+                          </p>
+                        </td>
+                        <td className="px-3 py-3 text-center text-slate-600">
+                          {row.last_completed_payment_at
+                            ? new Date(
+                                row.last_completed_payment_at,
+                              ).toLocaleDateString()
+                            : "None yet"}
+                        </td>
+                        <td className="px-3 py-3 text-center font-black text-rose-600">
+                          {row.missed_payment_count}
+                        </td>
+                        <td className="px-3 py-3 text-right font-black tabular-nums text-orange-600">
+                          ₱{Number(
+                            row.underpaid_amount,
+                          ).toFixed(2)}
+                        </td>
+                        <td className="px-3 py-3 text-right font-black tabular-nums text-rose-600">
+                          ₱{Number(
+                            row.outstanding_balance,
+                          ).toFixed(2)}
+                        </td>
+                        <td className="px-3 py-3 text-center font-black text-amber-600">
+                          {row.pending_verification_count}
+                        </td>
+                        <td className="px-3 py-3 text-center">
+                          <span
+                            className={`inline-flex rounded-full border px-2.5 py-1 text-[9px] font-black uppercase ${statusClass}`}
+                          >
+                            {statusText}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {filteredResidentCompliance.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={7}
+                        className="px-4 py-8 text-center text-sm font-bold text-slate-400"
+                      >
+                        No resident payment status matches your search.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <p className="text-[10px] font-semibold text-slate-400">
+            Missed payments are counted weekly from the resident's latest completed weekly payment. Pending submissions do not clear missed payments until they are completed.
+          </p>
+        </section>
+      )}
+
       {isSummaryView ? (
         <>
           <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
@@ -1328,6 +1637,33 @@ export default function PaymentPortal({
             />
           </section>
 
+          <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+            <Metric
+              label="Residents"
+              icon={CreditCard}
+              tone="bg-blue-500/10 text-blue-500"
+              value={String(summaryTotals.residents)}
+            />
+            <Metric
+              label="Missed / unpaid"
+              icon={AlertTriangle}
+              tone="bg-rose-500/10 text-rose-500"
+              value={String(summaryTotals.unpaidResidents)}
+            />
+            <Metric
+              label="Underpaid"
+              icon={AlertTriangle}
+              tone="bg-orange-500/10 text-orange-500"
+              value={String(summaryTotals.underpaidResidents)}
+            />
+            <Metric
+              label="Outstanding due"
+              icon={CreditCard}
+              tone="bg-violet-500/10 text-violet-500"
+              value={`₱${summaryTotals.outstandingObligation.toFixed(2)}`}
+            />
+          </section>
+
           <div className="grid gap-3 md:grid-cols-2">
             <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
               <p className="text-[10px] font-black uppercase tracking-wider text-emerald-700">
@@ -1338,11 +1674,11 @@ export default function PaymentPortal({
               </p>
             </div>
 
-            <div className="sg-payment-pending-card rounded-2xl border border-amber-200 bg-amber-50 p-4">
-              <p className="sg-payment-pending-label text-[10px] font-black uppercase tracking-wider text-amber-700">
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-500/30 dark:bg-amber-950/30">
+              <p className="text-[10px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-300">
                 Pending Accountability
               </p>
-              <p className="sg-payment-pending-amount mt-1 text-2xl font-black text-slate-900">
+              <p className="mt-1 text-2xl font-black text-slate-900 dark:text-amber-100">
                 ₱{summaryTotals.pendingAmount.toFixed(2)}
               </p>
             </div>
@@ -1405,6 +1741,10 @@ export default function PaymentPortal({
                     "Pending Records",
                     "Confirmed Contribution (PHP)",
                     "Pending Accountability (PHP)",
+                    "Residents",
+                    "Unpaid Residents",
+                    "Underpaid Residents",
+                    "Resident Outstanding Due (PHP)",
                     "Awaiting Captain Confirmation",
                   ],
                   ...filteredContributionSummary.map(
@@ -1415,6 +1755,10 @@ export default function PaymentPortal({
                       row.pending_records,
                       row.confirmed_contribution,
                       row.pending_contribution,
+                      row.resident_count,
+                      row.unpaid_residents,
+                      row.underpaid_residents,
+                      row.outstanding_obligation,
                       row.to_confirm_records,
                     ],
                   ),
@@ -1519,6 +1863,17 @@ export default function PaymentPortal({
                                 {row.parent_name}
                               </p>
                             )}
+                            <div className="mt-2 flex flex-wrap gap-1">
+                              <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[9px] font-black text-blue-700">
+                                {row.resident_count} resident{row.resident_count === 1 ? "" : "s"}
+                              </span>
+                              <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[9px] font-black text-rose-700">
+                                {row.unpaid_residents} unpaid
+                              </span>
+                              <span className="rounded-full bg-orange-50 px-2 py-0.5 text-[9px] font-black text-orange-700">
+                                {row.underpaid_residents} underpaid
+                              </span>
+                            </div>
                           </td>
 
                           <td className="px-4 py-4 text-center font-bold text-slate-600">
@@ -1558,6 +1913,13 @@ export default function PaymentPortal({
                             {row.to_confirm_records > 0 && (
                               <p className="mt-0.5 text-[9px] font-bold text-slate-400">
                                 {row.to_confirm_records} waiting for captain confirmation
+                              </p>
+                            )}
+                            {Number(row.outstanding_obligation || 0) > 0 && (
+                              <p className="mt-1 text-[9px] font-black text-rose-600">
+                                Resident outstanding: ₱{Number(
+                                  row.outstanding_obligation,
+                                ).toFixed(2)}
                               </p>
                             )}
                           </td>
@@ -2447,8 +2809,7 @@ export default function PaymentPortal({
           />
         </Modal>
       )}
-      </div>
-    </>
+    </div>
   );
 }
 

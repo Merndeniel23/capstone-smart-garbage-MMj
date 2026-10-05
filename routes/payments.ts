@@ -268,6 +268,340 @@ async function paymentFeeInfo(
   };
 }
 
+type ResidentComplianceRow = {
+  resident_id: number;
+  resident_name: string;
+  resident_email: string;
+  barangay_id: number;
+  barangay_name: string;
+  purok_id: number;
+  purok_name: string;
+  current_weekly_fee: number;
+  last_completed_payment_at: string | null;
+  last_completed_amount: number | null;
+  expected_last_fee: number | null;
+  missed_payment_count: number;
+  underpaid_amount: number;
+  outstanding_balance: number;
+  pending_verification_count: number;
+  counting_from: string;
+  missed_periods: Array<{
+    due_date: string;
+    fee: number;
+  }>;
+};
+
+async function loadResidentComplianceRows(
+  scope: {
+    residentId?: number;
+    purokId?: number;
+    barangayId?: number;
+    all?: boolean;
+  },
+): Promise<ResidentComplianceRow[]> {
+  const conditions = [
+    "u.role = 'resident'",
+    "u.status = 'active'",
+  ];
+  const parameters: unknown[] = [];
+
+  if (scope.residentId) {
+    conditions.push("u.id = ?");
+    parameters.push(scope.residentId);
+  } else if (scope.purokId) {
+    conditions.push("u.purok_id = ?");
+    parameters.push(scope.purokId);
+  } else if (scope.barangayId) {
+    conditions.push("u.barangay_id = ?");
+    parameters.push(scope.barangayId);
+  } else if (!scope.all) {
+    return [];
+  }
+
+  const [rows] = await db.query<any[]>(
+    `
+    SELECT
+      u.id AS resident_id,
+      u.full_name AS resident_name,
+      u.email AS resident_email,
+      u.created_at,
+      u.barangay_id,
+      b.name AS barangay_name,
+      u.purok_id,
+      p.name AS purok_name,
+      (
+        SELECT weekly_pay.amount
+        FROM payments weekly_pay
+        WHERE weekly_pay.resident_id = u.id
+          AND weekly_pay.category = 'weekly_fee'
+          AND weekly_pay.status = 'completed'
+        ORDER BY
+          COALESCE(
+            weekly_pay.admin_confirmed_at,
+            weekly_pay.updated_at,
+            weekly_pay.created_at
+          ) DESC,
+          weekly_pay.id DESC
+        LIMIT 1
+      ) AS last_completed_amount,
+      (
+        SELECT COALESCE(
+          weekly_pay.admin_confirmed_at,
+          weekly_pay.updated_at,
+          weekly_pay.created_at
+        )
+        FROM payments weekly_pay
+        WHERE weekly_pay.resident_id = u.id
+          AND weekly_pay.category = 'weekly_fee'
+          AND weekly_pay.status = 'completed'
+        ORDER BY
+          COALESCE(
+            weekly_pay.admin_confirmed_at,
+            weekly_pay.updated_at,
+            weekly_pay.created_at
+          ) DESC,
+          weekly_pay.id DESC
+        LIMIT 1
+      ) AS last_completed_payment_at,
+      (
+        SELECT weekly_pay.created_at
+        FROM payments weekly_pay
+        WHERE weekly_pay.resident_id = u.id
+          AND weekly_pay.category = 'weekly_fee'
+          AND weekly_pay.status = 'completed'
+        ORDER BY
+          COALESCE(
+            weekly_pay.admin_confirmed_at,
+            weekly_pay.updated_at,
+            weekly_pay.created_at
+          ) DESC,
+          weekly_pay.id DESC
+        LIMIT 1
+      ) AS last_completed_submitted_at,
+      (
+        SELECT COUNT(*)
+        FROM payments pending_pay
+        WHERE pending_pay.resident_id = u.id
+          AND pending_pay.category = 'weekly_fee'
+          AND pending_pay.status = 'pending_leader_verification'
+      ) AS pending_verification_count
+    FROM users u
+    INNER JOIN barangays b
+      ON b.id = u.barangay_id
+    INNER JOIN puroks p
+      ON p.id = u.purok_id
+    WHERE ${conditions.join(" AND ")}
+    ORDER BY p.name ASC, u.full_name ASC
+    `,
+    parameters,
+  );
+
+  const historyCache =
+    new Map<number, any[]>();
+
+  const today =
+    startOfLocalDay(new Date());
+
+  const weekMs =
+    7 * 24 * 60 * 60 * 1000;
+
+  const result: ResidentComplianceRow[] = [];
+
+  for (const row of rows) {
+    const purokId =
+      Number(row.purok_id);
+
+    let history =
+      historyCache.get(purokId);
+
+    if (!history) {
+      history =
+        await weeklyFeeHistory(
+          purokId,
+        );
+      historyCache.set(
+        purokId,
+        history,
+      );
+    }
+
+    const accountStart =
+      row.created_at
+        ? startOfLocalDay(
+            row.created_at,
+          )
+        : startOfLocalDay(
+            new Date(),
+          );
+
+    const lastCompletedDate =
+      row.last_completed_payment_at
+        ? startOfLocalDay(
+            row.last_completed_payment_at,
+          )
+        : null;
+
+    const baseDate =
+      lastCompletedDate ||
+      accountStart;
+
+    const elapsedMs =
+      Math.max(
+        0,
+        today.getTime() -
+          baseDate.getTime(),
+      );
+
+    const missedCount =
+      Math.floor(
+        elapsedMs / weekMs,
+      );
+
+    const missedPeriods: {
+      due_date: string;
+      fee: number;
+    }[] = [];
+
+    let missedBalance = 0;
+
+    for (
+      let index = 1;
+      index <= missedCount;
+      index += 1
+    ) {
+      const dueDate =
+        new Date(
+          baseDate.getTime() +
+            index * weekMs,
+        );
+
+      const fee =
+        feeForDate(
+          history,
+          dueDate,
+        );
+
+      missedBalance += fee;
+
+      missedPeriods.push({
+        due_date:
+          localDateString(
+            dueDate,
+          ),
+        fee:
+          Math.round(
+            fee * 100,
+          ) / 100,
+      });
+    }
+
+    const lastCompletedAmount =
+      row.last_completed_amount === null ||
+      row.last_completed_amount === undefined
+        ? null
+        : Number(
+            row.last_completed_amount,
+          );
+
+    const lastSubmittedDate =
+      row.last_completed_submitted_at
+        ? startOfLocalDay(
+            row.last_completed_submitted_at,
+          )
+        : lastCompletedDate;
+
+    const expectedLastFee =
+      lastSubmittedDate
+        ? feeForDate(
+            history,
+            lastSubmittedDate,
+          )
+        : null;
+
+    const underpaidAmount =
+      lastCompletedAmount !== null &&
+      expectedLastFee !== null
+        ? Math.max(
+            0,
+            expectedLastFee -
+              lastCompletedAmount,
+          )
+        : 0;
+
+    const currentWeeklyFee =
+      feeForDate(
+        history,
+        today,
+      );
+
+    result.push({
+      resident_id:
+        Number(row.resident_id),
+      resident_name:
+        String(
+          row.resident_name || "",
+        ),
+      resident_email:
+        String(
+          row.resident_email || "",
+        ),
+      barangay_id:
+        Number(row.barangay_id),
+      barangay_name:
+        String(
+          row.barangay_name || "",
+        ),
+      purok_id:
+        purokId,
+      purok_name:
+        String(
+          row.purok_name || "",
+        ),
+      current_weekly_fee:
+        Math.round(
+          currentWeeklyFee * 100,
+        ) / 100,
+      last_completed_payment_at:
+        row.last_completed_payment_at ||
+        null,
+      last_completed_amount:
+        lastCompletedAmount,
+      expected_last_fee:
+        expectedLastFee === null
+          ? null
+          : Math.round(
+              expectedLastFee * 100,
+            ) / 100,
+      missed_payment_count:
+        missedCount,
+      underpaid_amount:
+        Math.round(
+          underpaidAmount * 100,
+        ) / 100,
+      outstanding_balance:
+        Math.round(
+          (
+            missedBalance +
+            underpaidAmount
+          ) * 100,
+        ) / 100,
+      pending_verification_count:
+        Number(
+          row.pending_verification_count ||
+            0,
+        ),
+      counting_from:
+        localDateString(
+          baseDate,
+        ),
+      missed_periods:
+        missedPeriods,
+    });
+  }
+
+  return result;
+}
+
 async function residentPaymentReminder(
   viewer: any,
 ) {
@@ -278,141 +612,38 @@ async function residentPaymentReminder(
     return null;
   }
 
-  const [paymentRows] =
-    await db.query<any[]>(
-      `
-      SELECT
-        amount,
-        COALESCE(
-          admin_confirmed_at,
-          updated_at,
-          created_at
-        ) AS completed_at
-      FROM payments
-      WHERE resident_id = ?
-        AND category = 'weekly_fee'
-        AND status = 'completed'
-      ORDER BY
-        COALESCE(
-          admin_confirmed_at,
-          updated_at,
-          created_at
-        ) DESC,
-        id DESC
-      LIMIT 1
-      `,
-      [viewer.id],
-    );
-
-  const lastPayment =
-    paymentRows[0] || null;
-
-  const accountStart =
-    viewer.created_at
-      ? startOfLocalDay(
-          viewer.created_at,
-        )
-      : startOfLocalDay(
-          new Date(),
-        );
-
-  const baseDate =
-    lastPayment?.completed_at
-      ? startOfLocalDay(
-          lastPayment.completed_at,
-        )
-      : accountStart;
-
-  const today =
-    startOfLocalDay(new Date());
-
-  const weekMs =
-    7 * 24 * 60 * 60 * 1000;
-
-  const elapsedMs =
-    Math.max(
-      0,
-      today.getTime() -
-        baseDate.getTime(),
-    );
-
-  const missedCount =
-    Math.floor(
-      elapsedMs / weekMs,
-    );
-
-  const history =
-    await weeklyFeeHistory(
-      Number(viewer.purok_id),
-    );
-
-  const missedPeriods: {
-    due_date: string;
-    fee: number;
-  }[] = [];
-
-  let outstandingBalance = 0;
-
-  for (
-    let index = 1;
-    index <= missedCount;
-    index += 1
-  ) {
-    const dueDate =
-      new Date(
-        baseDate.getTime() +
-          index * weekMs,
-      );
-
-    const fee =
-      feeForDate(
-        history,
-        dueDate,
-      );
-
-    outstandingBalance += fee;
-
-    missedPeriods.push({
-      due_date:
-        localDateString(
-          dueDate,
-        ),
-      fee:
-        Math.round(
-          fee * 100,
-        ) / 100,
+  const rows =
+    await loadResidentComplianceRows({
+      residentId:
+        Number(viewer.id),
     });
-  }
 
-  const feeInfo =
-    await paymentFeeInfo(
-      Number(viewer.purok_id),
-    );
+  const compliance =
+    rows[0];
+
+  if (!compliance) {
+    return null;
+  }
 
   return {
     current_weekly_fee:
-      Math.round(
-        Number(feeInfo.amount) * 100,
-      ) / 100,
+      compliance.current_weekly_fee,
     last_completed_payment_at:
-      lastPayment?.completed_at ||
-      null,
+      compliance.last_completed_payment_at,
     last_completed_amount:
-      lastPayment
-        ? Number(lastPayment.amount)
-        : null,
+      compliance.last_completed_amount,
+    expected_last_fee:
+      compliance.expected_last_fee,
     missed_payment_count:
-      missedCount,
+      compliance.missed_payment_count,
+    underpaid_amount:
+      compliance.underpaid_amount,
     outstanding_balance:
-      Math.round(
-        outstandingBalance * 100,
-      ) / 100,
+      compliance.outstanding_balance,
     counting_from:
-      localDateString(
-        baseDate,
-      ),
+      compliance.counting_from,
     missed_periods:
-      missedPeriods,
+      compliance.missed_periods,
   };
 }
 
@@ -507,7 +738,69 @@ type ContributionSummaryRow = {
   confirmed_contribution: number;
   pending_contribution: number;
   to_confirm_amount: number;
+  resident_count: number;
+  unpaid_residents: number;
+  underpaid_residents: number;
+  outstanding_obligation: number;
 };
+
+function complianceTotalsByScope(
+  rows: ResidentComplianceRow[],
+  scope: "barangay" | "purok",
+) {
+  const totals =
+    new Map<
+      number,
+      {
+        resident_count: number;
+        unpaid_residents: number;
+        underpaid_residents: number;
+        outstanding_obligation: number;
+      }
+    >();
+
+  for (const row of rows) {
+    const scopeId =
+      scope === "barangay"
+        ? row.barangay_id
+        : row.purok_id;
+
+    const current =
+      totals.get(scopeId) || {
+        resident_count: 0,
+        unpaid_residents: 0,
+        underpaid_residents: 0,
+        outstanding_obligation: 0,
+      };
+
+    current.resident_count += 1;
+
+    if (
+      row.missed_payment_count > 0
+    ) {
+      current.unpaid_residents += 1;
+    }
+
+    if (
+      row.underpaid_amount > 0
+    ) {
+      current.underpaid_residents += 1;
+    }
+
+    current.outstanding_obligation +=
+      Number(
+        row.outstanding_balance ||
+          0,
+      );
+
+    totals.set(
+      scopeId,
+      current,
+    );
+  }
+
+  return totals;
+}
 
 async function loadContributionSummary(
   viewer: any,
@@ -569,7 +862,26 @@ async function loadContributionSummary(
       ORDER BY b.name ASC
     `);
 
-    return rows.map((row: any) => ({
+    const compliance =
+      complianceTotalsByScope(
+        await loadResidentComplianceRows({
+          all: true,
+        }),
+        "barangay",
+      );
+
+    return rows.map((row: any) => {
+      const residentStatus =
+        compliance.get(
+          Number(row.scope_id),
+        ) || {
+          resident_count: 0,
+          unpaid_residents: 0,
+          underpaid_residents: 0,
+          outstanding_obligation: 0,
+        };
+
+      return {
       scope_id: Number(row.scope_id),
       scope_name: String(row.scope_name || ""),
       parent_name: null,
@@ -582,7 +894,15 @@ async function loadContributionSummary(
       confirmed_contribution: Number(row.confirmed_contribution || 0),
       pending_contribution: Number(row.pending_contribution || 0),
       to_confirm_amount: Number(row.to_confirm_amount || 0),
-    }));
+      resident_count: residentStatus.resident_count,
+      unpaid_residents: residentStatus.unpaid_residents,
+      underpaid_residents: residentStatus.underpaid_residents,
+      outstanding_obligation:
+        Math.round(
+          residentStatus.outstanding_obligation * 100,
+        ) / 100,
+      };
+    });
   }
 
   if (viewer.role === "admin") {
@@ -652,7 +972,29 @@ async function loadContributionSummary(
       [viewer.barangay_id],
     );
 
-    return rows.map((row: any) => ({
+    const compliance =
+      complianceTotalsByScope(
+        await loadResidentComplianceRows({
+          barangayId:
+            Number(
+              viewer.barangay_id,
+            ),
+        }),
+        "purok",
+      );
+
+    return rows.map((row: any) => {
+      const residentStatus =
+        compliance.get(
+          Number(row.scope_id),
+        ) || {
+          resident_count: 0,
+          unpaid_residents: 0,
+          underpaid_residents: 0,
+          outstanding_obligation: 0,
+        };
+
+      return {
       scope_id: Number(row.scope_id),
       scope_name: String(row.scope_name || ""),
       parent_name: String(row.parent_name || "") || null,
@@ -665,7 +1007,15 @@ async function loadContributionSummary(
       confirmed_contribution: Number(row.confirmed_contribution || 0),
       pending_contribution: Number(row.pending_contribution || 0),
       to_confirm_amount: Number(row.to_confirm_amount || 0),
-    }));
+      resident_count: residentStatus.resident_count,
+      unpaid_residents: residentStatus.unpaid_residents,
+      underpaid_residents: residentStatus.underpaid_residents,
+      outstanding_obligation:
+        Math.round(
+          residentStatus.outstanding_obligation * 100,
+        ) / 100,
+      };
+    });
   }
 
   return [];
@@ -725,6 +1075,7 @@ router.get(
           categories: paymentCategories,
           weeklyFee: null,
           paymentReminder: null,
+          residentCompliance: [],
           contributionSummary,
           viewMode:
             viewer.role === "super_admin"
@@ -803,12 +1154,23 @@ router.get(
             )
           : null;
 
+      const residentCompliance =
+        viewer.role === "purok_leader"
+          ? await loadResidentComplianceRows({
+              purokId:
+                Number(
+                  viewer.purok_id,
+                ),
+            })
+          : [];
+
       return res.json({
         success: true,
         payments,
         categories,
         weeklyFee: feeInfo,
         paymentReminder,
+        residentCompliance,
         contributionSummary: [],
         viewMode: "resident_payments",
       });

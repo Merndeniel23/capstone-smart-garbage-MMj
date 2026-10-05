@@ -185,6 +185,9 @@ export default function Schedule() {
   const [savingBarangay, setSavingBarangay] = useState(false);
 
   const canManage = currentUser?.role === "super_admin";
+  const canManageBarangayProfile =
+    currentUser?.role === "super_admin" ||
+    currentUser?.role === "admin";
   const isMunicipal = currentUser?.role === "super_admin";
 
   const barangays = useMemo(() => {
@@ -223,19 +226,6 @@ export default function Schedule() {
       normalizedScheduleSearch,
     ],
   );
-  const todayWeekday = DAYS[(today.getDay() + 6) % 7];
-  const todaysPublishedSchedules = useMemo(
-    () =>
-      schedules
-        .filter(
-          (schedule) =>
-            Number(schedule.is_active) === 1 &&
-            schedule.day_of_week === todayWeekday,
-        )
-        .sort((a, b) => a.barangay_name.localeCompare(b.barangay_name)),
-    [schedules, todayWeekday],
-  );
-
   const selectedWeekday = DAYS[(selectedDate.getDay() + 6) % 7];
   const selectedDateSchedules = useMemo(
     () =>
@@ -608,7 +598,7 @@ export default function Schedule() {
 
   const saveBarangaySettings = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canManage) return;
+    if (!canManageBarangayProfile) return;
 
     const barangayId = Number(settingsBarangayId);
     if (!Number.isInteger(barangayId) || barangayId <= 0) {
@@ -653,7 +643,7 @@ export default function Schedule() {
     return (
       <div className="flex min-h-[420px] items-center justify-center">
         <div className="text-center">
-          <Loader2 className="mx-auto h-8 w-8 animate-spin [animation-duration:2s] text-emerald-500" />
+          <Loader2 className="mx-auto h-8 w-8 animate-spin text-emerald-500" />
           <p className="mt-3 text-sm font-semibold text-slate-500">
             Loading collection schedule...
           </p>
@@ -664,58 +654,6 @@ export default function Schedule() {
 
   return (
     <div className="sg-page space-y-5 pb-20">
-      <style>{`
-        html.sg-dark .sg-schedule-mode-chip {
-          background-color: #12372f !important;
-          color: #a7f3d0 !important;
-          --tw-ring-color: #14532d !important;
-        }
-
-        html.sg-dark .sg-today-collection {
-          background-color: #0f2a22 !important;
-          border-color: #14532d !important;
-        }
-
-        html.sg-dark .sg-today-kicker,
-        html.sg-dark .sg-today-title {
-          color: #6ee7b7 !important;
-        }
-
-        html.sg-dark .sg-today-copy {
-          color: #a7f3d0 !important;
-        }
-
-        html.sg-dark .sg-today-count,
-        html.sg-dark .sg-today-item,
-        html.sg-dark .sg-today-empty {
-          background-color: #111827 !important;
-          border-color: #334155 !important;
-        }
-
-        html.sg-dark .sg-today-count {
-          color: #6ee7b7 !important;
-          --tw-ring-color: #14532d !important;
-        }
-
-        html.sg-dark .sg-today-item-title {
-          color: #f8fafc !important;
-        }
-
-        html.sg-dark .sg-today-item-time,
-        html.sg-dark .sg-today-item-note {
-          color: #cbd5e1 !important;
-        }
-
-        html.sg-dark .sg-today-empty {
-          color: #a7f3d0 !important;
-          border-color: #166534 !important;
-        }
-
-        html.sg-dark .sg-calendar-scheduled-day {
-          background-color: #12372f !important;
-          color: #6ee7b7 !important;
-        }
-      `}</style>
       <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">
@@ -734,19 +672,25 @@ export default function Schedule() {
             className="inline-flex min-h-11 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <RefreshCw
-              className={`h-4 w-4 ${refreshing ? "animate-spin [animation-duration:2s]" : ""}`}
+              className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
             />
             Refresh
           </button>
 
-          {canManage && (
+          {canManageBarangayProfile && (
             <button
               type="button"
-              onClick={() => openBarangaySettings()}
+              onClick={() =>
+                openBarangaySettings(
+                  currentUser?.role === "admin"
+                    ? Number(currentUser?.barangay_id || 0)
+                    : undefined,
+                )
+              }
               className="inline-flex min-h-11 items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-100"
             >
               <Settings className="h-4 w-4" />
-              Barangay Settings
+              Barangay Profile
             </button>
           )}
 
@@ -779,57 +723,10 @@ export default function Schedule() {
         <span className="rounded-full bg-white px-3 py-1.5 shadow-sm ring-1 ring-slate-100">
           {roleLabel(currentUser?.role || "resident")}
         </span>
-        <span className="sg-schedule-mode-chip rounded-full bg-emerald-50 px-3 py-1.5 text-emerald-700 ring-1 ring-emerald-100">
+        <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-emerald-700 ring-1 ring-emerald-100">
           {canManage ? "Schedule manager" : "Read-only schedule"}
         </span>
       </div>
-
-      <section
-        aria-label="Today's garbage collection"
-        className="sg-today-collection rounded-2xl border border-emerald-100 bg-emerald-50 p-4 shadow-sm"
-      >
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="sg-today-kicker text-[10px] font-black uppercase tracking-widest text-emerald-700">Today's collection</p>
-            <h2 className="sg-today-title mt-1 text-lg font-black text-emerald-950">{todayWeekday}</h2>
-            <p className="sg-today-copy mt-1 text-xs text-emerald-800">View-only for all users. Schedule management remains available only to the Municipal Administrator.</p>
-          </div>
-          <span className="sg-today-count rounded-full bg-white px-3 py-1.5 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200">
-            {todaysPublishedSchedules.length} {todaysPublishedSchedules.length === 1 ? "barangay" : "barangays"}
-          </span>
-        </div>
-
-        {todaysPublishedSchedules.length > 0 ? (
-          <div className="mt-4 grid gap-2 md:grid-cols-2">
-            {todaysPublishedSchedules.map((schedule) => (
-              <button
-                key={`today-${schedule.id}`}
-                type="button"
-                onClick={() => setSelectedSchedule(schedule)}
-                className="sg-today-item rounded-xl border border-emerald-200 bg-white p-3 text-left transition hover:border-emerald-400"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="sg-today-item-title font-black text-slate-900">{schedule.barangay_name}</p>
-                    <p className="sg-today-item-time mt-1 flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-                      <Clock className="h-3.5 w-3.5" />
-                      {formatTimeRange(schedule.start_time, schedule.end_time)}
-                    </p>
-                  </div>
-                  <Eye className="h-4 w-4 shrink-0 text-emerald-600" />
-                </div>
-                {schedule.notes && (
-                  <p className="sg-today-item-note mt-2 line-clamp-2 text-xs leading-relaxed text-slate-500">{schedule.notes}</p>
-                )}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <p className="sg-today-empty mt-4 rounded-xl border border-dashed border-emerald-200 bg-white/70 px-4 py-5 text-center text-sm font-semibold text-emerald-800">
-            No active barangay collection is published for today.
-          </p>
-        )}
-      </section>
 
       {isMunicipal && (
         <>
@@ -960,7 +857,7 @@ export default function Schedule() {
                   todayCell
                     ? "bg-emerald-500 font-bold text-white shadow-sm ring-2 ring-emerald-100"
                     : scheduledCell
-                      ? "sg-calendar-scheduled-day bg-emerald-50 font-bold text-emerald-700"
+                      ? "bg-emerald-50 font-bold text-emerald-700"
                       : "text-slate-600 hover:bg-slate-50"
                 }`}
                 title={
@@ -1178,7 +1075,7 @@ export default function Schedule() {
       </div>
 
 
-      {showBarangaySettings && canManage && (
+      {showBarangaySettings && canManageBarangayProfile && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 p-4 backdrop-blur-md"
           role="dialog"
@@ -1200,13 +1097,18 @@ export default function Schedule() {
 
             <div className="pr-10">
               <p className="text-[10px] font-black uppercase tracking-[0.35em] text-emerald-500">
-                Municipal settings
+                {currentUser?.role === "super_admin"
+                  ? "Municipal settings"
+                  : "Barangay settings"}
               </p>
               <h3 id="barangay-settings-title" className="mt-2 text-2xl font-black text-slate-900">
                 Barangay Profile
               </h3>
               <p className="mt-1 text-sm text-slate-500">
-                The photo, name, and address saved here are reused in collection schedule details.
+                The barangay photo and address saved here are reused in collection schedule details.
+                {currentUser?.role === "admin"
+                  ? " You can update only your assigned barangay profile."
+                  : ""}
               </p>
             </div>
 
@@ -1216,7 +1118,8 @@ export default function Schedule() {
                 <select
                   value={settingsBarangayId}
                   onChange={(event) => chooseSettingsBarangay(event.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800"
+                  disabled={currentUser?.role === "admin"}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 disabled:cursor-not-allowed disabled:bg-slate-100"
                   required
                 >
                   {barangayOptions.map((barangay) => (
@@ -1230,10 +1133,11 @@ export default function Schedule() {
                 <input
                   value={barangaySettings.name}
                   maxLength={120}
+                  readOnly={currentUser?.role === "admin"}
                   onChange={(event) =>
                     setBarangaySettings((current) => ({ ...current, name: event.target.value }))
                   }
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-800"
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-800 read-only:cursor-not-allowed read-only:bg-slate-100"
                   required
                 />
               </label>
@@ -1264,13 +1168,23 @@ export default function Schedule() {
                 </span>
               </label>
 
-              {barangaySettings.imageDataUrl && (
-                <img
-                  src={barangaySettings.imageDataUrl}
-                  alt="Selected barangay preview"
-                  className="h-36 w-full rounded-2xl border border-slate-100 object-cover"
-                />
-              )}
+              {(barangaySettings.imageDataUrl ||
+                barangayOptions.find(
+                  (barangay) => String(barangay.id) === settingsBarangayId,
+                )?.image_url) &&
+                !barangaySettings.removeImage && (
+                  <img
+                    src={
+                      barangaySettings.imageDataUrl ||
+                      barangayOptions.find(
+                        (barangay) => String(barangay.id) === settingsBarangayId,
+                      )?.image_url ||
+                      ""
+                    }
+                    alt="Barangay preview"
+                    className="h-36 w-full rounded-2xl border border-slate-100 object-cover"
+                  />
+                )}
 
               <label className="flex items-center gap-2 text-sm font-semibold text-slate-600">
                 <input
@@ -1302,7 +1216,7 @@ export default function Schedule() {
                 disabled={savingBarangay}
                 className="inline-flex items-center justify-center gap-2 rounded-3xl bg-emerald-600 py-3 text-xs font-black uppercase tracking-[0.18em] text-white disabled:opacity-60"
               >
-                {savingBarangay ? <Loader2 className="h-4 w-4 animate-spin [animation-duration:2s]" /> : <Save className="h-4 w-4" />}
+                {savingBarangay ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 {savingBarangay ? "Saving" : "Save Barangay"}
               </button>
             </div>
@@ -1475,7 +1389,7 @@ export default function Schedule() {
                 className="inline-flex items-center justify-center gap-2 rounded-3xl bg-emerald-600 py-3 text-xs font-black uppercase tracking-[0.18em] text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {saving ? (
-                  <Loader2 className="h-4 w-4 animate-spin [animation-duration:2s]" />
+                  <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Save className="h-4 w-4" />
                 )}
@@ -1678,7 +1592,7 @@ export default function Schedule() {
                 className="inline-flex items-center justify-center gap-2 rounded-3xl bg-rose-600 py-3 text-xs font-black uppercase tracking-[0.15em] text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {deleting && (
-                  <Loader2 className="h-4 w-4 animate-spin [animation-duration:2s]" />
+                  <Loader2 className="h-4 w-4 animate-spin" />
                 )}
                 {deleting ? "Deleting" : "Delete"}
               </button>
