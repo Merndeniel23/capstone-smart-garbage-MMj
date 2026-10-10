@@ -205,7 +205,7 @@ function canAdminModifyAccount(user: ManagedUser) {
   return Boolean(Number(user.email_verified));
 }
 
-export default function UserManagement({ initialRoleFilter = "all", initialStatusFilter = "all", initialCreateCaptain = false, onViewHouseholds, onRoleFilterChange }: {
+export default function UserManagement({ initialRoleFilter = "all", initialStatusFilter = "all", initialCreateCaptain = false, onRoleFilterChange }: {
   initialRoleFilter?: string;
   initialStatusFilter?: string;
   initialCreateCaptain?: boolean;
@@ -217,7 +217,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
   const [puroks, setPuroks] = useState<Purok[]>([]);
 
   const [activeTab, setActiveTab] = useState<
-    "all" | "pending" | "residents" | "collectors" | "leaders"
+    "all" | "pending" | "captains" | "residents" | "collectors" | "leaders"
   >("all");
 
   const [searchTerm, setSearchTerm] = useState("");
@@ -267,6 +267,33 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
     generateTemporaryPassword,
   );
   const [showTemporaryPassword, setShowTemporaryPassword] = useState(false);
+
+  const barangayCaptainIds = useMemo(
+    () =>
+      new Set(
+        users
+          .filter(
+            (user) =>
+              user.role === "admin" &&
+              user.barangay_id,
+          )
+          .map((user) =>
+            Number(user.barangay_id),
+          ),
+      ),
+    [users],
+  );
+
+  const availableCaptainBarangays = useMemo(
+    () =>
+      barangays.filter(
+        (barangay) =>
+          !barangayCaptainIds.has(
+            Number(barangay.id),
+          ),
+      ),
+    [barangays, barangayCaptainIds],
+  );
 
   const refreshUsers = async (silent = true) => {
     setRefreshing(true);
@@ -362,6 +389,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
       const matchesTab =
         activeTab === "all" ||
         (activeTab === "pending" && user.status === "pending") ||
+        (activeTab === "captains" && user.role === "admin") ||
         (activeTab === "residents" && user.role === "resident") ||
         (activeTab === "collectors" && user.role === "collector") ||
         (activeTab === "leaders" && user.role === "purok_leader");
@@ -610,7 +638,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
         setSelectedPurokId("");
       }
       if (verification?.email === user.email) setVerification(null);
-      setSuccessMessage(data.message || "Account deleted successfully.");
+      setSuccessMessage(data.message || "Account removed successfully. Historical records were preserved.");
       notifyAdminActionCountsChanged();
       await refreshUsers(false);
     } catch (err) {
@@ -655,6 +683,17 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
 
     if (!fullName || !email || !captainBarangayId || !temporaryPassword) {
       setError("Full name, email, barangay, and temporary password are required.");
+      return;
+    }
+
+    if (
+      barangayCaptainIds.has(
+        Number(captainBarangayId),
+      )
+    ) {
+      setError(
+        "This barangay already has a Barangay Captain. Only one captain account is allowed per barangay.",
+      );
       return;
     }
 
@@ -886,17 +925,14 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
             LGU Access Control
           </div>
           <h1 className="text-3xl font-black tracking-tight text-slate-900">
-            {isSuperAdmin ? roleFilter === "admin" ? "Barangay Captains" : "User Directory" : "User Management"}
+            {isSuperAdmin ? "User Directory" : "User Management"}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            {isSuperAdmin ? "System accounts across municipal, barangay, and collection roles. Household records are managed in the Household Directory." : "Manage Purok Leader, Collector, and Resident accounts in your barangay."}
+            {isSuperAdmin ? "One directory for Municipal Administrator, Barangay Captains, Purok Leaders, Collectors, and Residents. Use the role filters below to narrow the list." : "Manage Purok Leader, Collector, and Resident accounts in your barangay."}
           </p>
         </div>
 
         <div className="flex w-full flex-col gap-3 md:w-auto md:flex-row md:flex-wrap md:items-center">
-          {isSuperAdmin && onViewHouseholds && (
-            <button type="button" onClick={onViewHouseholds} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-bold text-slate-700">Household Directory</button>
-          )}
           {isSuperAdmin && (
             <button
               type="button"
@@ -994,6 +1030,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
         {[
           { id: "all", label: "All Users" },
           { id: "pending", label: `Pending (${pendingCount})` },
+          ...(isSuperAdmin ? [{ id: "captains", label: "Barangay Captains" }] : []),
           { id: "residents", label: "Residents" },
           { id: "collectors", label: "Collectors" },
           { id: "leaders", label: "Purok Leaders" },
@@ -1003,7 +1040,16 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
             type="button"
             aria-pressed={activeTab === tab.id}
             onClick={() => {
-              const nextRole = tab.id === "residents" ? "resident" : tab.id === "collectors" ? "collector" : tab.id === "leaders" ? "purok_leader" : "all";
+              const nextRole =
+                tab.id === "captains"
+                  ? "admin"
+                  : tab.id === "residents"
+                    ? "resident"
+                    : tab.id === "collectors"
+                      ? "collector"
+                      : tab.id === "leaders"
+                        ? "purok_leader"
+                        : "all";
               setActiveTab(tab.id as typeof activeTab);
               setRoleFilter(nextRole);
               onRoleFilterChange?.(nextRole);
@@ -1146,9 +1192,13 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                         <button type="button" onClick={() => { setError(""); setVerification({ email: user.email, resendAfter: 0 }); }} className="inline-flex items-center gap-1.5 rounded-xl px-2 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50">
                           <Mail className="h-4 w-4" />Verify Email
                         </button>
-                      ) : user.role === "admin" || user.role === "super_admin" ? (
+                      ) : user.role === "super_admin" ? (
                         <span className="text-[10px] font-bold text-slate-400">
                           Protected account
+                        </span>
+                      ) : user.role === "admin" ? (
+                        <span className="text-[10px] font-bold text-slate-400">
+                          Municipal Administrator managed
                         </span>
                       ) : (
                         <div className="flex items-center gap-2">
@@ -1302,10 +1352,13 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                   <button type="button" onClick={() => { setError(""); setVerification({ email: user.email, resendAfter: 0 }); }} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-bold text-emerald-700 hover:bg-emerald-50">
                     <Mail className="h-4 w-4" />Verify Email
                   </button>
-                ) : user.role === "admin" ||
-                user.role === "super_admin" ? (
+                ) : user.role === "super_admin" ? (
                   <span className="text-[10px] font-bold text-slate-400">
                     Protected account
+                  </span>
+                ) : user.role === "admin" ? (
+                  <span className="text-[10px] font-bold text-slate-400">
+                    Municipal Administrator managed
                   </span>
                 ) : (
                   <>
@@ -1581,7 +1634,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                     className="w-full appearance-none rounded-xl border border-slate-200 bg-white p-3 pr-10 text-sm"
                   >
                     <option value="">Select barangay</option>
-                    {barangays.map((barangay) => (
+                    {availableCaptainBarangays.map((barangay) => (
                       <option key={barangay.id} value={barangay.id}>
                         {barangay.name}
                       </option>
@@ -1589,6 +1642,14 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                   </select>
                   <ChevronDown className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-slate-400" />
                 </div>
+                <p className="mt-2 text-[10px] font-semibold text-slate-400">
+                  Only barangays without an existing Barangay Captain are available. One captain account is allowed per barangay.
+                </p>
+                {availableCaptainBarangays.length === 0 && (
+                  <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-[10px] font-bold text-amber-700">
+                    All active barangays already have an assigned Barangay Captain.
+                  </p>
+                )}
               </label>
 
               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
@@ -1815,14 +1876,25 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
       />
       <ConfirmDialog
         open={Boolean(deleteConfirmation)}
-        title="Delete account?"
+        title="Remove account?"
         description={deleteConfirmation ? (
           <>
-            <p>Delete {deleteConfirmation.full_name} ({deleteConfirmation.email})? This action cannot be undone. Accounts with linked operational records cannot be deleted.</p>
+            <p>
+              Remove {deleteConfirmation.full_name} ({deleteConfirmation.email}) from the system?
+              The account will disappear from normal user lists and can no longer sign in.
+            </p>
+            <p className="mt-2 text-xs font-semibold text-slate-500">
+              Historical records such as payments, complaints, inspections, endorsements, and audit history will remain linked to the original name.
+            </p>
+            {deleteConfirmation.role === "admin" && (
+              <p className="mt-2 text-xs font-bold text-amber-700">
+                Barangay Captain accounts can be removed only by the Municipal Administrator.
+              </p>
+            )}
             {error && <p role="alert" className="mt-3 rounded-xl bg-rose-50 p-3 font-bold text-rose-700">{error}</p>}
           </>
         ) : ""}
-        confirmLabel="Delete account"
+        confirmLabel="Remove account"
         destructive
         busy={saving}
         onCancel={() => { if (!saving) setDeleteConfirmation(null); }}

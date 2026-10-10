@@ -19,7 +19,6 @@ import {
   Shield,
   Truck,
   User,
-  UserCog,
   Users,
 } from "lucide-react";
 import {
@@ -260,7 +259,7 @@ export default function Sidebar({
     {
       id: "notifications",
       icon: Bell,
-      label: "Notifications",
+      label: "Alerts",
       count: unseenCount,
     },
     {
@@ -317,7 +316,7 @@ export default function Sidebar({
     {
       id: "notifications",
       icon: Bell,
-      label: "Notifications",
+      label: "System Alerts",
       count: unseenCount,
     },
     {
@@ -375,7 +374,7 @@ export default function Sidebar({
     {
       id: "notifications",
       icon: Bell,
-      label: "Notifications",
+      label: "Barangay Alerts",
       count: unseenCount,
     },
     {
@@ -397,22 +396,11 @@ export default function Sidebar({
       label: "Municipal Dashboard",
     },
     {
-      id: "captain-accounts",
-      icon: UserCog,
-      label: "Barangay Captains",
-      directoryRole: "admin",
-      count: unreadAccounts,
-    },
-    {
       id: "user-management",
       icon: Users,
       label: "User Directory",
       directoryRole: "all",
-    },
-    {
-      id: "members-list",
-      icon: Users,
-      label: "Household Directory",
+      count: unreadAccounts,
     },
     {
       id: "garbage-bins",
@@ -444,7 +432,7 @@ export default function Sidebar({
     {
       id: "notifications",
       icon: Bell,
-      label: "Notifications",
+      label: "Municipal Alerts",
       count: unseenCount,
     },
     {

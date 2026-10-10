@@ -1,5 +1,6 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
+import { randomBytes } from "node:crypto";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../config/db.js";
 import {
@@ -11,7 +12,6 @@ import {
   storeProof,
 } from "../config/storage.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
-import { AccountDeletionError, canDeleteAccount, deleteAccount } from "../services/accountDeletion.js";
 import {
   createEmailVerification,
   requiresEmailVerification,
@@ -21,6 +21,51 @@ import {
 const router = Router();
 
 type ManagedRole = "resident" | "purok_leader" | "collector";
+
+const ARCHIVED_EMAIL_SUFFIX = "@deleted.sgms.local";
+const ARCHIVED_EMAIL_LIKE = `%${ARCHIVED_EMAIL_SUFFIX}`;
+
+function isArchivedAccount(user: any): boolean {
+  return String(user?.email || "")
+    .toLowerCase()
+    .endsWith(ARCHIVED_EMAIL_SUFFIX);
+}
+
+function canArchiveAccount(viewer: any, target: any): boolean {
+  const viewerId = parsePositiveInteger(viewer?.id);
+  const targetId = parsePositiveInteger(target?.id);
+  const viewerRole = String(viewer?.role || "").toLowerCase();
+  const targetRole = String(target?.role || "").toLowerCase();
+
+  if (!viewerId || !targetId || viewerId === targetId) {
+    return false;
+  }
+
+  if (isArchivedAccount(target) || targetRole === "super_admin") {
+    return false;
+  }
+
+  if (viewerRole === "super_admin") {
+    return ["admin", "purok_leader", "collector", "resident"].includes(
+      targetRole,
+    );
+  }
+
+  if (viewerRole === "admin") {
+    const sameBarangay =
+      parsePositiveInteger(viewer?.barangay_id) !== null &&
+      parsePositiveInteger(viewer?.barangay_id) ===
+        parsePositiveInteger(target?.barangay_id);
+
+    return (
+      sameBarangay &&
+      ["purok_leader", "collector", "resident"].includes(targetRole)
+    );
+  }
+
+  return false;
+}
+
 
 function requireBarangayCaptain(req: AuthRequest, res: any): boolean {
   const role = req.user?.role;
@@ -209,8 +254,8 @@ router.get(
       }
 
       const userWhere = isSuperAdmin
-        ? ""
-        : "AND u.barangay_id = ?";
+        ? "AND u.email NOT LIKE ?"
+        : "AND u.email NOT LIKE ? AND u.barangay_id = ?";
 
       const complaintWhere = isSuperAdmin
         ? ""
@@ -220,7 +265,9 @@ router.get(
         ? ""
         : "AND p.barangay_id = ?";
 
-      const userParams = isSuperAdmin ? [] : [barangayId];
+      const userParams = isSuperAdmin
+        ? [ARCHIVED_EMAIL_LIKE]
+        : [ARCHIVED_EMAIL_LIKE, barangayId];
       const complaintParams = isSuperAdmin ? [] : [barangayId];
       const binParams = isSuperAdmin ? [] : [barangayId];
 
@@ -382,8 +429,8 @@ router.get(
       }
 
       const userFilter = isSuperAdmin
-        ? ""
-        : "WHERE u.barangay_id = ?";
+        ? "WHERE u.email NOT LIKE '%@deleted.sgms.local'"
+        : "WHERE u.email NOT LIKE '%@deleted.sgms.local' AND u.barangay_id = ?";
 
       const complaintFilter = isSuperAdmin
         ? ""
@@ -620,8 +667,8 @@ router.get(
       }
 
       const userFilter = isSuperAdmin
-        ? ""
-        : "AND u.barangay_id = ?";
+        ? "AND u.email NOT LIKE ?"
+        : "AND u.email NOT LIKE ? AND u.barangay_id = ?";
 
       const complaintFilter = isSuperAdmin
         ? ""
@@ -631,7 +678,9 @@ router.get(
         ? ""
         : "AND p.barangay_id = ?";
 
-      const userParams = isSuperAdmin ? [] : [barangayId];
+      const userParams = isSuperAdmin
+        ? [ARCHIVED_EMAIL_LIKE]
+        : [ARCHIVED_EMAIL_LIKE, barangayId];
       const complaintParams = isSuperAdmin ? [] : [barangayId];
       const binParams = isSuperAdmin ? [] : [barangayId];
 
@@ -834,12 +883,16 @@ router.get(
         });
       }
 
-      const userFilter = isSuperAdmin ? "" : "AND u.barangay_id = ?";
+      const userFilter = isSuperAdmin
+        ? "AND u.email NOT LIKE ?"
+        : "AND u.email NOT LIKE ? AND u.barangay_id = ?";
       const complaintFilter = isSuperAdmin ? "" : "AND p.barangay_id = ?";
       const binFilter = isSuperAdmin ? "" : "AND p.barangay_id = ?";
       const collectionFilter = isSuperAdmin ? "" : "AND p.barangay_id = ?";
 
-      const userParams = isSuperAdmin ? [] : [barangayId];
+      const userParams = isSuperAdmin
+        ? [ARCHIVED_EMAIL_LIKE]
+        : [ARCHIVED_EMAIL_LIKE, barangayId];
       const complaintParams = isSuperAdmin ? [] : [barangayId];
       const binParams = isSuperAdmin ? [] : [barangayId];
       const collectionParams = isSuperAdmin ? [] : [barangayId];
@@ -1054,15 +1107,16 @@ router.get("/purok-members", requireAuth, async (req: AuthRequest, res) => {
       WHERE u.role = 'resident'
         AND u.purok_id = ?
         AND u.barangay_id = ?
+        AND u.email NOT LIKE ?
       ORDER BY u.full_name ASC
       `,
-      [purokId, barangayId],
+      [purokId, barangayId, ARCHIVED_EMAIL_LIKE],
     );
 
     const users = await Promise.all(
       rows.map(async (row: any) => ({
         ...row,
-        can_delete: canDeleteAccount(viewer, row),
+        can_delete: false,
         profile_photo: await signedProofUrl(row.profile_photo),
       })),
     );
@@ -1105,11 +1159,14 @@ router.get("/users", requireAuth, async (req: AuthRequest, res) => {
     }
 
     const scopeWhere = isSuperAdmin
-      ? ""
-      : `WHERE u.barangay_id = ?
+      ? "WHERE u.email NOT LIKE ?"
+      : `WHERE u.email NOT LIKE ?
+         AND u.barangay_id = ?
          AND u.role IN ('resident', 'collector', 'purok_leader')`;
 
-    const params = isSuperAdmin ? [] : [barangayId];
+    const params = isSuperAdmin
+      ? [ARCHIVED_EMAIL_LIKE]
+      : [ARCHIVED_EMAIL_LIKE, barangayId];
 
     const [rows]: any = await db.query(
       `
@@ -1160,7 +1217,7 @@ router.get("/users", requireAuth, async (req: AuthRequest, res) => {
     const users = await Promise.all(
       rows.map(async (row: any) => ({
         ...row,
-        can_delete: canDeleteAccount(req.user, row),
+        can_delete: canArchiveAccount(req.user, row),
         email_verification_required: requiresEmailVerification(row),
         profile_photo: await signedProofUrl(row.profile_photo),
       })),
@@ -1492,6 +1549,7 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
       SELECT
         id,
         full_name,
+        email,
         role,
         status,
         email_verified_at,
@@ -1513,6 +1571,14 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
     if (!user) {
       await connection.rollback();
       return res.status(404).json({ success: false, message: "User was not found." });
+    }
+
+    if (isArchivedAccount(user)) {
+      await connection.rollback();
+      return res.status(410).json({
+        success: false,
+        message: "This account has already been removed from the system.",
+      });
     }
 
     if (
@@ -1728,6 +1794,7 @@ router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => 
       `
       SELECT
         id,
+        email,
         role,
         status,
         email_verified_at,
@@ -1750,6 +1817,13 @@ router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => 
 
     if (!targetUser) {
       throw new VerificationError("User was not found in your barangay or cannot be updated.", 404);
+    }
+
+    if (isArchivedAccount(targetUser)) {
+      throw new VerificationError(
+        "This account has already been removed from the system.",
+        410,
+      );
     }
 
     const targetStatus = String(targetUser.status).toLowerCase();
@@ -2036,15 +2110,22 @@ router.post("/barangay-captains", requireAuth, async (req: AuthRequest, res) => 
     }
 
     const [captain]: any = await connection.query(
-      "SELECT id FROM users WHERE role = 'admin' AND barangay_id = ? LIMIT 1 FOR UPDATE",
-      [barangayId],
+      `SELECT id
+       FROM users
+       WHERE role = 'admin'
+         AND barangay_id = ?
+         AND email NOT LIKE ?
+       LIMIT 1
+       FOR UPDATE`,
+      [barangayId, ARCHIVED_EMAIL_LIKE],
     );
 
     if (captain.length) {
       await connection.rollback();
       return res.status(409).json({
         success: false,
-        message: "This barangay already has a Barangay Captain.",
+        message:
+          "Only one Barangay Captain account is allowed per barangay. This barangay already has an assigned captain.",
       });
     }
 
@@ -2098,25 +2179,187 @@ router.delete(
   "/users/:id",
   requireAuth,
   async (req: AuthRequest, res) => {
+    let connection: PoolConnection | undefined;
+
     try {
-      await deleteAccount(req.user, req.params.id);
-      return res.json({
-        success: true,
-        message: "User deleted successfully.",
-      });
-    } catch (error) {
-      if (error instanceof AccountDeletionError) {
-        return res.status(error.status).json({
+      if (!requireBarangayCaptain(req, res)) return;
+
+      const viewerId = parsePositiveInteger(req.user?.id);
+      const targetId = parsePositiveInteger(req.params.id);
+
+      if (!viewerId || !targetId) {
+        return res.status(400).json({
           success: false,
-          code: error.code,
-          message: error.message,
+          message: "A valid account is required.",
         });
       }
-      console.error("Delete user error:", error);
+
+      if (viewerId === targetId) {
+        return res.status(400).json({
+          success: false,
+          message: "You cannot remove your own account.",
+        });
+      }
+
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+
+      const [viewerRows]: any = await connection.query(
+        `
+        SELECT id, role, status, barangay_id, email
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+        FOR UPDATE
+        `,
+        [viewerId],
+      );
+
+      const viewer = viewerRows[0];
+
+      if (
+        !viewer ||
+        String(viewer.status).toLowerCase() !== "active" ||
+        isArchivedAccount(viewer)
+      ) {
+        await connection.rollback();
+        return res.status(403).json({
+          success: false,
+          message: "Your administrator account is not active.",
+        });
+      }
+
+      const [targetRows]: any = await connection.query(
+        `
+        SELECT
+          id,
+          full_name,
+          email,
+          role,
+          status,
+          barangay_id,
+          purok_id
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+        FOR UPDATE
+        `,
+        [targetId],
+      );
+
+      const target = targetRows[0];
+
+      if (!target || isArchivedAccount(target)) {
+        await connection.rollback();
+        return res.status(404).json({
+          success: false,
+          message: "The account was not found or has already been removed.",
+        });
+      }
+
+      if (!canArchiveAccount(viewer, target)) {
+        await connection.rollback();
+
+        const viewerRole = String(viewer.role || "").toLowerCase();
+        const targetRole = String(target.role || "").toLowerCase();
+
+        return res.status(403).json({
+          success: false,
+          message:
+            viewerRole === "admin" && targetRole === "admin"
+              ? "Only the Municipal Administrator can remove a Barangay Captain account."
+              : targetRole === "super_admin"
+                ? "The Municipal Administrator account is protected and cannot be removed here."
+                : "You do not have permission to remove this account.",
+        });
+      }
+
+      const archivedEmail =
+        `deleted+${targetId}+${Date.now()}${ARCHIVED_EMAIL_SUFFIX}`;
+
+      const disabledPasswordHash = await bcrypt.hash(
+        randomBytes(32).toString("hex"),
+        12,
+      );
+
+      // Remove only authentication/re-registration artifacts. Operational
+      // history (payments, complaints, inspections, endorsements, etc.)
+      // stays linked to this user row so historical records remain intact.
+      await connection.execute(
+        "DELETE FROM email_verifications WHERE user_id = ?",
+        [targetId],
+      );
+
+      await connection.execute(
+        "DELETE FROM password_resets WHERE LOWER(email) = LOWER(?)",
+        [target.email],
+      );
+
+      await connection.execute(
+        "DELETE FROM pending_registrations WHERE LOWER(email) = LOWER(?)",
+        [target.email],
+      );
+
+      // A removed collector must no longer be the active truck assignment.
+      // Historical collection-run rows still keep their original collector ID.
+      if (String(target.role).toLowerCase() === "collector") {
+        await connection.execute(
+          `
+          UPDATE garbage_trucks
+          SET collector_user_id = NULL
+          WHERE collector_user_id = ?
+          `,
+          [targetId],
+        );
+      }
+
+      const [result]: any = await connection.execute(
+        `
+        UPDATE users
+        SET
+          email = ?,
+          password_hash = ?,
+          status = 'inactive',
+          email_verified_at = NULL,
+          must_change_password = 1,
+          duty_latitude = NULL,
+          duty_longitude = NULL,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        `,
+        [
+          archivedEmail,
+          disabledPasswordHash,
+          targetId,
+        ],
+      );
+
+      if (Number(result.affectedRows) !== 1) {
+        await connection.rollback();
+        return res.status(409).json({
+          success: false,
+          message: "The account could not be removed.",
+        });
+      }
+
+      await connection.commit();
+
+      return res.json({
+        success: true,
+        archived: true,
+        message:
+          `${target.full_name}'s account was removed from the system. Historical records were preserved.`,
+      });
+    } catch (error) {
+      await connection?.rollback();
+      console.error("Archive user account error:", error);
+
       return res.status(500).json({
         success: false,
-        message: "Unable to delete user.",
+        message: "Unable to remove the account.",
       });
+    } finally {
+      connection?.release();
     }
   },
 );
