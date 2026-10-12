@@ -3,6 +3,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   ChevronDown,
+  CalendarDays,
+  MapPin,
+  Phone,
+  ShieldCheck,
   Copy,
   Edit2,
   Eye,
@@ -50,6 +54,7 @@ interface ManagedUser {
   barangay_name: string | null;
   purok_id: number | null;
   purok_name: string | null;
+  profile_photo?: string | null;
   created_at: string;
 }
 
@@ -154,6 +159,14 @@ function isValidPhone(value: string) {
   return /^\+?\d{7,15}$/.test(value);
 }
 
+function formatRegisteredDate(value: string) {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return "Not available";
+  return date.toLocaleDateString("en-PH", {
+    year: "numeric", month: "long", day: "numeric",
+  });
+}
+
 function roleLabel(role: ManagedUser["role"]) {
   switch (role) {
     case "super_admin":
@@ -230,6 +243,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
   const [userPageSize, setUserPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [statusConfirmation, setStatusConfirmation] = useState<ManagedUser | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState<ManagedUser | null>(null);
+  const [detailsUser, setDetailsUser] = useState<ManagedUser | null>(null);
   const deletingRef = useRef(false);
   const [roleConfirmation, setRoleConfirmation] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -419,6 +433,19 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
       );
     });
   }, [users, searchTerm, activeTab, roleFilter, barangayFilter, statusFilter, sortBy, sortDirection]);
+
+  const viewedUser = detailsUser
+    ? users.find((user) => user.id === detailsUser.id) ?? detailsUser
+    : null;
+
+  useEffect(() => {
+    if (!detailsUser) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDetailsUser(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [detailsUser]);
 
   const userPageCount = Math.max(
     1,
@@ -1145,9 +1172,15 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                           <User className="h-4 w-4" />
                         </div>
                         <div>
-                          <p className="text-sm font-bold text-slate-900">
+                          <button
+                            type="button"
+                            onClick={() => setDetailsUser(user)}
+                            aria-label={`View details for ${user.full_name}`}
+                            title="View account details"
+                            className="block max-w-[16rem] truncate rounded text-left text-sm font-bold text-slate-900 transition hover:text-emerald-600 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+                          >
                             {user.full_name}
-                          </p>
+                          </button>
                           <p className="text-[10px] font-medium text-slate-400">
                             {user.email} · ID {user.id}
                           </p>
@@ -1302,9 +1335,15 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                     <User className="h-5 w-5" />
                   </div>
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-bold text-slate-900">
+                    <button
+                      type="button"
+                      onClick={() => setDetailsUser(user)}
+                      aria-label={`View details for ${user.full_name}`}
+                      title="View account details"
+                      className="block max-w-full truncate rounded text-left text-sm font-bold text-slate-900 transition hover:text-emerald-600 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+                    >
                       {user.full_name}
-                    </p>
+                    </button>
                     <p className="truncate text-[10px] font-medium text-slate-400">
                       {user.email} · ID {user.id}
                     </p>
@@ -1741,6 +1780,139 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {viewedUser && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5"
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target) setDetailsUser(null);
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="user-details-title"
+            className="max-h-[90dvh] w-full max-w-xl overflow-y-auto rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-2xl sm:p-7"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-600">
+                  LGU User Directory
+                </p>
+                <h2 id="user-details-title" className="mt-1 text-xl font-black text-slate-900 sm:text-2xl">
+                  Account Details
+                </h2>
+                <p className="mt-1 text-xs text-slate-500">Read-only account and assignment information</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetailsUser(null)}
+                aria-label="Close account details"
+                className="rounded-xl border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="mt-5 flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              {viewedUser.profile_photo ? (
+                <img
+                  src={viewedUser.profile_photo}
+                  alt={`${viewedUser.full_name}'s profile`}
+                  className="h-14 w-14 shrink-0 rounded-2xl border border-slate-200 object-cover"
+                />
+              ) : (
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700">
+                  <User className="h-7 w-7" />
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="break-words text-base font-black text-slate-900">{viewedUser.full_name}</p>
+                <p className="mt-0.5 text-xs font-bold text-emerald-700">{roleLabel(viewedUser.role)}</p>
+                <span className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-600">
+                  <span className={`h-2 w-2 rounded-full ${statusClass(viewedUser.status)}`} />
+                  {accountStatusLabel(viewedUser)}
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-5 space-y-5">
+              <section>
+                <h3 className="mb-3 flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-700">
+                  <User className="h-4 w-4 text-emerald-600" /> Personal &amp; Contact Information
+                </h3>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="min-w-0 rounded-xl border border-slate-200 p-3">
+                    <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Full name</p>
+                    <p className="mt-1 break-words text-sm font-semibold text-slate-900">{viewedUser.full_name}</p>
+                  </div>
+                  <div className="min-w-0 rounded-xl border border-slate-200 p-3">
+                    <p className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wide text-slate-400"><Mail className="h-3 w-3" /> Email</p>
+                    <p className="mt-1 break-all text-sm font-semibold text-slate-900">{viewedUser.email}</p>
+                  </div>
+                  <div className="min-w-0 rounded-xl border border-slate-200 p-3">
+                    <p className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wide text-slate-400"><Phone className="h-3 w-3" /> Mobile number</p>
+                    <p className="mt-1 break-words text-sm font-semibold text-slate-900">{viewedUser.phone?.trim() || "Not provided"}</p>
+                  </div>
+                  <div className="min-w-0 rounded-xl border border-slate-200 p-3">
+                    <p className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wide text-slate-400"><MapPin className="h-3 w-3" /> Address</p>
+                    <p className="mt-1 break-words text-sm font-semibold text-slate-900">{viewedUser.address?.trim() || "Not provided"}</p>
+                  </div>
+                </div>
+              </section>
+
+              <section>
+                <h3 className="mb-3 flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-700">
+                  <MapPin className="h-4 w-4 text-emerald-600" /> Official Assignment
+                </h3>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-slate-200 p-3">
+                    <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Barangay</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">{viewedUser.barangay_name || "Not assigned"}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 p-3">
+                    <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Purok</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">
+                      {viewedUser.purok_name || (viewedUser.role === "collector" ? "Barangay-wide assignment" : "Not assigned")}
+                    </p>
+                  </div>
+                </div>
+              </section>
+
+              <section>
+                <h3 className="mb-3 flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-700">
+                  <ShieldCheck className="h-4 w-4 text-emerald-600" /> Account Information
+                </h3>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-slate-200 p-3">
+                    <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">User ID</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">{viewedUser.id}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 p-3">
+                    <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Email verification</p>
+                    <p className={`mt-1 text-sm font-semibold ${Boolean(Number(viewedUser.email_verified)) ? "text-emerald-700" : "text-amber-600"}`}>
+                      {Boolean(Number(viewedUser.email_verified)) ? "Verified" : "Not verified"}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 p-3 sm:col-span-2">
+                    <p className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wide text-slate-400"><CalendarDays className="h-3 w-3" /> Registered on</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">{formatRegisteredDate(viewedUser.created_at)}</p>
+                  </div>
+                </div>
+              </section>
+            </div>
+            <div className="mt-6 flex justify-end border-t border-slate-200 pt-4">
+              <button
+                type="button"
+                onClick={() => setDetailsUser(null)}
+                className="rounded-xl bg-emerald-600 px-6 py-2.5 text-sm font-black text-white transition hover:bg-emerald-700"
+              >
+                Close Details
+              </button>
+            </div>
+          </section>
         </div>
       )}
 

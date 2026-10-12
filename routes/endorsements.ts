@@ -1206,18 +1206,16 @@ router.delete("/:id", async (req: AuthRequest, res) => {
       connection,
     );
 
-    if (
-      !viewer ||
-      viewer.status !== "active" ||
-      normalizeRole(viewer.role) !== "resident"
-    ) {
+    if (!viewer || viewer.status !== "active") {
       await connection.rollback();
+
       return res.status(403).json({
         success: false,
-        message:
-          "Only the requesting resident can withdraw this request.",
+        message: "Your account is inactive or unavailable.",
       });
     }
+
+    const role = normalizeRole(viewer.role);
 
     const request = await loadRequestById(
       connection,
@@ -1225,57 +1223,149 @@ router.delete("/:id", async (req: AuthRequest, res) => {
       true,
     );
 
-    if (
-      !request ||
-      Number(request.requester_id) !== viewer.id
-    ) {
+    if (!request) {
       await connection.rollback();
+
       return res.status(404).json({
         success: false,
         message: "Endorsement request was not found.",
       });
     }
 
-    if (request.status !== "pending_leader_review") {
-      await connection.rollback();
-      return res.status(409).json({
-        success: false,
-        message:
-          "Only a request awaiting Purok Leader review can be withdrawn.",
+    // Residents keep the original workflow: a pending request is withdrawn
+    // rather than hard-deleted so staff can retain the audit trail.
+    if (role === "resident") {
+      if (Number(request.requester_id) !== viewer.id) {
+        await connection.rollback();
+
+        return res.status(404).json({
+          success: false,
+          message: "Endorsement request was not found.",
+        });
+      }
+
+      if (request.status !== "pending_leader_review") {
+        await connection.rollback();
+
+        return res.status(409).json({
+          success: false,
+          message:
+            "Only a request awaiting Purok Leader review can be withdrawn.",
+        });
+      }
+
+      await connection.execute(
+        `
+        UPDATE endorsement_requests
+        SET status = 'withdrawn'
+        WHERE id = ?
+        `,
+        [requestId],
+      );
+
+      await appendHistory(connection, {
+        requestId,
+        actor: viewer,
+        action: "withdrawn",
+        fromStatus: "pending_leader_review",
+        toStatus: "withdrawn",
+      });
+
+      await connection.commit();
+
+      return res.json({
+        success: true,
+        message: "Endorsement request withdrawn.",
       });
     }
 
-    await connection.execute(
-      `
-      UPDATE endorsement_requests
-      SET status = 'withdrawn'
-      WHERE id = ?
-      `,
-      [requestId],
-    );
+    // Barangay Captains may permanently remove only FINAL requests in their
+    // own barangay. In-progress requests remain protected.
+    if (role === "admin") {
+      if (
+        !viewer.barangay_id ||
+        Number(request.barangay_id) !==
+          Number(viewer.barangay_id)
+      ) {
+        await connection.rollback();
 
-    await appendHistory(connection, {
-      requestId,
-      actor: viewer,
-      action: "withdrawn",
-      fromStatus: "pending_leader_review",
-      toStatus: "withdrawn",
-    });
+        return res.status(404).json({
+          success: false,
+          message:
+            "Endorsement request was not found in your assigned barangay.",
+        });
+      }
 
-    await connection.commit();
+      const deletableStatuses: EndorsementStatus[] = [
+        "approved",
+        "leader_rejected",
+        "admin_rejected",
+      ];
 
-    return res.json({
-      success: true,
-      message: "Endorsement request withdrawn.",
+      if (
+        !deletableStatuses.includes(
+          request.status as EndorsementStatus,
+        )
+      ) {
+        await connection.rollback();
+
+        return res.status(409).json({
+          success: false,
+          message:
+            "Only approved or rejected endorsement requests can be permanently deleted.",
+        });
+      }
+
+      const [result] = await connection.execute<any>(
+        `
+        DELETE FROM endorsement_requests
+        WHERE id = ?
+          AND status IN (
+            'approved',
+            'leader_rejected',
+            'admin_rejected'
+          )
+        `,
+        [requestId],
+      );
+
+      if (Number(result.affectedRows) !== 1) {
+        await connection.rollback();
+
+        return res.status(409).json({
+          success: false,
+          message:
+            "The endorsement status changed before deletion. Refresh and try again.",
+        });
+      }
+
+      // endorsement_request_history is removed automatically by its
+      // ON DELETE CASCADE foreign key.
+      await connection.commit();
+
+      return res.json({
+        success: true,
+        permanentlyDeleted: true,
+        message:
+          "Final endorsement request deleted permanently.",
+      });
+    }
+
+    await connection.rollback();
+
+    return res.status(403).json({
+      success: false,
+      message:
+        "You do not have permission to delete this endorsement request.",
     });
   } catch (error) {
     await connection.rollback();
-    console.error("Withdraw endorsement error:", error);
+    console.error("Delete endorsement error:", error);
 
     return res.status(500).json({
       success: false,
       message:
-        "Unable to withdraw the endorsement request.",
+        "Unable to delete the endorsement request.",
     });
   } finally {
     connection.release();

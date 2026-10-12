@@ -300,6 +300,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
   const [endorsementPageSize, setEndorsementPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null);
   const [pendingWithdrawal, setPendingWithdrawal] = useState<EndorsementRequest | null>(null);
+  const [pendingPermanentDelete, setPendingPermanentDelete] = useState<EndorsementRequest | null>(null);
   
   // Printing/release document modal reference
   const [activeCertificate, setActiveCertificate] = useState<EndorsementRequest | null>(null);
@@ -521,6 +522,54 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
           : 'Unable to withdraw the request.',
       );
       setPendingWithdrawal(null);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const requestPermanentDelete = (
+    request: EndorsementRequest,
+    e?: React.MouseEvent,
+  ) => {
+    e?.stopPropagation();
+    setErrorMessage('');
+    setPendingPermanentDelete(request);
+  };
+
+  const handlePermanentDelete = async () => {
+    if (!pendingPermanentDelete) {
+      return;
+    }
+
+    setActionLoading(true);
+    setErrorMessage('');
+
+    try {
+      const data = await endorsementApi(
+        `/${pendingPermanentDelete.databaseId}`,
+        { method: 'DELETE' },
+      );
+
+      showNotification(data.message);
+      notifyAdminActionCountsChanged();
+
+      if (selectedRequest?.databaseId === pendingPermanentDelete.databaseId) {
+        setSelectedRequest(null);
+      }
+
+      if (activeCertificate?.databaseId === pendingPermanentDelete.databaseId) {
+        setActiveCertificate(null);
+      }
+
+      setPendingPermanentDelete(null);
+      await loadEndorsements(true);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : 'Unable to delete the endorsement request.',
+      );
+      setPendingPermanentDelete(null);
     } finally {
       setActionLoading(false);
     }
@@ -752,6 +801,27 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
         onCancel={() => setPendingWithdrawal(null)}
       />
 
+      <ConfirmDialog
+        open={Boolean(pendingPermanentDelete)}
+        title="Delete endorsement request?"
+        description={
+          pendingPermanentDelete
+            ? <>
+                Request <strong>{pendingPermanentDelete.id}</strong> is already final
+                ({' '}
+                <strong>{pendingPermanentDelete.status}</strong>
+                {' '}) and will be permanently deleted from the database together with its endorsement history.
+                This action cannot be undone.
+              </>
+            : ''
+        }
+        confirmLabel="Delete permanently"
+        busy={actionLoading}
+        destructive
+        onConfirm={() => void handlePermanentDelete()}
+        onCancel={() => setPendingPermanentDelete(null)}
+      />
+
       {/* Main Multi-Grid Dashboard Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         
@@ -980,6 +1050,22 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                         <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                         <span>This request must be endorsed by its assigned Purok Leader before Barangay Captain review.</span>
                       </div>
+                    )}
+
+                    {role === 'admin' && (
+                      selectedRequest.status === 'Barangay Approved' ||
+                      selectedRequest.status === 'Rejected by Purok Leader' ||
+                      selectedRequest.status === 'Rejected by Barangay Captain'
+                    ) && (
+                      <button
+                        type="button"
+                        disabled={actionLoading}
+                        onClick={() => requestPermanentDelete(selectedRequest)}
+                        className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-black uppercase tracking-wide text-rose-700 transition hover:bg-rose-100 disabled:opacity-50"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Delete Final Request
+                      </button>
                     )}
 
                   </div>
@@ -1262,6 +1348,23 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                         title="Withdraw request"
                       >
                         <Trash2 className="w-4.5 h-4.5" />
+                      </button>
+                    )}
+
+                    {role === 'admin' && (
+                      item.status === 'Barangay Approved' ||
+                      item.status === 'Rejected by Purok Leader' ||
+                      item.status === 'Rejected by Barangay Captain'
+                    ) && (
+                      <button
+                        type="button"
+                        disabled={actionLoading}
+                        onClick={(e) => requestPermanentDelete(item, e)}
+                        className="flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-rose-700 transition hover:bg-rose-100 disabled:opacity-50"
+                        title="Delete final endorsement request"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        Delete
                       </button>
                     )}
                   </div>
