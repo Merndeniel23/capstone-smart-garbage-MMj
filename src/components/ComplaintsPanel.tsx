@@ -1218,55 +1218,81 @@ export default function ComplaintsPanel({
           ) : (
             visibleComplaints.map(
               (item) => (
-                <button
+                <div
                   key={item.id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedId(item.id);
-                    if (window.matchMedia("(max-width: 1023px)").matches) {
-                      window.requestAnimationFrame(() => detailsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
-                    }
-                  }}
-                  aria-pressed={selectedId === item.id}
-                  className={`sg-compact-row w-full rounded-xl border bg-white p-3 text-left transition ${
-                    selectedId ===
-                    item.id
-                      ? "border-amber-500 ring-1 ring-amber-500/20"
-                      : "border-slate-100 hover:border-slate-200"
-                  }`}
+                  className="space-y-2"
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <p className="text-xs font-black text-slate-900">
-                      {
-                        item.complaint_type
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedId(item.id);
+                      if (window.matchMedia("(max-width: 1023px)").matches) {
+                        window.requestAnimationFrame(() => detailsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
                       }
+                    }}
+                    aria-pressed={selectedId === item.id}
+                    className={`sg-compact-row w-full rounded-xl border bg-white p-3 text-left transition ${
+                      selectedId ===
+                      item.id
+                        ? "border-amber-500 ring-1 ring-amber-500/20"
+                        : "border-slate-100 hover:border-slate-200"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-xs font-black text-slate-900">
+                        {
+                          item.complaint_type
+                        }
+                      </p>
+
+                      <StatusBadge
+                        status={item.status}
+                      />
+                    </div>
+
+                    <p className="mt-2 line-clamp-2 text-[11px] leading-relaxed text-slate-500">
+                      {item.description}
                     </p>
+                    {isMunicipal && <p className="mt-2 flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3.5 w-3.5" />{[item.barangay_name, item.purok_name].filter(Boolean).join(" / ") || "Area not recorded"}</p>}
 
-                    <StatusBadge
-                      status={item.status}
-                    />
-                  </div>
+                    <div className="mt-3 flex items-center justify-between border-t border-slate-50 pt-3 text-[10px]">
+                      <span className="flex items-center gap-1 font-bold text-slate-500">
+                        <User className="h-3.5 w-3.5" />
+                        {
+                          item.reporter_name
+                        }
+                      </span>
 
-                  <p className="mt-2 line-clamp-2 text-[11px] leading-relaxed text-slate-500">
-                    {item.description}
-                  </p>
-                  {isMunicipal && <p className="mt-2 flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3.5 w-3.5" />{[item.barangay_name, item.purok_name].filter(Boolean).join(" / ") || "Area not recorded"}</p>}
+                      <span className="text-slate-400">
+                        {formatDate(
+                          item.created_at,
+                        )}
+                      </span>
+                    </div>
+                  </button>
 
-                  <div className="mt-3 flex items-center justify-between border-t border-slate-50 pt-3 text-[10px]">
-                    <span className="flex items-center gap-1 font-bold text-slate-500">
-                      <User className="h-3.5 w-3.5" />
-                      {
-                        item.reporter_name
-                      }
-                    </span>
-
-                    <span className="text-slate-400">
-                      {formatDate(
-                        item.created_at,
-                      )}
-                    </span>
-                  </div>
-                </button>
+                  {canManage && item.status === "resolved" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedId(item.id);
+                        setError("");
+                        setStatusNotice("");
+                        setConfirmation({
+                          action: "delete",
+                          complaintId: item.id,
+                          status: item.status,
+                        });
+                      }}
+                      disabled={saving}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-rose-700 transition hover:bg-rose-100 disabled:opacity-50"
+                      title="Delete resolved complaint"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Delete resolved complaint
+                    </button>
+                  )}
+                </div>
               ),
             )
           )}

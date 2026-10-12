@@ -1198,7 +1198,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                         </span>
                       ) : user.role === "admin" ? (
                         <span className="text-[10px] font-bold text-slate-400">
-                          Municipal Administrator managed
+                          Managed by Municipal Administrator
                         </span>
                       ) : (
                         <div className="flex items-center gap-2">
@@ -1358,7 +1358,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                   </span>
                 ) : user.role === "admin" ? (
                   <span className="text-[10px] font-bold text-slate-400">
-                    Municipal Administrator managed
+                    Managed by Municipal Administrator
                   </span>
                 ) : (
                   <>
@@ -1886,11 +1886,6 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
             <p className="mt-2 text-xs font-semibold text-slate-500">
               Historical records such as payments, complaints, inspections, endorsements, and audit history will remain linked to the original name.
             </p>
-            {deleteConfirmation.role === "admin" && (
-              <p className="mt-2 text-xs font-bold text-amber-700">
-                Barangay Captain accounts can be removed only by the Municipal Administrator.
-              </p>
-            )}
             {error && <p role="alert" className="mt-3 rounded-xl bg-rose-50 p-3 font-bold text-rose-700">{error}</p>}
           </>
         ) : ""}
