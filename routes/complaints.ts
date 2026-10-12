@@ -1682,13 +1682,13 @@ router.delete(
       }
 
       if (isAdmin(role)) {
-        if (String(complaint.status) !== "resolved") {
+        if (!["completed", "resolved"].includes(String(complaint.status))) {
           await connection.rollback();
 
           return res.status(409).json({
             success: false,
             message:
-              "Only resolved complaints can be deleted.",
+              "Only completed or resolved complaints can be deleted.",
           });
         }
 
@@ -1718,7 +1718,7 @@ router.delete(
           `
           DELETE FROM complaints
           WHERE id = ?
-            AND status = 'resolved'
+            AND status IN ('completed', 'resolved')
           `,
           [complaintId],
         );
@@ -1729,7 +1729,7 @@ router.delete(
           return res.status(409).json({
             success: false,
             message:
-              "Complaint status changed before deletion. Refresh and try again.",
+              "Complaint status changed before deletion. Only completed or resolved complaints can be deleted.",
           });
         }
 
@@ -1749,7 +1749,7 @@ router.delete(
         return res.json({
           success: true,
           message:
-            "Resolved complaint deleted successfully.",
+            "Completed complaint deleted successfully.",
         });
       }
 

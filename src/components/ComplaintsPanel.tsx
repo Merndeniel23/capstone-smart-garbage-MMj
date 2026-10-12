@@ -468,7 +468,7 @@ export default function ComplaintsPanel({
   const canDelete = Boolean(
     selectedComplaint &&
       canManage &&
-      selectedComplaint.status === "resolved",
+      ["completed", "resolved"].includes(selectedComplaint.status),
   );
   const confirmationIsCurrent = Boolean(
     confirmation && selectedComplaint &&
@@ -915,7 +915,7 @@ export default function ComplaintsPanel({
 
         setSuccess(
           data.message ||
-            "Resolved complaint deleted.",
+            "Completed complaint deleted.",
         );
 
         setSelectedId(null);
@@ -1271,7 +1271,7 @@ export default function ComplaintsPanel({
                     </div>
                   </button>
 
-                  {canManage && item.status === "resolved" && (
+                  {canManage && ["completed", "resolved"].includes(item.status) && (
                     <button
                       type="button"
                       onClick={() => {
@@ -1286,10 +1286,10 @@ export default function ComplaintsPanel({
                       }}
                       disabled={saving}
                       className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-rose-700 transition hover:bg-rose-100 disabled:opacity-50"
-                      title="Delete resolved complaint"
+                      title="Delete completed or resolved complaint"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
-                      Delete resolved complaint
+                      Delete complaint
                     </button>
                   )}
                 </div>
@@ -1358,8 +1358,8 @@ export default function ComplaintsPanel({
                     type="button"
                     onClick={() => openConfirmation("delete")}
                     disabled={saving}
-                    title="Delete resolved complaint"
-                    aria-label="Delete resolved complaint"
+                    title="Delete completed or resolved complaint"
+                    aria-label="Delete completed or resolved complaint"
                     className="inline-flex items-center gap-1 rounded-xl border border-rose-200 px-3 py-2 text-xs font-black text-rose-600 hover:bg-rose-50 disabled:opacity-50"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -1718,7 +1718,7 @@ export default function ComplaintsPanel({
           confirmation?.action === "cancel"
             ? "Cancel this complaint?"
             : confirmation?.action === "delete"
-              ? "Delete this resolved complaint?"
+              ? "Delete this completed complaint?"
               : "Resolve this complaint?"
         }
         description={
@@ -1727,7 +1727,7 @@ export default function ComplaintsPanel({
               {confirmation?.action === "cancel"
                 ? "The complaint will be marked cancelled. Its record and messages will remain in the log."
                 : confirmation?.action === "delete"
-                  ? "This resolved complaint, its messages, related notifications, and stored complaint photo will be permanently deleted. This cannot be undone."
+                  ? "This completed/resolved complaint, its messages, related notifications, and stored complaint photo will be permanently deleted. This cannot be undone."
                   : "Confirm that the collector's work has been verified. Your resolution note will be saved with the complaint."}
             </p>
             {confirmation?.action === "resolve" && (
