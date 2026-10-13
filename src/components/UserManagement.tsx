@@ -267,6 +267,12 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
   const [staffRole, setStaffRole] = useState<StaffRole | null>(null);
   const [staffDraft, setStaffDraft] = useState<StaffDraft>(emptyStaffDraft);
   const [showStaffPassword, setShowStaffPassword] = useState(false);
+  const [showPurokModal, setShowPurokModal] = useState(false);
+  const [newPurokName, setNewPurokName] = useState("");
+  const [newPurokDescription, setNewPurokDescription] = useState("");
+  const [purokSaving, setPurokSaving] = useState(false);
+  const [purokError, setPurokError] = useState("");
+  const [purokSuccess, setPurokSuccess] = useState("");
   const [verification, setVerification] = useState<{ email: string; resendAfter: number } | null>(null);
   const assignedBarangay = isBarangayCaptain ? barangays[0] : undefined;
   const staffPuroks = puroks.filter((purok) => Number(purok.barangay_id) === Number(assignedBarangay?.id));
@@ -308,6 +314,43 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
       ),
     [barangays, barangayCaptainIds],
   );
+
+  const createPurok = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (purokSaving || !assignedBarangay) return;
+    const name = newPurokName.trim().replace(/\s+/g, " ");
+    if (name.length < 2 || name.length > 100) {
+      setPurokError("Enter a valid purok name between 2 and 100 characters.");
+      return;
+    }
+    if (staffPuroks.some((p) => p.name.trim().toLowerCase() === name.toLowerCase())) {
+      setPurokError(`${name} already exists in ${assignedBarangay.name}.`);
+      return;
+    }
+
+    setPurokSaving(true);
+    setPurokError("");
+    setPurokSuccess("");
+    try {
+      const response = await apiRequest("/admin/puroks", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          description: newPurokDescription.trim(),
+        }),
+      });
+      // Refresh from DB, rather than inventing a temporary local purok ID.
+      const locations = await apiRequest("/admin/locations");
+      setPuroks(Array.isArray(locations.puroks) ? locations.puroks : []);
+      setNewPurokName("");
+      setNewPurokDescription("");
+      setPurokSuccess(response.message || "Purok added successfully.");
+    } catch (err) {
+      setPurokError(err instanceof Error ? err.message : "Unable to add purok.");
+    } finally {
+      setPurokSaving(false);
+    }
+  };
 
   const refreshUsers = async (silent = true) => {
     setRefreshing(true);
@@ -977,6 +1020,20 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
           )}
           {isBarangayCaptain && (
             <>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewPurokName("");
+                  setNewPurokDescription("");
+                  setPurokError("");
+                  setPurokSuccess("");
+                  setShowPurokModal(true);
+                }}
+                disabled={loading || !assignedBarangay}
+                className="flex items-center justify-center gap-2 rounded-2xl border border-emerald-700 bg-emerald-50 px-4 py-3 text-xs font-black uppercase tracking-wide text-emerald-800 transition hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-600 dark:bg-emerald-950 dark:text-emerald-200"
+              >
+                <Plus className="h-4 w-4" /> Manage Puroks
+              </button>
               <button type="button" onClick={() => openStaffModal("purok_leader")} disabled={loading || !assignedBarangay} className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-4 py-3 text-xs font-black uppercase tracking-wide text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">
                 <Plus className="h-4 w-4" />Create Purok Leader
               </button>
@@ -1482,6 +1539,66 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
         </div>
       )}
 
+
+      {showPurokModal && isBarangayCaptain && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5">
+          <div role="dialog" aria-modal="true" aria-labelledby="manage-puroks-title" className="max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl sm:p-7 dark:border-slate-700 dark:bg-slate-900">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-700 dark:text-emerald-400">Barangay Captain</p>
+                <h2 id="manage-puroks-title" className="mt-1 text-xl font-black text-slate-900 dark:text-white">Manage Puroks</h2>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-300">Add a collection area within <strong>{assignedBarangay?.name || "your barangay"}</strong>.</p>
+              </div>
+              <button type="button" aria-label="Close Manage Puroks" onClick={() => setShowPurokModal(false)} disabled={purokSaving} className="rounded-xl p-2 text-slate-500 hover:bg-slate-100 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800"><X className="h-5 w-5" /></button>
+            </div>
+
+            <form onSubmit={createPurok} className="mt-5 space-y-4">
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-200">Purok Name *
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  maxLength={100}
+                  placeholder="Example: Purok 10"
+                  value={newPurokName}
+                  onChange={(event) => setNewPurokName(event.target.value)}
+                  disabled={purokSaving}
+                  className="mt-2 block w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                />
+              </label>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-200">Description <span className="font-normal text-slate-400">(optional)</span>
+                <textarea
+                  value={newPurokDescription}
+                  onChange={(event) => setNewPurokDescription(event.target.value)}
+                  maxLength={255}
+                  rows={2}
+                  placeholder="Collection area or location notes"
+                  disabled={purokSaving}
+                  className="mt-2 block w-full resize-none rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                />
+              </label>
+              {purokError && <p role="alert" className="rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-200">{purokError}</p>}
+              {purokSuccess && <p role="status" className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-200">{purokSuccess}</p>}
+              <button type="submit" disabled={purokSaving || !newPurokName.trim() || !assignedBarangay} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 text-sm font-extrabold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">
+                {purokSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                {purokSaving ? "Adding Purok..." : "Add Purok"}
+              </button>
+            </form>
+
+            <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700">
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200">Existing Puroks ({staffPuroks.length})</h3>
+              <div className="mt-3 max-h-44 space-y-2 overflow-y-auto pr-1">
+                {staffPuroks.length ? staffPuroks.map((purok) => (
+                  <div key={purok.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                    <span>{purok.name}</span><span className="text-[10px] font-semibold text-slate-400">ID {purok.id}</span>
+                  </div>
+                )) : <p className="text-xs text-slate-500">No puroks created yet.</p>}
+              </div>
+              <p className="mt-3 text-[11px] text-slate-500 dark:text-slate-400">New puroks appear as choices when creating a Purok Leader or assigning residents. Existing puroks cannot be deleted here to protect linked records.</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {staffRole && isBarangayCaptain && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">

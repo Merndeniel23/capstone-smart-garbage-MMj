@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   Award,
   Camera,
+  ChevronDown,
   HelpCircle,
   ImagePlus,
   Eye,
@@ -212,6 +213,8 @@ export default function UserProfilePanel() {
   const [passwordMessage, setPasswordMessage] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [securityVisible, setSecurityVisible] = useState(false);
+  const [securityView, setSecurityView] = useState<"password" | "email">("password");
 
   const [newEmail, setNewEmail] = useState("");
   const [emailPassword, setEmailPassword] = useState("");
@@ -1177,24 +1180,64 @@ export default function UserProfilePanel() {
             </div>
           </fieldset>
 
-          <button
-            type="submit"
-            disabled={saving}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl border-none bg-emerald-700 py-4 font-extrabold uppercase tracking-widest text-white shadow-lg shadow-emerald-800/10 hover:bg-emerald-800 disabled:opacity-50"
-          >
-            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-            Save Profile Credentials
-          </button>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border-none bg-emerald-700 px-5 py-3 font-extrabold uppercase tracking-wide text-white shadow-sm shadow-emerald-900/10 transition hover:bg-emerald-800 disabled:opacity-50"
+            >
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+              Save Profile Credentials
+            </button>
+            <button
+              type="button"
+              aria-expanded={securityVisible}
+              aria-controls="profile-security-settings"
+              onClick={() => setSecurityVisible((visible) => !visible)}
+              className={`flex min-h-12 items-center justify-center gap-2 rounded-2xl border px-5 py-3 text-xs font-extrabold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${
+                securityVisible
+                  ? "border-emerald-600 bg-emerald-50 text-emerald-800"
+                  : "border-slate-200 bg-white text-slate-800 hover:border-emerald-300 hover:bg-emerald-50"
+              }`}
+            >
+              <Lock className="h-4 w-4 shrink-0 text-emerald-600" />
+              {securityVisible ? "Hide Account Security" : "Account Security"}
+              <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${securityVisible ? "rotate-180" : ""}`} />
+            </button>
+          </div>
         </form>
 
-        <section className="space-y-5 border-t border-slate-200 pt-6" aria-label="Account security">
+        {securityVisible && (
+        <section id="profile-security-settings" className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5" aria-label="Account security">
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-emerald-600">Security Settings</p>
-            <h3 className="mt-1 text-lg font-black text-slate-900">Email & Password</h3>
-            <p className="mt-1 text-xs text-slate-500">Available to every account role. Changes require verification to protect your login.</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-emerald-600">Account Security</p>
+            <h3 className="mt-1 text-lg font-black text-slate-900">Protect your account</h3>
+            <p className="mt-1 text-xs leading-relaxed text-slate-500">Update your sign-in details. Choose one option below; we will verify your identity before saving changes.</p>
           </div>
 
-          <form onSubmit={handleChangePassword} className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-5">
+          <div className="grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-1.5" aria-label="Security options">
+            <button
+              type="button"
+              aria-pressed={securityView === "password"}
+              onClick={() => setSecurityView("password")}
+              className={`flex min-h-11 items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-extrabold transition ${securityView === "password" ? "bg-emerald-700 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}
+            >
+              <Lock className="h-4 w-4 shrink-0" />
+              Password
+            </button>
+            <button
+              type="button"
+              aria-pressed={securityView === "email"}
+              onClick={() => setSecurityView("email")}
+              className={`flex min-h-11 items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-extrabold transition ${securityView === "email" ? "bg-emerald-700 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}
+            >
+              <Mail className="h-4 w-4 shrink-0" />
+              Email / Gmail
+            </button>
+          </div>
+
+          {securityView === "password" && (
+          <form onSubmit={handleChangePassword} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
             <div className="flex items-center gap-2 text-slate-900">
               <Lock className="h-4 w-4 text-emerald-600" />
               <h4 className="text-sm font-black">Change Password</h4>
@@ -1236,8 +1279,10 @@ export default function UserProfilePanel() {
               </button>
             </div>
           </form>
+          )}
 
-          <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-5">
+          {securityView === "email" && (
+          <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
             <div className="flex items-center gap-2 text-slate-900">
               <Mail className="h-4 w-4 text-emerald-600" />
               <h4 className="text-sm font-black">Change Email Address / Gmail</h4>
@@ -1289,7 +1334,9 @@ export default function UserProfilePanel() {
             )}
             <p className="text-[11px] text-slate-500">The code expires in 10 minutes (maximum 5 attempts). If your account uses Google Sign-In and you do not have a password, set one using Forgot Password first.</p>
           </div>
+          )}
         </section>
+        )}
 
         {isCivilian &&
           !needsInitialResidentSetup && (

@@ -1309,6 +1309,108 @@ router.get("/locations", requireAuth, async (req: AuthRequest, res) => {
 });
 
 
+// Barangay Captains may add collection puroks in their own barangay only.
+// Existing users, payment histories, and schedules remain linked to their
+// current purok IDs; this route never renumbers or deletes existing puroks.
+router.post("/puroks", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const viewerId = parsePositiveInteger(req.user?.id);
+    if (!viewerId) {
+      return res.status(401).json({ success: false, message: "Sign in again to manage puroks." });
+    }
+
+    // Do not trust the barangay or role supplied by the browser/JWT alone.
+    const [viewerRows]: any = await db.query(
+      `SELECT id, role, status, barangay_id, email FROM users WHERE id = ? LIMIT 1`,
+      [viewerId],
+    );
+    const viewer = viewerRows[0];
+    if (
+      !viewer ||
+      String(viewer.role).toLowerCase() !== "admin" ||
+      String(viewer.status).toLowerCase() !== "active" ||
+      isArchivedAccount(viewer)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Only an active Barangay Captain can add puroks to their barangay.",
+      });
+    }
+
+    const barangayId = parsePositiveInteger(viewer.barangay_id);
+    if (!barangayId) {
+      return res.status(400).json({
+        success: false,
+        message: "Your Barangay Captain account is not assigned to a barangay.",
+      });
+    }
+
+    const name = String(req.body?.name ?? "").trim().replace(/\s+/g, " ");
+    const description = String(req.body?.description ?? "").trim();
+    if (!/^[\p{L}\p{N} .'-]{2,100}$/u.test(name)) {
+      return res.status(400).json({
+        success: false,
+        message: "Enter a valid purok name (2–100 characters, letters and numbers).",
+      });
+    }
+    if (description.length > 255) {
+      return res.status(400).json({
+        success: false,
+        message: "Purok description must be 255 characters or fewer.",
+      });
+    }
+
+    const [barangayRows]: any = await db.query(
+      "SELECT id FROM barangays WHERE id = ? AND is_active = 1 LIMIT 1",
+      [barangayId],
+    );
+    if (!barangayRows.length) {
+      return res.status(409).json({
+        success: false,
+        message: "Your assigned barangay is not active or was not found.",
+      });
+    }
+
+    const [existingRows]: any = await db.query(
+      "SELECT id FROM puroks WHERE barangay_id = ? AND LOWER(TRIM(name)) = LOWER(?) LIMIT 1",
+      [barangayId, name],
+    );
+    if (existingRows.length) {
+      return res.status(409).json({
+        success: false,
+        message: `A purok named ${name} already exists in your barangay.`,
+      });
+    }
+
+    const [result]: any = await db.execute(
+      "INSERT INTO puroks (barangay_id, name, description) VALUES (?, ?, ?)",
+      [barangayId, name, description || null],
+    );
+    return res.status(201).json({
+      success: true,
+      message: `${name} was added to your barangay. You can now assign a Purok Leader or residents.`,
+      purok: {
+        id: Number(result.insertId),
+        barangay_id: barangayId,
+        name,
+        description: description || null,
+      },
+    });
+  } catch (error: any) {
+    if (error?.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({
+        success: false,
+        message: "That purok already exists in your barangay.",
+      });
+    }
+    console.error("Create barangay purok error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to add the purok right now.",
+    });
+  }
+});
+
 router.patch("/barangays/:id", requireAuth, async (req: AuthRequest, res) => {
   try {
     const viewerRole = String(req.user?.role || "").toLowerCase();
