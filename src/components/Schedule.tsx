@@ -1182,7 +1182,7 @@ export default function Schedule() {
                       ""
                     }
                     alt="Barangay preview"
-                    className="h-36 w-full rounded-2xl border border-slate-100 object-cover"
+                    className="h-44 w-full rounded-2xl border border-slate-100 bg-slate-100 object-contain"
                   />
                 )}
 
@@ -1407,7 +1407,7 @@ export default function Schedule() {
           aria-modal="true"
           aria-labelledby="schedule-detail-title"
         >
-          <div className="relative w-full max-w-2xl rounded-[2.5rem] border border-slate-100 bg-white p-6 shadow-2xl">
+          <div className="relative max-h-[calc(100dvh-2rem)] w-full max-w-2xl overflow-y-auto overscroll-contain rounded-[2.5rem] border border-slate-100 bg-white p-6 shadow-2xl">
             <button
               type="button"
               onClick={() => setSelectedSchedule(null)}
@@ -1443,7 +1443,7 @@ export default function Schedule() {
                   <img
                     src={selectedSchedule.barangay_image_url}
                     alt={`${selectedSchedule.barangay_name} barangay`}
-                    className="h-40 w-full object-cover"
+                    className="h-56 w-full bg-slate-100 object-contain sm:h-64"
                   />
                 ) : (
                   <div className="flex h-32 items-center justify-center bg-slate-100 text-slate-400">

@@ -175,6 +175,22 @@ async function ensureWeeklyFeeTable() {
         FOREIGN KEY (set_by) REFERENCES users(id) ON DELETE SET NULL
     ) ENGINE=InnoDB;
   `);
+
+  // Completed payments stay in payments forever. This table only marks which
+  // transactions are hidden from everyday lists, preserving proofs/totals.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS payment_archives (
+      payment_id BIGINT UNSIGNED NOT NULL,
+      archived_by INT UNSIGNED NULL,
+      archived_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (payment_id),
+      KEY idx_payment_archive_actor (archived_by),
+      CONSTRAINT fk_payment_archive_payment
+        FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE CASCADE,
+      CONSTRAINT fk_payment_archive_actor
+        FOREIGN KEY (archived_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB;
+  `);
 }
 
 async function weeklyFeeHistory(
@@ -284,6 +300,8 @@ type ResidentComplianceRow = {
   underpaid_amount: number;
   outstanding_balance: number;
   pending_verification_count: number;
+  pending_payment_count: number;
+  pending_amount: number;
   counting_from: string;
   missed_periods: Array<{
     due_date: string;
@@ -384,7 +402,29 @@ async function loadResidentComplianceRows(
         WHERE pending_pay.resident_id = u.id
           AND pending_pay.category = 'weekly_fee'
           AND pending_pay.status = 'pending_leader_verification'
-      ) AS pending_verification_count
+      ) AS pending_verification_count,
+      (
+        SELECT COUNT(*)
+        FROM payments pending_pay
+        WHERE pending_pay.resident_id = u.id
+          AND pending_pay.status IN (
+            'pending_leader_verification',
+            'pending_remittance',
+            'pending_admin_confirmation',
+            'discrepancy'
+          )
+      ) AS pending_payment_count,
+      (
+        SELECT COALESCE(SUM(pending_pay.amount), 0)
+        FROM payments pending_pay
+        WHERE pending_pay.resident_id = u.id
+          AND pending_pay.status IN (
+            'pending_leader_verification',
+            'pending_remittance',
+            'pending_admin_confirmation',
+            'discrepancy'
+          )
+      ) AS pending_amount
     FROM users u
     INNER JOIN barangays b
       ON b.id = u.barangay_id
@@ -586,10 +626,11 @@ async function loadResidentComplianceRows(
           ) * 100,
         ) / 100,
       pending_verification_count:
-        Number(
-          row.pending_verification_count ||
-            0,
-        ),
+        Number(row.pending_verification_count || 0),
+      pending_payment_count:
+        Number(row.pending_payment_count || 0),
+      pending_amount:
+        Math.round(Number(row.pending_amount || 0) * 100) / 100,
       counting_from:
         localDateString(
           baseDate,
@@ -721,6 +762,8 @@ function selectPaymentFields() {
       ON leader.id = pay.leader_verified_by
     LEFT JOIN users administrator
       ON administrator.id = pay.admin_confirmed_by
+    LEFT JOIN payment_archives payment_archive
+      ON payment_archive.payment_id = pay.id
   `;
 }
 
@@ -1089,7 +1132,7 @@ router.get(
 
       if (viewer.role === "resident") {
         whereClause =
-          "WHERE pay.resident_id = ?";
+          "WHERE pay.resident_id = ? AND payment_archive.payment_id IS NULL";
         parameters = [viewer.id];
       } else if (
         viewer.role === "purok_leader"
@@ -1103,7 +1146,7 @@ router.get(
         }
 
         whereClause =
-          "WHERE pay.purok_id = ?";
+          "WHERE pay.purok_id = ? AND payment_archive.payment_id IS NULL";
         parameters = [viewer.purok_id];
       } else {
         return res.status(403).json({
@@ -1126,6 +1169,35 @@ router.get(
         );
 
       const payments = await hydratePaymentProofUrls(rows);
+
+      // Financial totals intentionally read the original payments table,
+      // including archived completed transactions. Archiving never changes
+      // contributions, payment compliance, or issued payment proof records.
+      const totalScopeColumn = viewer.role === "resident"
+        ? "resident_id"
+        : "purok_id";
+      const totalScopeValue = viewer.role === "resident"
+        ? viewer.id
+        : viewer.purok_id;
+      const [financialRows] = await db.query<any[]>(
+        `SELECT
+           COUNT(*) AS all_record_count,
+           SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
+           COALESCE(SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END), 0) AS confirmed_total,
+           COALESCE(SUM(CASE
+             WHEN status IN ('pending_leader_verification', 'pending_remittance',
+                            'pending_admin_confirmation', 'discrepancy')
+             THEN amount ELSE 0 END), 0) AS pending_total
+         FROM payments
+         WHERE ${totalScopeColumn} = ?`,
+        [totalScopeValue],
+      );
+      const paymentTotals = {
+        all_record_count: Number(financialRows[0]?.all_record_count || 0),
+        completed_count: Number(financialRows[0]?.completed_count || 0),
+        confirmed_total: Number(financialRows[0]?.confirmed_total || 0),
+        pending_total: Number(financialRows[0]?.pending_total || 0),
+      };
 
       const feeInfo =
         viewer.purok_id
@@ -1167,6 +1239,7 @@ router.get(
       return res.json({
         success: true,
         payments,
+        paymentTotals,
         categories,
         weeklyFee: feeInfo,
         paymentReminder,
@@ -2404,6 +2477,98 @@ router.patch(
   },
 );
 
+
+/**
+ * Hide an already completed payment from daily lists without deleting it.
+ * Restricted to the assigned Purok Leader (or Municipal Administrator).
+ */
+router.patch(
+  "/:id/archive",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    let connection: PoolConnection | null = null;
+
+    try {
+      const userId = positiveInteger(req.user?.id);
+      const paymentId = positiveInteger(req.params.id);
+
+      if (!userId || !paymentId) {
+        return res.status(400).json({
+          success: false,
+          message: "A valid payment is required.",
+        });
+      }
+
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+
+      const viewer = await getViewer(userId, connection, true);
+      if (!viewer || !["purok_leader", "super_admin"].includes(viewer.role)) {
+        await connection.rollback();
+        return res.status(403).json({
+          success: false,
+          message: "Only an assigned Purok Leader or Municipal Administrator can archive payments.",
+        });
+      }
+
+      const [paymentRows] = await connection.query<any[]>(
+        `SELECT id, transaction_code, purok_id, status
+         FROM payments WHERE id = ? LIMIT 1 FOR UPDATE`,
+        [paymentId],
+      );
+      const payment = paymentRows[0];
+      if (!payment) {
+        await connection.rollback();
+        return res.status(404).json({
+          success: false,
+          message: "Payment was not found.",
+        });
+      }
+
+      if (
+        viewer.role === "purok_leader" &&
+        (!viewer.purok_id || Number(viewer.purok_id) !== Number(payment.purok_id))
+      ) {
+        await connection.rollback();
+        return res.status(403).json({
+          success: false,
+          message: "You may archive payments only for your assigned purok.",
+        });
+      }
+
+      if (payment.status !== "completed") {
+        await connection.rollback();
+        return res.status(409).json({
+          success: false,
+          message: "Only completed payments can be archived.",
+        });
+      }
+
+      await connection.execute(
+        `INSERT INTO payment_archives (payment_id, archived_by)
+         VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE payment_id = payment_id`,
+        [paymentId, userId],
+      );
+
+      await connection.commit();
+      return res.json({
+        success: true,
+        archived: true,
+        message: `Payment ${payment.transaction_code} archived. Contribution, proof and records are preserved.`,
+      });
+    } catch (error) {
+      if (connection) await connection.rollback();
+      console.error("Archive payment error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Unable to archive payment.",
+      });
+    } finally {
+      connection?.release();
+    }
+  },
+);
 
 router.delete(
   "/:id",

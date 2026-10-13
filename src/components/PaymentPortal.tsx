@@ -115,7 +115,16 @@ interface ResidentComplianceRow {
   underpaid_amount: number;
   outstanding_balance: number;
   pending_verification_count: number;
+  pending_payment_count: number;
+  pending_amount: number;
   counting_from: string;
+}
+
+interface PaymentFinancialTotals {
+  all_record_count: number;
+  completed_count: number;
+  confirmed_total: number;
+  pending_total: number;
 }
 
 interface WeeklyFeeInfo {
@@ -288,6 +297,8 @@ export default function PaymentPortal({
   const [CATEGORY_OPTIONS, setCategoryOptions] = useState<PaymentCategoryOption[]>([]);
   const [payments, setPayments] =
     useState<PaymentRecord[]>([]);
+  const [paymentTotals, setPaymentTotals] =
+    useState<PaymentFinancialTotals | null>(null);
   const [contributionSummary, setContributionSummary] =
     useState<ContributionSummaryRow[]>([]);
   const [viewMode, setViewMode] =
@@ -337,6 +348,8 @@ export default function PaymentPortal({
   const [barangayFilter, setBarangayFilter] = useState("");
   const [purokFilter, setPurokFilter] = useState("");
   const [paymentToDelete, setPaymentToDelete] = useState<PaymentRecord | null>(null);
+  const [paymentToArchive, setPaymentToArchive] = useState<PaymentRecord | null>(null);
+  const [archivingPayment, setArchivingPayment] = useState(false);
   const [deletingPayment, setDeletingPayment] = useState(false);
 
   const [showPaymentForm, setShowPaymentForm] =
@@ -543,19 +556,20 @@ export default function PaymentPortal({
                 row.outstanding_balance ||
                   0,
               ),
-            pendingVerification:
-              totals.pendingVerification +
-              Number(
-                row.pending_verification_count ||
-                  0,
-              ),
+            pendingPayments:
+              totals.pendingPayments +
+              Number(row.pending_payment_count || 0),
+            pendingAmount:
+              totals.pendingAmount +
+              Number(row.pending_amount || 0),
           }),
           {
             residents: 0,
             unpaid: 0,
             underpaid: 0,
             outstanding: 0,
-            pendingVerification: 0,
+            pendingPayments: 0,
+            pendingAmount: 0,
           },
         ),
       [residentCompliance],
@@ -578,6 +592,7 @@ export default function PaymentPortal({
           ? data.payments
           : [],
       );
+      setPaymentTotals(data.paymentTotals || null);
       setContributionSummary(
         Array.isArray(data.contributionSummary)
           ? data.contributionSummary
@@ -770,29 +785,19 @@ export default function PaymentPortal({
     }
   }, [purokFilter, purokOptions]);
 
-  const completedTotal = payments
-    .filter(
-      (payment) =>
-        payment.status === "completed",
-    )
-    .reduce(
-      (total, payment) =>
-        total + Number(payment.amount),
-      0,
-    );
+  const completedTotal = paymentTotals
+    ? Number(paymentTotals.confirmed_total)
+    : payments
+        .filter((payment) => payment.status === "completed")
+        .reduce((total, payment) => total + Number(payment.amount), 0);
 
-  const pendingTotal = payments
-    .filter(
-      (payment) =>
-        payment.status !== "completed" &&
-        payment.status !==
-          "rejected_by_leader",
-    )
-    .reduce(
-      (total, payment) =>
-        total + Number(payment.amount),
-      0,
-    );
+  const pendingTotal = paymentTotals
+    ? Number(paymentTotals.pending_total)
+    : payments
+        .filter((payment) =>
+          !["completed", "rejected_by_leader"].includes(payment.status),
+        )
+        .reduce((total, payment) => total + Number(payment.amount), 0);
 
   const resetForm = () => {
     setReference("");
@@ -1121,6 +1126,30 @@ export default function PaymentPortal({
       });
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const archiveCompletedPayment = async () => {
+    if (!isLeader || !paymentToArchive || archivingPayment) return;
+
+    setArchivingPayment(true);
+    setMessage(null);
+    try {
+      const data = await apiRequest(`/${paymentToArchive.id}/archive`, {
+        method: "PATCH",
+      });
+      if (selectedPayment === paymentToArchive.id) setSelectedPayment(null);
+      setPaymentToArchive(null);
+      setMessage({ type: "success", text: data.message || "Completed payment archived." });
+      await loadPayments();
+      notifyAdminActionCountsChanged();
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "Unable to archive the payment.",
+      });
+    } finally {
+      setArchivingPayment(false);
     }
   };
 
@@ -1464,11 +1493,11 @@ export default function PaymentPortal({
               )}
             />
             <Metric
-              label="Needs verification"
+              label="Pending payments"
               icon={Clock3}
               tone="bg-amber-500/10 text-amber-500"
               value={String(
-                leaderComplianceTotals.pendingVerification,
+                leaderComplianceTotals.pendingPayments,
               )}
             />
             <Metric
@@ -1489,7 +1518,7 @@ export default function PaymentPortal({
                     <th className="px-3 py-3 text-center font-black">Missed</th>
                     <th className="px-3 py-3 text-right font-black">Underpaid</th>
                     <th className="px-3 py-3 text-right font-black">Outstanding</th>
-                    <th className="px-3 py-3 text-center font-black">Pending verification</th>
+                    <th className="px-3 py-3 text-center font-black">Pending</th>
                     <th className="px-3 py-3 text-center font-black">Status</th>
                   </tr>
                 </thead>
@@ -1503,14 +1532,12 @@ export default function PaymentPortal({
                       Number(
                         row.underpaid_amount,
                       ) > 0;
-                    const needsVerification =
-                      Number(
-                        row.pending_verification_count,
-                      ) > 0;
+                    const hasPending =
+                      Number(row.pending_payment_count) > 0;
 
                     const statusText =
-                      needsVerification
-                        ? "Needs verification"
+                      hasPending
+                        ? "Payment pending"
                         : hasMissed &&
                             hasShortfall
                           ? "Missed + underpaid"
@@ -1521,7 +1548,7 @@ export default function PaymentPortal({
                               : "Up to date";
 
                     const statusClass =
-                      needsVerification
+                      hasPending
                         ? "border-amber-200 bg-amber-50 text-amber-700"
                         : hasMissed ||
                             hasShortfall
@@ -1562,7 +1589,10 @@ export default function PaymentPortal({
                           ).toFixed(2)}
                         </td>
                         <td className="px-3 py-3 text-center font-black text-amber-600">
-                          {row.pending_verification_count}
+                          {row.pending_payment_count}
+                          <span className="mt-0.5 block text-[9px] font-semibold text-slate-500">
+                            ₱{Number(row.pending_amount).toFixed(2)}
+                          </span>
                         </td>
                         <td className="px-3 py-3 text-center">
                           <span
@@ -1982,13 +2012,13 @@ export default function PaymentPortal({
           label="Total records"
           icon={CreditCard}
           tone="bg-blue-500/10 text-blue-500"
-          value={String(payments.length)}
+          value={String(paymentTotals?.all_record_count ?? payments.length)}
         />
         <Metric
           label="Completed"
           icon={CheckCircle2}
           tone="bg-emerald-500/10 text-emerald-500"
-          value={String(payments.filter(p => p.status === "completed").length)}
+          value={String(paymentTotals?.completed_count ?? payments.filter(p => p.status === "completed").length)}
         />
         <Metric
           label="Pending"
@@ -1999,6 +2029,9 @@ export default function PaymentPortal({
         <Metric icon={AlertTriangle} tone="bg-rose-500/10 text-rose-500" label="Rejected / discrepancy" value={String(payments.filter(p => ["rejected_by_leader", "discrepancy"].includes(p.status)).length)} />
       </section>
       <p className="text-xs text-slate-500">Confirmed collections: PHP {completedTotal.toFixed(2)} · Pending accountability: PHP {pendingTotal.toFixed(2)}</p>
+      <p className="text-[11px] font-medium text-slate-500">
+        Archived completed payments are hidden from this list but are still included in financial totals and payment compliance.
+      </p>
 
       <section
         aria-label="Payment filters"
@@ -2177,6 +2210,17 @@ export default function PaymentPortal({
                 <td className="px-3 py-3 text-center">
                   <div className="flex items-center justify-center gap-1">
                     <button type="button" aria-label={`View payment ${payment.transaction_code}`} onClick={() => {resetForm(); setSelectedPayment(payment.id);}} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-200 px-2.5 py-1.5 text-[10px] text-slate-600 transition hover:border-emerald-500 hover:text-emerald-600 xl:px-3 xl:py-2 xl:text-xs"><Eye className="h-3.5 w-3.5" />View</button>
+                    {isLeader && payment.status === "completed" && (
+                      <button
+                        type="button"
+                        aria-label={`Archive completed payment ${payment.transaction_code}`}
+                        title="Archive completed payment (keep financial records)"
+                        onClick={() => setPaymentToArchive(payment)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                     {isSuperAdmin && (
                       <button
                         type="button"
@@ -2208,6 +2252,14 @@ export default function PaymentPortal({
                   <span className="font-bold tabular-nums text-slate-800">₱{Number(payment.amount).toFixed(2)}</span>
                   <div className="flex items-center gap-2">
                     <button type="button" aria-label={`View payment ${payment.transaction_code}`} onClick={() => { resetForm(); setSelectedPayment(payment.id); }} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700">View details</button>
+                    {isLeader && payment.status === "completed" && (
+                      <button
+                        type="button"
+                        onClick={() => setPaymentToArchive(payment)}
+                        aria-label={`Archive completed payment ${payment.transaction_code}`}
+                        className="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-bold text-emerald-700"
+                      >Archive</button>
+                    )}
                     {isSuperAdmin && (
                       <button
                         type="button"
@@ -2384,6 +2436,18 @@ export default function PaymentPortal({
                     </button>
                   )}
                 </div>
+
+                {isLeader && payment.status === "completed" && (
+                  <button
+                    type="button"
+                    disabled={archivingPayment}
+                    onClick={() => setPaymentToArchive(payment)}
+                    className="mt-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-bold text-emerald-700 disabled:opacity-50"
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    Archive completed payment
+                  </button>
+                )}
 
                 {isLeader &&
                   payment.status ===
@@ -2775,6 +2839,18 @@ export default function PaymentPortal({
           </form>
         </Modal>
       )}
+
+      <ConfirmDialog
+        open={Boolean(paymentToArchive)}
+        title="Archive completed payment?"
+        description={paymentToArchive
+          ? `Hide ${paymentToArchive.transaction_code} from daily payment lists? The ₱${Number(paymentToArchive.amount).toFixed(2)} contribution, database record, and uploaded proofs will be retained.`
+          : ""}
+        confirmLabel="Archive payment"
+        busy={archivingPayment}
+        onCancel={() => { if (!archivingPayment) setPaymentToArchive(null); }}
+        onConfirm={() => void archiveCompletedPayment()}
+      />
 
       <ConfirmDialog
         open={Boolean(paymentToDelete)}

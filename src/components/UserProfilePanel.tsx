@@ -4,6 +4,9 @@ import {
   Camera,
   HelpCircle,
   ImagePlus,
+  Eye,
+  EyeOff,
+  Lock,
   Loader2,
   Mail,
   MapPin,
@@ -32,7 +35,7 @@ interface ProfileUser {
   id: number;
   full_name: string;
   email: string;
-  role: "admin" | "resident" | "collector" | "purok_leader";
+  role: "super_admin" | "admin" | "resident" | "collector" | "purok_leader";
   phone: string | null;
   address: string | null;
   status: string;
@@ -94,6 +97,8 @@ function isValidPhone(value: string) {
 
 function roleLabel(role?: ProfileUser["role"]) {
   switch (role) {
+    case "super_admin":
+      return "Municipal Administrator";
     case "admin":
       return "Barangay Captain";
     case "purok_leader":
@@ -109,7 +114,9 @@ function userCode(user: ProfileUser | null) {
   if (!user) return "";
 
   const prefix =
-    user.role === "admin"
+    user.role === "super_admin"
+      ? "SA"
+      : user.role === "admin"
       ? "BC"
       : user.role === "purok_leader"
         ? "PL"
@@ -197,6 +204,22 @@ export default function UserProfilePanel() {
   const [saving, setSaving] = useState(false);
   const [notif, setNotif] = useState("");
   const [error, setError] = useState("");
+
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [nextPassword, setNextPassword] = useState("");
+  const [confirmNextPassword, setConfirmNextPassword] = useState("");
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+
+  const [newEmail, setNewEmail] = useState("");
+  const [emailPassword, setEmailPassword] = useState("");
+  const [emailOtp, setEmailOtp] = useState("");
+  const [emailPending, setEmailPending] = useState(false);
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [emailMessage, setEmailMessage] = useState("");
+  const [emailError, setEmailError] = useState("");
 
   const [showCorrectionForm, setShowCorrectionForm] = useState(false);
   const [correctionAddress, setCorrectionAddress] = useState("");
@@ -613,6 +636,92 @@ export default function UserProfilePanel() {
       );
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleChangePassword = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setPasswordError("");
+    setPasswordMessage("");
+
+    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,72}$/.test(nextPassword)) {
+      setPasswordError("New password needs 8-72 characters with uppercase, lowercase, and a number.");
+      return;
+    }
+    if (nextPassword !== confirmNextPassword) {
+      setPasswordError("New passwords do not match.");
+      return;
+    }
+    setPasswordSaving(true);
+    try {
+      const data = await apiRequest("/auth/change-password", {
+        method: "PUT",
+        body: JSON.stringify({ currentPassword, newPassword: nextPassword, confirmPassword: confirmNextPassword }),
+      });
+      setPasswordMessage(data.message || "Password updated.");
+      setCurrentPassword("");
+      setNextPassword("");
+      setConfirmNextPassword("");
+    } catch (err) {
+      setPasswordError(err instanceof Error ? err.message : "Unable to update password.");
+    } finally {
+      setPasswordSaving(false);
+    }
+  };
+
+  const handleRequestEmailChange = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setEmailError("");
+    setEmailMessage("");
+    const candidate = newEmail.trim().toLowerCase();
+    if (!candidate || candidate === (profile?.email || "").toLowerCase()) {
+      setEmailError("Enter a different email address.");
+      return;
+    }
+    setEmailSaving(true);
+    try {
+      const data = await apiRequest("/auth/request-email-change", {
+        method: "POST",
+        body: JSON.stringify({ newEmail: candidate, currentPassword: emailPassword }),
+      });
+      setNewEmail(candidate);
+      setEmailPending(true);
+      setEmailOtp("");
+      setEmailPassword("");
+      setEmailMessage(data.message || "Check your new email for the six-digit code.");
+    } catch (err) {
+      setEmailError(err instanceof Error ? err.message : "Unable to send verification code.");
+    } finally {
+      setEmailSaving(false);
+    }
+  };
+
+  const handleConfirmEmailChange = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setEmailError("");
+    setEmailMessage("");
+    setEmailSaving(true);
+    try {
+      const data = await apiRequest("/auth/confirm-email-change", {
+        method: "POST",
+        body: JSON.stringify({ newEmail: newEmail.trim().toLowerCase(), otp: emailOtp.trim() }),
+      });
+      // Keep the current authenticated session in sync with the updated address.
+      if (typeof data.token === "string") {
+        if (localStorage.getItem("token")) localStorage.setItem("token", data.token);
+        if (sessionStorage.getItem("token")) sessionStorage.setItem("token", data.token);
+      }
+      const updatedEmail = String(data.email || newEmail).toLowerCase();
+      setProfile((prev) => prev ? { ...prev, email: updatedEmail } : prev);
+      updateProfile({ email: updatedEmail });
+      setNewEmail("");
+      setEmailOtp("");
+      setEmailPending(false);
+      setEmailMessage(data.message || "Email updated successfully.");
+    } catch (err) {
+      setEmailError(err instanceof Error ? err.message : "Unable to verify new email.");
+    } finally {
+      setEmailSaving(false);
     }
   };
 
@@ -1077,6 +1186,110 @@ export default function UserProfilePanel() {
             Save Profile Credentials
           </button>
         </form>
+
+        <section className="space-y-5 border-t border-slate-200 pt-6" aria-label="Account security">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-emerald-600">Security Settings</p>
+            <h3 className="mt-1 text-lg font-black text-slate-900">Email & Password</h3>
+            <p className="mt-1 text-xs text-slate-500">Available to every account role. Changes require verification to protect your login.</p>
+          </div>
+
+          <form onSubmit={handleChangePassword} className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-5">
+            <div className="flex items-center gap-2 text-slate-900">
+              <Lock className="h-4 w-4 text-emerald-600" />
+              <h4 className="text-sm font-black">Change Password</h4>
+            </div>
+            <p className="text-[11px] text-slate-500">Enter your current password before setting a new one.</p>
+            {passwordError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-800">{passwordError}</p>}
+            {passwordMessage && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800">{passwordMessage}</p>}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-xs font-bold text-slate-700 sm:col-span-2">
+                Current Password
+                <input type={showPassword ? "text" : "password"} value={currentPassword} onChange={e => setCurrentPassword(e.target.value)}
+                  autoComplete="current-password" required maxLength={72}
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 focus:border-emerald-500 focus:outline-none" />
+              </label>
+              <label className="block text-xs font-bold text-slate-700">
+                New Password
+                <input type={showPassword ? "text" : "password"} value={nextPassword} onChange={e => setNextPassword(e.target.value)}
+                  autoComplete="new-password" required minLength={8} maxLength={72}
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 focus:border-emerald-500 focus:outline-none" />
+              </label>
+              <label className="block text-xs font-bold text-slate-700">
+                Confirm New Password
+                <input type={showPassword ? "text" : "password"} value={confirmNextPassword} onChange={e => setConfirmNextPassword(e.target.value)}
+                  autoComplete="new-password" required minLength={8} maxLength={72}
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 focus:border-emerald-500 focus:outline-none" />
+              </label>
+            </div>
+            <p className="text-[11px] text-slate-500">Minimum 8 characters, including uppercase, lowercase, and a number.</p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <button type="button" onClick={() => setShowPassword(v => !v)}
+                className="inline-flex items-center gap-2 text-xs font-bold text-emerald-700">
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {showPassword ? "Hide passwords" : "Show passwords"}
+              </button>
+              <button type="submit" disabled={passwordSaving}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-xs font-black text-white hover:bg-emerald-800 disabled:opacity-50">
+                {passwordSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                Update Password
+              </button>
+            </div>
+          </form>
+
+          <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-5">
+            <div className="flex items-center gap-2 text-slate-900">
+              <Mail className="h-4 w-4 text-emerald-600" />
+              <h4 className="text-sm font-black">Change Email Address / Gmail</h4>
+            </div>
+            <p className="text-[11px] text-slate-500">Current: <strong>{profile?.email}</strong>. We will send a six-digit code to the new email before changing your login address.</p>
+            {emailError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-800">{emailError}</p>}
+            {emailMessage && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800">{emailMessage}</p>}
+            {!emailPending ? (
+              <form onSubmit={handleRequestEmailChange} className="space-y-3">
+                <label className="block text-xs font-bold text-slate-700">
+                  New Email Address
+                  <input type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} required maxLength={150}
+                    autoComplete="email" placeholder="newaddress@gmail.com"
+                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 focus:border-emerald-500 focus:outline-none" />
+                </label>
+                <label className="block text-xs font-bold text-slate-700">
+                  Current Password
+                  <input type="password" value={emailPassword} onChange={e => setEmailPassword(e.target.value)} required maxLength={72}
+                    autoComplete="current-password"
+                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 focus:border-emerald-500 focus:outline-none" />
+                </label>
+                <button type="submit" disabled={emailSaving}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-xs font-black text-white hover:bg-emerald-800 disabled:opacity-50">
+                  {emailSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Send Verification Code
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleConfirmEmailChange} className="space-y-3">
+                <p className="text-xs font-semibold text-slate-700">Enter the code sent to <strong>{newEmail}</strong>.</p>
+                <label className="block text-xs font-bold text-slate-700">
+                  Six-Digit Code
+                  <input type="text" value={emailOtp} onChange={e => setEmailOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    inputMode="numeric" pattern="[0-9]{6}" maxLength={6} required autoComplete="one-time-code" placeholder="000000"
+                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 tracking-[0.25em] text-slate-900 focus:border-emerald-500 focus:outline-none" />
+                </label>
+                <div className="flex flex-wrap gap-3">
+                  <button type="submit" disabled={emailSaving || emailOtp.length !== 6}
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-xs font-black text-white hover:bg-emerald-800 disabled:opacity-50">
+                    {emailSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                    Verify & Change Email
+                  </button>
+                  <button type="button" disabled={emailSaving} onClick={() => { setEmailPending(false); setEmailOtp(""); setEmailMessage(""); }}
+                    className="rounded-xl border border-slate-300 bg-white px-5 py-3 text-xs font-black text-slate-700">
+                    Change Email / Request New Code
+                  </button>
+                </div>
+              </form>
+            )}
+            <p className="text-[11px] text-slate-500">The code expires in 10 minutes (maximum 5 attempts). If your account uses Google Sign-In and you do not have a password, set one using Forgot Password first.</p>
+          </div>
+        </section>
 
         {isCivilian &&
           !needsInitialResidentSetup && (

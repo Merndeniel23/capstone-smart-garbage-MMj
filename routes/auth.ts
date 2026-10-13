@@ -130,6 +130,50 @@ function otpMatches(email: string, otp: string, storedHash: unknown) {
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
+/**
+ * Email changes are staged separately from normal email verification so
+ * requesting a new email never blocks an existing verified login.
+ * Idempotent schema initialization supports existing deployed databases.
+ */
+let accountEmailChangesTablePromise: Promise<void> | null = null;
+
+function ensureAccountEmailChangesTable(): Promise<void> {
+  if (!accountEmailChangesTablePromise) {
+    accountEmailChangesTablePromise = db.query(`
+      CREATE TABLE IF NOT EXISTS account_email_changes (
+        user_id INT UNSIGNED NOT NULL,
+        new_email VARCHAR(150) NOT NULL,
+        otp_hash CHAR(64) NOT NULL,
+        attempt_count TINYINT UNSIGNED NOT NULL DEFAULT 0,
+        expires_at DATETIME NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id),
+        KEY idx_account_email_changes_expiry (expires_at),
+        CONSTRAINT fk_account_email_changes_user
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `).then(() => undefined).catch((error) => {
+      accountEmailChangesTablePromise = null;
+      throw error;
+    });
+  }
+  return accountEmailChangesTablePromise;
+}
+
+function emailChangeOtpHash(userId: number, email: string, otp: string): string {
+  return crypto.createHmac("sha256", getJwtSecret())
+    .update(`email-change:${userId}:${normalizeEmail(email)}:${otp}`)
+    .digest("hex");
+}
+
+function emailChangeOtpMatches(
+  userId: number, email: string, otp: string, storedHash: unknown,
+): boolean {
+  const expected = Buffer.from(emailChangeOtpHash(userId, email, otp), "hex");
+  const actual = Buffer.from(String(storedHash || ""), "hex");
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
 async function notifyBarangayAdminOfApprovalRequest(user: {
   id: number;
   full_name: string;
@@ -1505,6 +1549,332 @@ router.put(
       });
     } finally {
       connection.release();
+    }
+  },
+);
+
+/**
+ * All authenticated account roles can change their password using their
+ * current password. Google-only accounts can use Forgot Password first to
+ * set a password before using the credential-change forms.
+ */
+router.put(
+  "/change-password",
+  requireAuthenticatedAccount,
+  async (req: AuthRequest, res) => {
+    const userId = Number(req.user?.id);
+    const currentPassword = String(req.body.currentPassword || "");
+    const newPassword = String(req.body.newPassword || "");
+    const confirmPassword = String(req.body.confirmPassword || "");
+
+    if (!currentPassword || !newPassword || newPassword !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Enter your current password and matching new passwords.",
+      });
+    }
+
+    if (!isStrongPassword(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        message: "Use 8-72 characters including uppercase, lowercase, and a number.",
+      });
+    }
+
+    try {
+      const [rows] = await db.query<any[]>(
+        "SELECT password_hash FROM users WHERE id = ? AND status IN ('active', 'pending') LIMIT 1",
+        [userId],
+      );
+      const user = rows[0];
+      if (!user || !(await bcrypt.compare(currentPassword, user.password_hash))) {
+        return res.status(403).json({
+          success: false,
+          message: "Current password is incorrect.",
+        });
+      }
+      if (await bcrypt.compare(newPassword, user.password_hash)) {
+        return res.status(400).json({
+          success: false,
+          message: "Choose a new password different from your current password.",
+        });
+      }
+
+      const nextHash = await bcrypt.hash(newPassword, 12);
+      const [result] = await db.execute<any>(
+        `UPDATE users SET password_hash = ?, must_change_password = 0,
+         updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND password_hash = ? AND status IN ('active', 'pending')`,
+        [nextHash, userId, user.password_hash],
+      );
+      if (Number(result.affectedRows) !== 1) {
+        return res.status(409).json({
+          success: false,
+          message: "Your password changed in another session. Try again.",
+        });
+      }
+
+      // Invalidate outstanding forgot-password codes for this account.
+      await db.execute("DELETE FROM password_resets WHERE email = ?", [req.user!.email]);
+      return res.json({
+        success: true,
+        message: "Password changed successfully. Use the new password next time you sign in.",
+      });
+    } catch (error) {
+      console.error("Change password error:", error);
+      return res.status(500).json({ success: false, message: "Unable to change password." });
+    }
+  },
+);
+
+/**
+ * Start an authenticated email change. The old email stays active until a
+ * one-time code sent to the new address is successfully confirmed.
+ */
+router.post(
+  "/request-email-change",
+  requireAuthenticatedAccount,
+  async (req: AuthRequest, res) => {
+    const userId = Number(req.user?.id);
+    const newEmail = normalizeEmail(req.body.newEmail);
+    const currentPassword = String(req.body.currentPassword || "");
+    if (!isValidEmail(newEmail) || newEmail.length > 150 || !currentPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Enter a valid new email and your current password.",
+      });
+    }
+
+    let connection: Awaited<ReturnType<typeof db.getConnection>> | undefined;
+    let storedOtpHash = "";
+    try {
+      if (!getResendClient()) {
+        return res.status(503).json({
+          success: false,
+          message: "Email verification service is not configured.",
+        });
+      }
+      await ensureAccountEmailChangesTable();
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+
+      const [users] = await connection.query<any[]>(
+        `SELECT id, email, password_hash, full_name FROM users
+         WHERE id = ? AND status IN ('active', 'pending') LIMIT 1 FOR UPDATE`,
+        [userId],
+      );
+      const user = users[0];
+      if (!user || !(await bcrypt.compare(currentPassword, user.password_hash))) {
+        await connection.rollback();
+        return res.status(403).json({ success: false, message: "Current password is incorrect." });
+      }
+      if (normalizeEmail(user.email) === newEmail) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "Your new email must be different from your current email.",
+        });
+      }
+
+      const [duplicate] = await connection.query<any[]>(
+        "SELECT id FROM users WHERE LOWER(email) = ? AND id <> ? LIMIT 1",
+        [newEmail, userId],
+      );
+      const [pendingRegistration] = await connection.query<any[]>(
+        "SELECT email FROM pending_registrations WHERE LOWER(email) = ? LIMIT 1",
+        [newEmail],
+      );
+      if (duplicate.length || pendingRegistration.length) {
+        await connection.rollback();
+        return res.status(409).json({ success: false, message: "That email is already in use." });
+      }
+
+      const [previous] = await connection.query<any[]>(
+        `SELECT created_at FROM account_email_changes WHERE user_id = ? FOR UPDATE`,
+        [userId],
+      );
+      if (previous.length && Date.now() - new Date(previous[0].created_at).getTime() < 60_000) {
+        await connection.rollback();
+        return res.status(429).json({
+          success: false,
+          message: "Please wait at least 60 seconds before requesting another code.",
+        });
+      }
+
+      const otp = String(crypto.randomInt(100000, 1000000));
+      storedOtpHash = emailChangeOtpHash(userId, newEmail, otp);
+      await connection.execute(
+        `INSERT INTO account_email_changes
+         (user_id, new_email, otp_hash, attempt_count, expires_at, created_at)
+         VALUES (?, ?, ?, 0, DATE_ADD(NOW(), INTERVAL 10 MINUTE), NOW())
+         ON DUPLICATE KEY UPDATE
+         new_email = VALUES(new_email), otp_hash = VALUES(otp_hash),
+         attempt_count = 0, expires_at = VALUES(expires_at), created_at = NOW()`,
+        [userId, newEmail, storedOtpHash],
+      );
+      await connection.commit();
+      connection.release();
+      connection = undefined;
+
+      const resend = getResendClient();
+      const { error: mailError } = await resend!.emails.send({
+        from: getResendFromAddress(),
+        to: newEmail,
+        subject: "Smart Garbage - Verify New Email",
+        html: `
+          <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto">
+            <h2>Verify your new email address</h2>
+            <p>Hello ${escapeHtml(user.full_name)},</p>
+            <p>Enter this six-digit code in your Smart Garbage Profile:</p>
+            <p style="font-size:32px;font-weight:bold;letter-spacing:8px">${otp}</p>
+            <p>This code expires after 10 minutes. If you did not request this, ignore it.</p>
+          </div>`,
+      });
+      if (mailError) throw mailError;
+
+      return res.json({
+        success: true,
+        newEmail,
+        message: "Verification code sent to your new email. Your original email remains active until verification.",
+      });
+    } catch (error) {
+      if (connection) await connection.rollback().catch(() => undefined);
+      if (storedOtpHash) {
+        await db.execute(
+          "DELETE FROM account_email_changes WHERE user_id = ? AND otp_hash = ?",
+          [userId, storedOtpHash],
+        ).catch(() => undefined);
+      }
+      console.error("Request email change error:", error);
+      return res.status(503).json({
+        success: false,
+        message: "Unable to send the verification email. Check the email service and try again.",
+      });
+    } finally {
+      connection?.release();
+    }
+  },
+);
+
+router.post(
+  "/confirm-email-change",
+  requireAuthenticatedAccount,
+  async (req: AuthRequest, res) => {
+    const userId = Number(req.user?.id);
+    const newEmail = normalizeEmail(req.body.newEmail);
+    const otp = String(req.body.otp || "").trim();
+    if (!isValidEmail(newEmail) || newEmail.length > 150 || !/^\d{6}$/.test(otp)) {
+      return res.status(400).json({
+        success: false,
+        message: "Enter the new email address and its six-digit verification code.",
+      });
+    }
+
+    let connection: Awaited<ReturnType<typeof db.getConnection>> | undefined;
+    try {
+      await ensureAccountEmailChangesTable();
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+
+      const [users] = await connection.query<any[]>(
+        `SELECT id, email, role, barangay_id, purok_id, recovery_email
+         FROM users WHERE id = ? AND status IN ('active','pending') LIMIT 1 FOR UPDATE`,
+        [userId],
+      );
+      const user = users[0];
+      if (!user) {
+        await connection.rollback();
+        return res.status(404).json({ success: false, message: "Account not found." });
+      }
+
+      const [rows] = await connection.query<any[]>(
+        `SELECT new_email, otp_hash, attempt_count, expires_at
+         FROM account_email_changes WHERE user_id = ? LIMIT 1 FOR UPDATE`,
+        [userId],
+      );
+      const change = rows[0];
+      if (!change || normalizeEmail(change.new_email) !== newEmail) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "No matching pending email change. Request a new code.",
+        });
+      }
+      if (Number(change.attempt_count) >= 5) {
+        await connection.rollback();
+        return res.status(429).json({
+          success: false,
+          message: "Too many incorrect attempts. Request a new verification code.",
+        });
+      }
+      if (new Date(change.expires_at).getTime() <= Date.now()) {
+        await connection.execute("DELETE FROM account_email_changes WHERE user_id = ?", [userId]);
+        await connection.commit();
+        return res.status(400).json({
+          success: false,
+          message: "Verification code expired. Request a new code.",
+        });
+      }
+      if (!emailChangeOtpMatches(userId, newEmail, otp, change.otp_hash)) {
+        await connection.execute(
+          "UPDATE account_email_changes SET attempt_count = attempt_count + 1 WHERE user_id = ?",
+          [userId],
+        );
+        await connection.commit();
+        return res.status(400).json({
+          success: false,
+          message: "Incorrect verification code.",
+        });
+      }
+
+      const [duplicate] = await connection.query<any[]>(
+        "SELECT id FROM users WHERE LOWER(email) = ? AND id <> ? LIMIT 1",
+        [newEmail, userId],
+      );
+      if (duplicate.length) {
+        await connection.rollback();
+        return res.status(409).json({ success: false, message: "That email is already in use." });
+      }
+
+      await connection.execute(
+        `UPDATE users SET email = ?, email_verified_at = NOW(),
+         recovery_email = CASE WHEN LOWER(COALESCE(recovery_email,'')) = LOWER(?)
+          THEN NULL ELSE recovery_email END,
+         updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [newEmail, user.email, userId],
+      );
+      await connection.execute("DELETE FROM email_verifications WHERE user_id = ?", [userId]);
+      await connection.execute(
+        "DELETE FROM password_resets WHERE email IN (?, ?)",
+        [user.email, newEmail],
+      );
+      await connection.execute("DELETE FROM account_email_changes WHERE user_id = ?", [userId]);
+      await connection.commit();
+
+      const token = createToken({
+        id: userId,
+        email: newEmail,
+        role: String(user.role),
+        barangay_id: user.barangay_id,
+        purok_id: user.purok_id,
+      });
+
+      return res.json({
+        success: true,
+        email: newEmail,
+        token,
+        message: "Email address verified and updated successfully.",
+      });
+    } catch (error: any) {
+      if (connection) await connection.rollback().catch(() => undefined);
+      if (error?.code === "ER_DUP_ENTRY") {
+        return res.status(409).json({ success: false, message: "That email is already in use." });
+      }
+      console.error("Confirm email change error:", error);
+      return res.status(500).json({ success: false, message: "Unable to update email address." });
+    } finally {
+      connection?.release();
     }
   },
 );
