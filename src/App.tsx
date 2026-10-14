@@ -410,6 +410,15 @@ function AppContent() {
     currentUser?.id,
   );
 
+  // The profile cache may lack barangay/purok properties even when an
+  // approved resident has completed registration. Confirm access from the
+  // authoritative account record instead of treating missing cache keys as
+  // an incomplete profile.
+  const [residentAccess, setResidentAccess] = useState<
+    "checking" | "ready" | "restricted"
+  >("checking");
+  const initialResidentAccessCheck = useRef(false);
+
   const openDirectory = (role = "all", status = "all", createCaptain = false) => {
     setDirectoryNavigation((previous) => ({ role, status, createCaptain, visit: previous.visit + 1 }));
     setCurrentScreen("user-management");
@@ -430,27 +439,111 @@ function AppContent() {
   };
 
   useEffect(() => {
-    if (!isLoggedIn || currentScreen === "change-initial-password") {
+    if (!isLoggedIn) {
+      initialResidentAccessCheck.current = false;
+      setResidentAccess("checking");
       return;
     }
 
-    const residentAccountRestricted =
-      userRole === "household" &&
-      (currentUser?.status === "pending" ||
-        !currentUser?.barangay ||
-        !currentUser?.purok ||
-        !currentUser?.address.trim() ||
-        !currentUser?.phone.trim());
-
-    if (residentAccountRestricted && currentScreen !== "profile") {
-      setCurrentScreen("profile");
-      return;
-    }
+    if (currentScreen === "change-initial-password") return;
 
     if (!ROLE_SCREENS[userRole].includes(currentScreen as Screen)) {
       setCurrentScreen(ROLE_HOME_SCREEN[userRole]);
     }
-  }, [currentScreen, currentUser, isLoggedIn, setCurrentScreen, userRole]);
+  }, [currentScreen, isLoggedIn, setCurrentScreen, userRole]);
+
+  useEffect(() => {
+    if (!isLoggedIn || isAuthLoading || currentScreen === "change-initial-password") {
+      return;
+    }
+
+    if (userRole !== "household") {
+      setResidentAccess("ready");
+      return;
+    }
+
+    // When the initial validation succeeds, choosing Profile manually must
+    // NEVER redirect the resident away from the Profile page.
+    if (residentAccess === "ready") return;
+
+    // A restricted resident may complete details in Profile and then try
+    // Dashboard; in that case re-check the live account state.
+    if (residentAccess === "restricted" && currentScreen === "profile") return;
+
+    let cancelled = false;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 10000);
+
+    const verifyResidentProfile = async () => {
+      try {
+        const token = getAuthToken();
+        if (!token) throw new Error("No login session");
+
+        const response = await fetch("/api/auth/me", {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Unable to validate resident profile");
+
+        const data = await response.json();
+        const user = data.user;
+        if (!user || user.role !== "resident") {
+          throw new Error("Invalid resident account response");
+        }
+
+        const needsSetup =
+          !Number(user.barangay_id) ||
+          !Number(user.purok_id) ||
+          !String(user.address || "").trim() ||
+          !String(user.phone || "").trim();
+        const restricted = user.status !== "active" || needsSetup;
+        if (cancelled) return;
+
+        if (!restricted) {
+          for (const storage of [localStorage, sessionStorage]) {
+            storage.removeItem("sg_requires_location_setup");
+            storage.removeItem("sg_pending_approval");
+          }
+        }
+
+        setResidentAccess(restricted ? "restricted" : "ready");
+        if (restricted && currentScreen !== "profile") {
+          setCurrentScreen("profile");
+        } else if (
+          !restricted &&
+          !initialResidentAccessCheck.current &&
+          currentScreen === "profile"
+        ) {
+          // Fix stale/incorrect Profile landing caused by older login cache.
+          setCurrentScreen("dashboard");
+        }
+        initialResidentAccessCheck.current = true;
+      } catch {
+        if (cancelled) return;
+        // Do not infer missing profile details from an incomplete local cache.
+        // Preserve explicit pending/setup flags if live validation is down.
+        const restricted = [localStorage, sessionStorage].some(
+          (storage) =>
+            storage.getItem("sg_requires_location_setup") === "true" ||
+            storage.getItem("sg_pending_approval") === "true",
+        );
+        setResidentAccess(restricted ? "restricted" : "ready");
+        if (restricted && currentScreen !== "profile") {
+          setCurrentScreen("profile");
+        }
+        initialResidentAccessCheck.current = true;
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    };
+
+    void verifyResidentProfile();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [isLoggedIn, isAuthLoading, userRole, currentScreen, residentAccess, setCurrentScreen]);
 
   const handleLogout = () => {
     if (userRole === "collector") {
@@ -482,6 +575,21 @@ function AppContent() {
 
   if (!isLoggedIn) {
     return <Registration />;
+  }
+
+  if (
+    userRole === "household" &&
+    currentScreen !== "change-initial-password" &&
+    residentAccess === "checking"
+  ) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <div className="text-center" role="status" aria-live="polite">
+          <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-emerald-100 border-t-emerald-600" />
+          <p className="mt-4 text-sm font-bold text-slate-600">Checking resident account...</p>
+        </div>
+      </div>
+    );
   }
 
   if (currentScreen === "change-initial-password") {

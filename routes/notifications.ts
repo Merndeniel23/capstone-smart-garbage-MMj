@@ -152,6 +152,23 @@ async function ensureNotificationReceiptsTable() {
         )
         `,
       );
+
+      // Existing deployments may have created receipts before per-user
+      // deletion existed. Add the tombstone column once, without clearing
+      // existing seen/read state or modifying the broadcast notification.
+      const [columns] = await db.query<any[]>(
+        "SHOW COLUMNS FROM notification_receipts LIKE 'is_deleted'",
+      );
+      if (columns.length === 0) {
+        try {
+          await db.execute(
+            "ALTER TABLE notification_receipts ADD COLUMN is_deleted TINYINT(1) NOT NULL DEFAULT 0",
+          );
+        } catch (error: any) {
+          // Another concurrent deployment instance may have added it first.
+          if (error?.code !== "ER_DUP_FIELDNAME") throw error;
+        }
+      }
     })().catch((error) => {
       notificationReceiptsPreparation = null;
       throw error;
@@ -233,6 +250,7 @@ router.get(
           ON purok.id = n.purok_id
 
         WHERE ${notificationVisibilitySql("n")}
+          AND COALESCE(receipt.is_deleted, 0) = 0
 
         ORDER BY
           COALESCE(receipt.is_read, 0) ASC,
@@ -1157,7 +1175,8 @@ router.patch(
 
 /**
  * DELETE /api/notifications/:id
- * Only the creator, Admin, or Super Admin may delete.
+ * Authorized managers may delete a broadcast globally.
+ * Other recipients can remove it only from their own notification inbox.
  */
 router.delete(
   "/:id",
@@ -1235,11 +1254,46 @@ router.delete(
           Number(notification.purok_id) === Number(viewer.purok_id));
 
       if (!allowed) {
-        await connection.rollback();
-        return res.status(404).json({
-          success: false,
-          message:
-            "Notification was not found or cannot be deleted.",
+        // Residents, collectors, and other viewers may remove only the
+        // notification from THEIR OWN inbox. The original broadcast remains
+        // visible to all other recipients.
+        const [visibleRows] = await connection.query<any[]>(
+          `
+          SELECT n.id
+          FROM notifications n
+          WHERE n.id = ?
+            AND ${notificationVisibilitySql("n")}
+          LIMIT 1
+          `,
+          [notificationId, ...notificationVisibilityParameters(viewer)],
+        );
+        if (visibleRows.length === 0) {
+          await connection.rollback();
+          return res.status(404).json({
+            success: false,
+            message: "Notification was not found in your inbox.",
+          });
+        }
+
+        await connection.execute(
+          `
+          INSERT INTO notification_receipts
+            (notification_id, user_id, is_seen, seen_at, is_read, read_at, is_deleted)
+          VALUES (?, ?, 1, NOW(), 1, NOW(), 1)
+          ON DUPLICATE KEY UPDATE
+            is_deleted = 1,
+            is_seen = 1,
+            seen_at = COALESCE(seen_at, NOW()),
+            is_read = 1,
+            read_at = COALESCE(read_at, NOW())
+          `,
+          [notificationId, viewerId],
+        );
+        await connection.commit();
+        return res.json({
+          success: true,
+          deletedForCurrentUser: true,
+          message: "Notification removed from your inbox.",
         });
       }
 

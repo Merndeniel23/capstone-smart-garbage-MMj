@@ -130,6 +130,11 @@ const [resendCountdown, setResendCountdown] = useState(0);
     id: data.user.id,
     name: data.user.full_name,
     email: data.user.email,
+    status: data.user.status || "active",
+    barangay: data.user.barangay_name || "",
+    purok: data.user.purok_name || "",
+    barangayId: data.user.barangay_id ?? null,
+    purokId: data.user.purok_id ?? null,
     phone: data.user.phone || "",
     communalZone: [data.user.purok_name, data.user.barangay_name]
       .filter(Boolean)

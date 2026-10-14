@@ -542,13 +542,15 @@ export default function NotificationsPanel({
     setDeletingNotificationId(notificationId);
 
     try {
-      await apiRequest(
+      const result = await apiRequest(
         `/api/notifications/${notificationId}`,
         {
           method: "DELETE",
         },
       );
 
+      setSuccessMessage(result.message || "Notification removed.");
+      window.dispatchEvent(new Event("notifications-changed"));
       setNotifications((current) =>
         current.filter(
           (item) =>
@@ -963,7 +965,7 @@ export default function NotificationsPanel({
                       </button>
                     )}
 
-                    {canBroadcast && (
+                    {(
                       <button
                         type="button"
                         onClick={() =>
@@ -1163,7 +1165,9 @@ export default function NotificationsPanel({
         title="Delete notification?"
         description={
           notificationToDelete
-            ? `Delete “${notificationToDelete.title}”? This cannot be undone.`
+            ? canBroadcast
+              ? `Delete “${notificationToDelete.title}”? If you manage this announcement, it may be removed for other recipients too.`
+              : `Remove “${notificationToDelete.title}” from your notifications? Other recipients will keep their copy.`
             : ""
         }
         confirmLabel="Delete notification"
