@@ -1411,6 +1411,123 @@ router.post("/puroks", requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
+// Renaming a purok changes only its display name, never its identity or links.
+// A captain may update only puroks belonging to their active assigned barangay.
+router.patch("/puroks/:id", requireAuth, async (req: AuthRequest, res) => {
+  let connection: PoolConnection | null = null;
+  try {
+    const viewerId = parsePositiveInteger(req.user?.id);
+    const purokId = parsePositiveInteger(req.params.id);
+    if (!viewerId) {
+      return res.status(401).json({ success: false, message: "Sign in again to manage puroks." });
+    }
+    if (!purokId) {
+      return res.status(400).json({ success: false, message: "Invalid purok ID." });
+    }
+
+    const name = String(req.body?.name ?? "").trim().replace(/\s+/g, " ");
+    if (!/^[\p{L}\p{N} .'-]{2,100}$/u.test(name)) {
+      return res.status(400).json({
+        success: false,
+        message: "Enter a valid purok name (2–100 characters, letters and numbers).",
+      });
+    }
+
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    // Re-read the role and barangay from MySQL rather than trusting request data.
+    const [viewerRows]: any = await connection.query(
+      "SELECT id, role, status, barangay_id, email FROM users WHERE id = ? LIMIT 1",
+      [viewerId],
+    );
+    const viewer = viewerRows[0];
+    if (
+      !viewer ||
+      String(viewer.role).toLowerCase() !== "admin" ||
+      String(viewer.status).toLowerCase() !== "active" ||
+      isArchivedAccount(viewer)
+    ) {
+      await connection.rollback();
+      return res.status(403).json({
+        success: false,
+        message: "Only an active Barangay Captain can rename puroks in their barangay.",
+      });
+    }
+
+    const barangayId = parsePositiveInteger(viewer.barangay_id);
+    if (!barangayId) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Your Barangay Captain account is not assigned to a barangay.",
+      });
+    }
+
+    // Lock the barangay while checking uniqueness and changing the purok name.
+    const [barangayRows]: any = await connection.query(
+      "SELECT id FROM barangays WHERE id = ? AND is_active = 1 LIMIT 1 FOR UPDATE",
+      [barangayId],
+    );
+    if (!barangayRows.length) {
+      await connection.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Your assigned barangay is not active or was not found.",
+      });
+    }
+
+    const [targetRows]: any = await connection.query(
+      "SELECT id, name FROM puroks WHERE id = ? AND barangay_id = ? LIMIT 1 FOR UPDATE",
+      [purokId, barangayId],
+    );
+    if (!targetRows.length) {
+      await connection.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Purok not found within your assigned barangay.",
+      });
+    }
+
+    const [duplicates]: any = await connection.query(
+      "SELECT id FROM puroks WHERE barangay_id = ? AND id <> ? AND LOWER(TRIM(name)) = LOWER(?) LIMIT 1",
+      [barangayId, purokId, name],
+    );
+    if (duplicates.length) {
+      await connection.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `A purok named ${name} already exists in your barangay.`,
+      });
+    }
+
+    await connection.execute(
+      "UPDATE puroks SET name = ? WHERE id = ? AND barangay_id = ?",
+      [name, purokId, barangayId],
+    );
+    await connection.commit();
+    return res.json({
+      success: true,
+      message: `${targetRows[0].name} was renamed to ${name}. All linked records are preserved.`,
+      purok: { id: purokId, barangay_id: barangayId, name },
+    });
+  } catch (error: any) {
+    if (connection) {
+      try { await connection.rollback(); } catch { /* Preserve the original error. */ }
+    }
+    if (error?.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ success: false, message: "That purok name is already used in your barangay." });
+    }
+    console.error("Rename barangay purok error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to rename the purok right now.",
+    });
+  } finally {
+    connection?.release();
+  }
+});
+
 router.patch("/barangays/:id", requireAuth, async (req: AuthRequest, res) => {
   try {
     const viewerRole = String(req.user?.role || "").toLowerCase();

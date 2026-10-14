@@ -395,6 +395,8 @@ export default function App() {
 
 function AppContent() {
   const [directoryNavigation, setDirectoryNavigation] = useState({ role: "all", status: "all", createCaptain: false, visit: 0 });
+  // Navigate to the exact complaint when opening a complaint notification.
+  const [notificationComplaintId, setNotificationComplaintId] = useState<number | null>(null);
   const {
     isLoggedIn,
     isAuthLoading,
@@ -419,6 +421,24 @@ function AppContent() {
   >("checking");
   const initialResidentAccessCheck = useRef(false);
 
+  const openNotificationDestination = (screen: Screen, relatedId?: number) => {
+    // Never open a page unavailable to this signed-in role.
+    if (!ROLE_SCREENS[userRole].includes(screen)) return;
+    setNotificationComplaintId(
+      screen === "complaints" && Number.isSafeInteger(relatedId) && (relatedId ?? 0) > 0
+        ? relatedId!
+        : null,
+    );
+    setCurrentScreen(screen);
+  };
+
+  useEffect(() => {
+    // Clear the old deep-link when the user leaves Complaints normally.
+    if (currentScreen !== "complaints") {
+      setNotificationComplaintId(null);
+    }
+  }, [currentScreen]);
+
   const openDirectory = (role = "all", status = "all", createCaptain = false) => {
     setDirectoryNavigation((previous) => ({ role, status, createCaptain, visit: previous.visit + 1 }));
     setCurrentScreen("user-management");
@@ -433,9 +453,9 @@ function AppContent() {
     complaints: "All Complaints",
     payments: "Payment Verification",
     schedule: "Collection Schedules",
-    notifications: "Municipal Alerts",
+    notifications: "Notifications",
     reports: "Reports",
-    profile: "Recovery & Security",
+    profile: "Profile",
   };
 
   useEffect(() => {
@@ -687,7 +707,10 @@ function AppContent() {
               {currentScreen === "schedule" && <Schedule />}
 
               {currentScreen === "complaints" && (
-                <ComplaintsPanel role={userRole as any} />
+                <ComplaintsPanel
+                  role={userRole as any}
+                  initialComplaintId={notificationComplaintId}
+                />
               )}
 
              {currentScreen === "payments" && (
@@ -702,7 +725,10 @@ function AppContent() {
                 )}
 
               {currentScreen === "notifications" && (
-                <NotificationsPanel role={userRole as any} />
+                <NotificationsPanel
+                  role={userRole as any}
+                  onNavigate={openNotificationDestination}
+                />
               )}
 
               {currentScreen === "profile" && <UserProfilePanel />}

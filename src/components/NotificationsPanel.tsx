@@ -20,6 +20,16 @@ import {
 } from "lucide-react";
 import ConfirmDialog from "./ConfirmDialog";
 
+type NotificationPage =
+  | "complaints"
+  | "payments"
+  | "endorsements"
+  | "user-management"
+  | "collector-tasks"
+  | "bin-inspections"
+  | "garbage-bins"
+  | "schedule";
+
 interface NotificationsPanelProps {
   role:
     | "household"
@@ -27,6 +37,7 @@ interface NotificationsPanelProps {
     | "leader"
     | "admin"
     | "super_admin";
+  onNavigate?: (page: NotificationPage, relatedId?: number) => void;
 }
 
 type NotificationPriority =
@@ -58,6 +69,55 @@ type NotificationItem = {
 };
 
 const NOTIFICATIONS_PER_PAGE = 10;
+
+// Use actual backend relationship fields where provided. An ordinary broadcast
+// without a linked record is intentionally not given a fictitious destination.
+function linkedNotificationPage(
+  item: NotificationItem,
+  role: NotificationsPanelProps["role"],
+): NotificationPage | null {
+  const entity = String(item.related_entity_type || "")
+    .trim().toLowerCase().replaceAll("-", "_");
+  const type = String(item.notification_type || "")
+    .trim().toLowerCase().replaceAll("-", "_");
+  const normalizedRole = normalizeRole(role);
+  const isManager = normalizedRole === "admin" || normalizedRole === "super_admin";
+  const isLeader = normalizedRole === "purok_leader";
+  const isResident = normalizedRole === "resident";
+  const isCollector = normalizedRole === "collector";
+
+  if (entity === "complaint" || ["new_complaint", "complaint_update", "complaint_message"].includes(type)) {
+    return "complaints";
+  }
+  if (["payment", "payment_record", "remittance"].includes(entity) ||
+      ["payment_submission", "payment_update", "payment_verification", "payment_reminder"].includes(type)) {
+    return isCollector ? null : "payments";
+  }
+  if (["endorsement", "endorsement_request"].includes(entity) || type.startsWith("endorsement_")) {
+    return (isResident || isLeader || normalizedRole === "admin")
+      ? "endorsements"
+      : null;
+  }
+  if (["user_account", "user_registration"].includes(entity) || type === "account_approval_request") {
+    return isManager ? "user-management" : null;
+  }
+  if (["collection_schedule", "schedule"].includes(entity) ||
+      ["schedule_update", "collection_schedule_update"].includes(type)) {
+    return "schedule";
+  }
+  if (["bin_inspection", "inspection"].includes(entity)) {
+    return (isLeader || normalizedRole === "admin") ? "bin-inspections" : null;
+  }
+  if (["garbage_bin", "bin"].includes(entity)) {
+    return (isManager || isLeader) ? "garbage-bins" : null;
+  }
+  if (["collection_request", "collection_run"].includes(entity)) {
+    return isCollector ? "collector-tasks" :
+      isLeader ? "bin-inspections" :
+      isManager ? "garbage-bins" : null;
+  }
+  return null;
+}
 
 function getToken(): string {
   return (
@@ -153,6 +213,7 @@ function priorityStyle(
 
 export default function NotificationsPanel({
   role,
+  onNavigate,
 }: NotificationsPanelProps) {
   const normalizedRole = normalizeRole(role);
 
@@ -487,6 +548,17 @@ export default function NotificationsPanel({
           : "Unable to mark notification as read.",
       );
     }
+  };
+
+  const openLinkedNotification = (item: NotificationItem, page: NotificationPage) => {
+    if (!Boolean(Number(item.is_read))) {
+      void markRead(item.id);
+    }
+    const recordId = Number(item.related_entity_id);
+    onNavigate?.(
+      page,
+      Number.isSafeInteger(recordId) && recordId > 0 ? recordId : undefined,
+    );
   };
 
   const markAllRead = async () => {
@@ -841,11 +913,27 @@ export default function NotificationsPanel({
               Boolean(
                 Number(item.is_read),
               );
+            const targetPage = onNavigate ? linkedNotificationPage(item, role) : null;
+            const openTarget = () => {
+              if (targetPage) openLinkedNotification(item, targetPage);
+            };
 
             return (
               <article
                 key={item.id}
-                className={`sg-notification-card relative border-l-4 p-4 transition-colors ${style.container}`}
+                role={targetPage ? "link" : undefined}
+                tabIndex={targetPage ? 0 : undefined}
+                aria-label={targetPage ? `Open related ${targetPage.replaceAll("-", " ")} page: ${item.title}` : undefined}
+                title={targetPage ? `Open related ${targetPage.replaceAll("-", " ")} page` : undefined}
+                onClick={targetPage ? openTarget : undefined}
+                onKeyDown={targetPage ? (event) => {
+                  if (event.target !== event.currentTarget) return;
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    openTarget();
+                  }
+                } : undefined}
+                className={`sg-notification-card relative border-l-4 p-4 transition-colors ${style.container} ${targetPage ? "cursor-pointer hover:brightness-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-3px] focus-visible:outline-emerald-500" : ""}`}
               >
                 {!isRead && (
                   <span
@@ -900,17 +988,21 @@ export default function NotificationsPanel({
                           .join(", ")}
                       </p>
                     )}
+                    {targetPage && (
+                      <p className="mt-2 text-[11px] font-bold text-emerald-600">
+                        Open related {targetPage.replaceAll("-", " ")} →
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex shrink-0 items-center gap-1.5 md:justify-end">
                     {!isRead && (
                       <button
                         type="button"
-                        onClick={() =>
-                          void markRead(
-                            item.id,
-                          )
-                        }
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void markRead(item.id);
+                        }}
                         className="flex h-9 items-center gap-1 rounded-lg bg-white px-2.5 text-[10px] font-black uppercase text-emerald-700 shadow-sm transition hover:bg-emerald-50"
                         title="Mark as read"
                       >
@@ -922,9 +1014,10 @@ export default function NotificationsPanel({
                     {(
                       <button
                         type="button"
-                        onClick={() =>
-                          setNotificationToDelete(item)
-                        }
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setNotificationToDelete(item);
+                        }}
                         className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-rose-600 shadow-sm transition hover:bg-rose-50"
                         aria-label={`Delete notification ${item.title}`}
                         title="Delete notification"

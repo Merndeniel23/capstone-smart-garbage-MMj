@@ -269,10 +269,13 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
   const [showStaffPassword, setShowStaffPassword] = useState(false);
   const [showPurokModal, setShowPurokModal] = useState(false);
   const [newPurokName, setNewPurokName] = useState("");
-  const [newPurokDescription, setNewPurokDescription] = useState("");
   const [purokSaving, setPurokSaving] = useState(false);
   const [purokError, setPurokError] = useState("");
   const [purokSuccess, setPurokSuccess] = useState("");
+  const [editingPurokId, setEditingPurokId] = useState<number | null>(null);
+  const [editingPurokName, setEditingPurokName] = useState("");
+  const [editPurokError, setEditPurokError] = useState("");
+  const [editPurokSuccess, setEditPurokSuccess] = useState("");
   const [verification, setVerification] = useState<{ email: string; resendAfter: number } | null>(null);
   const assignedBarangay = isBarangayCaptain ? barangays[0] : undefined;
   const staffPuroks = puroks.filter((purok) => Number(purok.barangay_id) === Number(assignedBarangay?.id));
@@ -336,17 +339,75 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
         method: "POST",
         body: JSON.stringify({
           name,
-          description: newPurokDescription.trim(),
         }),
       });
       // Refresh from DB, rather than inventing a temporary local purok ID.
       const locations = await apiRequest("/admin/locations");
       setPuroks(Array.isArray(locations.puroks) ? locations.puroks : []);
       setNewPurokName("");
-      setNewPurokDescription("");
       setPurokSuccess(response.message || "Purok added successfully.");
     } catch (err) {
       setPurokError(err instanceof Error ? err.message : "Unable to add purok.");
+    } finally {
+      setPurokSaving(false);
+    }
+  };
+
+  const startEditingPurok = (purok: Purok) => {
+    if (purokSaving) return;
+    setEditingPurokId(purok.id);
+    setEditingPurokName(purok.name);
+    setEditPurokError("");
+    setEditPurokSuccess("");
+  };
+
+  const stopEditingPurok = () => {
+    if (purokSaving) return;
+    setEditingPurokId(null);
+    setEditingPurokName("");
+    setEditPurokError("");
+  };
+
+  const savePurokName = async (event: React.FormEvent<HTMLFormElement>, purok: Purok) => {
+    event.preventDefault();
+    if (purokSaving || !assignedBarangay || editingPurokId !== purok.id) return;
+
+    const name = editingPurokName.trim().replace(/\s+/g, " ");
+    if (name.length < 2 || name.length > 100 || !/^[\p{L}\p{N} .'-]+$/u.test(name)) {
+      setEditPurokError("Enter a valid purok name (2–100 characters, letters and numbers).");
+      return;
+    }
+    if (staffPuroks.some((item) =>
+      item.id !== purok.id && item.name.trim().toLowerCase() === name.toLowerCase()
+    )) {
+      setEditPurokError(`${name} already exists in ${assignedBarangay.name}.`);
+      return;
+    }
+    if (name === purok.name) {
+      stopEditingPurok();
+      return;
+    }
+
+    setPurokSaving(true);
+    setEditPurokError("");
+    setEditPurokSuccess("");
+    try {
+      const response = await apiRequest(`/admin/puroks/${purok.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      });
+      // Keep the same ID: users, leaders, payments and inspections stay linked.
+      setPuroks((current) => current.map((item) =>
+        item.id === purok.id ? { ...item, name } : item
+      ));
+      setUsers((current) => current.map((user) =>
+        Number(user.purok_id) === purok.id ? { ...user, purok_name: name } : user
+      ));
+      setEditingPurokId(null);
+      setEditingPurokName("");
+      setEditPurokSuccess(response.message || "Purok name updated successfully.");
+    } catch (err) {
+      setEditPurokError(err instanceof Error ? err.message : "Unable to rename this purok.");
     } finally {
       setPurokSaving(false);
     }
@@ -1024,9 +1085,12 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                 type="button"
                 onClick={() => {
                   setNewPurokName("");
-                  setNewPurokDescription("");
                   setPurokError("");
                   setPurokSuccess("");
+                  setEditPurokError("");
+                  setEditPurokSuccess("");
+                  setEditingPurokId(null);
+                  setEditingPurokName("");
                   setShowPurokModal(true);
                 }}
                 disabled={loading || !assignedBarangay}
@@ -1547,7 +1611,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
               <div>
                 <p className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-700 dark:text-emerald-400">Barangay Captain</p>
                 <h2 id="manage-puroks-title" className="mt-1 text-xl font-black text-slate-900 dark:text-white">Manage Puroks</h2>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-300">Add a collection area within <strong>{assignedBarangay?.name || "your barangay"}</strong>.</p>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-300">Add or rename puroks within <strong>{assignedBarangay?.name || "your barangay"}</strong>.</p>
               </div>
               <button type="button" aria-label="Close Manage Puroks" onClick={() => setShowPurokModal(false)} disabled={purokSaving} className="rounded-xl p-2 text-slate-500 hover:bg-slate-100 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800"><X className="h-5 w-5" /></button>
             </div>
@@ -1559,22 +1623,11 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                   required
                   autoFocus
                   maxLength={100}
-                  placeholder="Example: Purok 10"
+                  placeholder="Example: Purok Sampaguita or Purok 10"
                   value={newPurokName}
                   onChange={(event) => setNewPurokName(event.target.value)}
                   disabled={purokSaving}
                   className="mt-2 block w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
-                />
-              </label>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-200">Description <span className="font-normal text-slate-400">(optional)</span>
-                <textarea
-                  value={newPurokDescription}
-                  onChange={(event) => setNewPurokDescription(event.target.value)}
-                  maxLength={255}
-                  rows={2}
-                  placeholder="Collection area or location notes"
-                  disabled={purokSaving}
-                  className="mt-2 block w-full resize-none rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
                 />
               </label>
               {purokError && <p role="alert" className="rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-200">{purokError}</p>}
@@ -1587,14 +1640,50 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
 
             <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700">
               <h3 className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-200">Existing Puroks ({staffPuroks.length})</h3>
-              <div className="mt-3 max-h-44 space-y-2 overflow-y-auto pr-1">
+              {editPurokSuccess && (
+                <p role="status" className="mt-3 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">{editPurokSuccess}</p>
+              )}
+              <div className="mt-3 max-h-60 space-y-2 overflow-y-auto pr-1">
                 {staffPuroks.length ? staffPuroks.map((purok) => (
-                  <div key={purok.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                    <span>{purok.name}</span><span className="text-[10px] font-semibold text-slate-400">ID {purok.id}</span>
+                  <div key={purok.id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                    {editingPurokId === purok.id ? (
+                      <form onSubmit={(event) => void savePurokName(event, purok)} className="space-y-2">
+                        <label htmlFor={`edit-purok-${purok.id}`} className="block text-xs font-semibold">Edit Purok Name (ID {purok.id})</label>
+                        <input
+                          id={`edit-purok-${purok.id}`}
+                          type="text"
+                          required
+                          autoFocus
+                          maxLength={100}
+                          value={editingPurokName}
+                          onChange={(event) => setEditingPurokName(event.target.value)}
+                          disabled={purokSaving}
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-white"
+                        />
+                        {editPurokError && <p role="alert" className="text-xs text-rose-700 dark:text-rose-300">{editPurokError}</p>}
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          <button type="button" onClick={stopEditingPurok} disabled={purokSaving} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-700">Cancel</button>
+                          <button type="submit" disabled={purokSaving || !editingPurokName.trim() || editingPurokName.trim().replace(/\s+/g, " ") === purok.name} className="flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">
+                            {purokSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                            {purokSaving ? "Saving..." : "Save Name"}
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="min-w-0 break-words">{purok.name}</span>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">ID {purok.id}</span>
+                          <button type="button" aria-label={`Edit ${purok.name}`} title={`Rename ${purok.name}`} onClick={() => startEditingPurok(purok)} disabled={purokSaving} className="flex items-center gap-1 rounded-lg border border-emerald-600 px-2.5 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-600 dark:text-emerald-300 dark:hover:bg-emerald-950">
+                            <Edit2 className="h-3.5 w-3.5" /> Edit
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )) : <p className="text-xs text-slate-500">No puroks created yet.</p>}
+                )) : <p className="text-xs text-slate-500 dark:text-slate-400">No puroks created yet.</p>}
               </div>
-              <p className="mt-3 text-[11px] text-slate-500 dark:text-slate-400">New puroks appear as choices when creating a Purok Leader or assigning residents. Existing puroks cannot be deleted here to protect linked records.</p>
+              <p className="mt-3 text-[11px] text-slate-500 dark:text-slate-400">New or renamed puroks appear when assigning Purok Leaders and residents. Purok IDs never change, and existing puroks cannot be deleted here to protect linked records.</p>
             </div>
           </div>
         </div>

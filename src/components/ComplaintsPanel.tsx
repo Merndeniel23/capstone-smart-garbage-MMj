@@ -106,6 +106,7 @@ interface CurrentUser {
 
 interface ComplaintsPanelProps {
   role: AppRole;
+  initialComplaintId?: number | null;
 }
 
 const API_BASE = "/api";
@@ -202,6 +203,7 @@ function statusClass(
 
 export default function ComplaintsPanel({
   role,
+  initialComplaintId = null,
 }: ComplaintsPanelProps) {
   const isMunicipal = role === "super_admin";
   const canManage = role === "admin" || isMunicipal;
@@ -272,6 +274,7 @@ export default function ComplaintsPanel({
   const [chatInput, setChatInput] =
     useState("");
   const latestLoad = useRef(0);
+  const handledNotificationComplaintId = useRef<number | null>(null);
 
   const loadData = async (silent = false) => {
     const loadId = ++latestLoad.current;
@@ -361,6 +364,31 @@ export default function ComplaintsPanel({
       window.removeEventListener("focus", refreshComplaints);
     };
   }, [role]);
+
+  // Deep-link from Notifications to the actual complaint record, respecting
+  // all existing API permission filters. Do not reopen it during polling.
+  useEffect(() => {
+    if (!initialComplaintId || loading || loadError || handledNotificationComplaintId.current === initialComplaintId) return;
+    handledNotificationComplaintId.current = initialComplaintId;
+    const linked = complaints.find((item) => Number(item.id) === initialComplaintId);
+    if (!linked) {
+      setStatusNotice("The linked complaint is no longer available or your account cannot access it.");
+      return;
+    }
+    setActiveTab("all");
+    setBarangayFilter("");
+    setDateFrom("");
+    setDateTo("");
+    setSearch(String(initialComplaintId));
+    setComplaintPage(1);
+    setSelectedId(initialComplaintId);
+    const scrollId = window.setTimeout(() => {
+      if (window.matchMedia("(max-width: 1023px)").matches) {
+        detailsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 180);
+    return () => window.clearTimeout(scrollId);
+  }, [initialComplaintId, loading, loadError, complaints]);
 
   const selectedComplaint =
     complaints.find(
