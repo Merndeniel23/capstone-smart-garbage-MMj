@@ -8,7 +8,6 @@ import {
   Bell,
   Check,
   ChevronDown,
-  ChevronUp,
   Loader2,
   Megaphone,
   Plus,
@@ -190,9 +189,6 @@ export default function NotificationsPanel({
 
   const [visibleCount, setVisibleCount] =
     useState(NOTIFICATIONS_PER_PAGE);
-
-  const [expandedNotificationId, setExpandedNotificationId] =
-    useState<number | null>(null);
 
   const [notificationToDelete, setNotificationToDelete] =
     useState<NotificationItem | null>(null);
@@ -557,11 +553,6 @@ export default function NotificationsPanel({
             item.id !== notificationId,
         ),
       );
-      setExpandedNotificationId((current) =>
-        current === notificationId
-          ? null
-          : current,
-      );
       setNotificationToDelete(null);
     } catch (requestError) {
       setError(
@@ -851,9 +842,6 @@ export default function NotificationsPanel({
                 Number(item.is_read),
               );
 
-            const isExpanded =
-              expandedNotificationId === item.id;
-
             return (
               <article
                 key={item.id}
@@ -887,14 +875,7 @@ export default function NotificationsPanel({
                       {item.title}
                     </h2>
 
-                    <p
-                      id={`notification-details-${item.id}`}
-                      className={`sg-notification-message mt-1 text-sm leading-relaxed text-[#475569] ${
-                        isExpanded
-                          ? ""
-                          : "line-clamp-2"
-                      }`}
-                    >
+                    <p className="sg-notification-message mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-[#475569]">
                       {item.message}
                     </p>
 
@@ -922,33 +903,6 @@ export default function NotificationsPanel({
                   </div>
 
                   <div className="flex shrink-0 items-center gap-1.5 md:justify-end">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setExpandedNotificationId((current) =>
-                          current === item.id
-                            ? null
-                            : item.id,
-                        )
-                      }
-                      aria-expanded={isExpanded}
-                      aria-controls={`notification-details-${item.id}`}
-                      aria-label={`${
-                        isExpanded ? "Hide" : "Show"
-                      } notification details`}
-                      title={`${
-                        isExpanded ? "Hide" : "Show"
-                      } details`}
-                      className="flex h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-[10px] font-black uppercase text-slate-600 transition hover:bg-slate-50"
-                    >
-                      {isExpanded ? (
-                        <ChevronUp className="h-4 w-4" />
-                      ) : (
-                        <ChevronDown className="h-4 w-4" />
-                      )}
-                      Details
-                    </button>
-
                     {!isRead && (
                       <button
                         type="button"
