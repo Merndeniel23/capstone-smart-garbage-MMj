@@ -1,6 +1,22 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 @import "tailwindcss";
 
+/* The dashboard toggle, rather than the OS preference, owns dark mode.
+   This scope also lets explicit dark utilities override the legacy defaults. */
+@custom-variant dark (&:is(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *));
+
+/* Existing intermediate shades retain their intended position in the palette. */
+@theme {
+  --color-slate-150: color-mix(in oklab, var(--color-slate-100), var(--color-slate-200));
+  --color-slate-350: color-mix(in oklab, var(--color-slate-300), var(--color-slate-400));
+  --color-slate-450: color-mix(in oklab, var(--color-slate-400), var(--color-slate-500));
+  --color-slate-550: color-mix(in oklab, var(--color-slate-500), var(--color-slate-600));
+  --color-slate-850: color-mix(in oklab, var(--color-slate-800), var(--color-slate-900));
+  --color-emerald-150: color-mix(in oklab, var(--color-emerald-100), var(--color-emerald-200));
+  --color-emerald-750: color-mix(in oklab, var(--color-emerald-700), var(--color-emerald-800));
+  --color-stone-850: color-mix(in oklab, var(--color-stone-800), var(--color-stone-900));
+}
+
 :root {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
@@ -11,6 +27,12 @@
     background-color: var(--color-slate-900, #0f172a);
     font-family: var(--font-sans);
   }
+
+  /* A neutral fallback for borders without a color utility. Explicit border
+     colors and focus/error states remain in the higher-priority utility layer. */
+  :where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *) {
+    border-color: #334155;
+  }
 }
 
 /* One theme contract for every role and screen. Components use the slate
@@ -19,122 +41,102 @@
 html.sg-dark,
 html.sg-dark body,
 html.sg-dark #root {
-  background: #0f172a !important;
-  color: #e2e8f0 !important;
+  background: #0f172a;
+  color: #e2e8f0;
 }
 
-html.sg-dark .sg-app-shell [class~="bg-white"],
-html.sg-dark .sg-app-shell [class~="bg-slate-50"],
-html.sg-dark .sg-app-shell [class~="bg-slate-100"],
-html.sg-dark .sg-app-shell [class~="bg-slate-150"],
-html.sg-dark .sg-app-shell [class~="bg-slate-200"],
-html.sg-dark .sg-app-shell [class*="bg-[#F8FAFC]"],
-html.sg-dark .sg-app-shell [class*="bg-[#F1F5F9]"] {
-  background-color: #111827 !important;
+/* Defaults share Tailwind's utility layer. Neutral classes are mapped exactly;
+   state utilities and explicitly scoped dark utilities keep their precedence. */
+@layer utilities {
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *):is(
+  .bg-white, .bg-slate-50, .bg-slate-100, .bg-slate-150, .bg-slate-200,
+  [class~="bg-[#F8FAFC]"], [class~="bg-[#F1F5F9]"]
+) {
+  background-color: #111827;
 }
 
-html.sg-dark .sg-app-shell [class~="text-slate-950"],
-html.sg-dark .sg-app-shell [class~="text-slate-900"],
-html.sg-dark .sg-app-shell [class~="text-slate-850"],
-html.sg-dark .sg-app-shell [class~="text-slate-800"],
-html.sg-dark .sg-app-shell [class~="text-slate-700"] {
-  color: #f1f5f9 !important;
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-[#F1F5F9]/30"] {
+  background-color: rgb(17 24 39 / .3);
+}
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *).bg-slate-50\/50 {
+  background-color: rgb(17 24 39 / .5);
+}
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *).bg-slate-50\/60 {
+  background-color: rgb(17 24 39 / .6);
+}
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *).bg-slate-50\/70 {
+  background-color: rgb(17 24 39 / .7);
+}
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *).bg-white\/95 {
+  background-color: rgb(17 24 39 / .95);
 }
 
-html.sg-dark .sg-app-shell [class~="text-slate-600"],
-html.sg-dark .sg-app-shell [class~="text-slate-550"],
-html.sg-dark .sg-app-shell [class~="text-slate-500"],
-html.sg-dark .sg-app-shell [class~="text-slate-450"],
-html.sg-dark .sg-app-shell [class~="text-slate-400"],
-html.sg-dark .sg-app-shell [class~="text-slate-350"],
-html.sg-dark .sg-app-shell [class~="text-gray-500"] {
-  color: #cbd5e1 !important;
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *):is(
+  .text-slate-950, .text-slate-900, .text-slate-850, .text-slate-800, .text-slate-700
+) {
+  color: #f1f5f9;
 }
 
-/* Purpose-built dark surfaces for alert/reminder cards that intentionally
-   use amber/emerald light-mode backgrounds. Without these overrides, the
-   global dark text mapping can place light text on a light tinted card. */
-html.sg-dark .sg-app-shell .sg-payment-reminder-card {
-  background-color: #2a1d0b !important;
-  border-color: #92400e !important;
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *):is(
+  .text-slate-600, .text-slate-550, .text-slate-500, .text-slate-450,
+  .text-slate-400, .text-slate-350, .text-gray-500
+) {
+  color: #cbd5e1;
 }
 
-html.sg-dark .sg-app-shell .sg-weekly-fee-card {
-  background-color: #062d24 !important;
-  border-color: #047857 !important;
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *):is(
+  .hover\:bg-white, .hover\:bg-slate-50, .hover\:bg-slate-100, .hover\:bg-slate-200
+):hover,
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *):is(
+  .focus\:bg-white, .focus\:bg-slate-50, .focus\:bg-slate-100
+):focus,
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *).disabled\:bg-slate-100:disabled {
+  background-color: #1e293b;
 }
 
-html.sg-dark .sg-app-shell .sg-admin-attention-card {
-  background-color: #2a1d0b !important;
-  border-color: #92400e !important;
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *).hover\:bg-slate-50\/50:hover {
+  background-color: rgb(30 41 59 / .5);
 }
 
-html.sg-dark .sg-app-shell .sg-payment-reminder-card [class~="text-amber-700"],
-html.sg-dark .sg-app-shell .sg-admin-attention-card [class~="text-amber-700"] {
-  color: #fbbf24 !important;
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *):is(
+  .hover\:text-slate-900, .hover\:text-slate-800, .hover\:text-slate-700, .hover\:text-slate-600
+):hover {
+  color: #f1f5f9;
 }
 
-html.sg-dark .sg-app-shell .sg-weekly-fee-card [class~="text-emerald-700"] {
-  color: #6ee7b7 !important;
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *):is(
+  .hover\:text-slate-400, .hover\:text-slate-300
+):hover,
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *):is(
+  .disabled\:text-slate-500, .disabled\:text-slate-400
+):disabled {
+  color: #94a3b8;
 }
 
-html.sg-dark .sg-app-shell .sg-admin-attention-card [class~="text-amber-800"] {
-  color: #fcd34d !important;
-}
-
-html.sg-dark .sg-app-shell [class*="hover:bg-white"]:hover,
-html.sg-dark .sg-app-shell [class*="hover:bg-slate-50"]:hover,
-html.sg-dark .sg-app-shell [class*="hover:bg-slate-100"]:hover,
-html.sg-dark .sg-app-shell [class*="hover:bg-slate-200"]:hover,
-html.sg-dark .sg-app-shell [class*="focus:bg-white"]:focus,
-html.sg-dark .sg-app-shell [class*="focus:bg-slate-50"]:focus,
-html.sg-dark .sg-app-shell [class*="focus:bg-slate-100"]:focus,
-html.sg-dark .sg-app-shell [class*="disabled:bg-slate-100"]:disabled {
-  background-color: #1e293b !important;
-}
-
-html.sg-dark .sg-app-shell [class*="hover:text-slate-800"]:hover,
-html.sg-dark .sg-app-shell [class*="hover:text-slate-700"]:hover,
-html.sg-dark .sg-app-shell [class*="hover:text-slate-600"]:hover {
-  color: #f1f5f9 !important;
-}
-
-html.sg-dark .sg-app-shell [class*="hover:text-slate-400"]:hover,
-html.sg-dark .sg-app-shell [class*="hover:text-slate-300"]:hover,
-html.sg-dark .sg-app-shell [class*="disabled:text-slate-500"]:disabled,
-html.sg-dark .sg-app-shell [class*="disabled:text-slate-400"]:disabled {
-  color: #94a3b8 !important;
-}
-
-html.sg-dark .sg-app-shell [class~="border-slate-100"],
-html.sg-dark .sg-app-shell [class~="border-slate-150"],
-html.sg-dark .sg-app-shell [class~="border-slate-200"],
-html.sg-dark .sg-app-shell [class~="border-slate-300"],
-html.sg-dark .sg-app-shell [class~="border"],
-html.sg-dark .sg-app-shell [class*="hover:border-slate-200"]:hover {
-  border-color: #334155 !important;
-}
-
-html.sg-dark .sg-app-shell input,
-html.sg-dark .sg-app-shell textarea,
-html.sg-dark .sg-app-shell select {
-  background-color: #0f172a !important;
-  color: #f8fafc !important;
-  border-color: #475569 !important;
-}
-
-html.sg-dark .sg-app-shell input::placeholder,
-html.sg-dark .sg-app-shell textarea::placeholder {
-  color: #94a3b8 !important;
-}
-
-html.sg-dark .sg-app-shell table,
-html.sg-dark .sg-app-shell thead,
-html.sg-dark .sg-app-shell tbody,
-html.sg-dark .sg-app-shell tr,
-html.sg-dark .sg-app-shell td,
-html.sg-dark .sg-app-shell th {
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *):is(
+  .border-slate-100, .border-slate-150, .border-slate-200, .border-slate-300
+),
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *).hover\:border-slate-200:hover {
   border-color: #334155;
+}
+
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *).border-slate-200\/80 {
+  border-color: rgb(51 65 85 / .8);
+}
+
+:where(html.sg-dark .sg-app-shell) :is(input, textarea, select) {
+  background-color: #0f172a;
+  color: #f8fafc;
+  border-color: #475569;
+}
+
+:where(html.sg-dark .sg-app-shell) :is(input, textarea)::placeholder {
+  color: #94a3b8;
+}
+
+:where(html.sg-dark .sg-app-shell) :is(table, thead, tbody, tr, td, th) {
+  border-color: #334155;
+}
 }
 
 html.sg-dark .sg-app-shell .leaflet-popup-content-wrapper,
@@ -203,13 +205,6 @@ dialog :is(button, input, select, textarea):focus-visible {
 .municipal-admin aside nav::-webkit-scrollbar-thumb { background: #53846b; border-radius: 8px; }
 .municipal-skip-link { position: fixed; top: -5rem; left: 1rem; z-index: 100; padding: .75rem 1rem; border-radius: .75rem; background: #14532d; color: white; }
 .municipal-skip-link:focus { top: 1rem; }
-
-html.sg-dark .municipal-admin :is(.text-emerald-600, .text-emerald-700, .text-emerald-800, .text-emerald-900) {
-  color: #6ee7b7;
-}
-html.sg-dark .municipal-admin :is(.bg-emerald-50, .bg-emerald-100) {
-  background-color: #12372f;
-}
 
 @media (prefers-reduced-motion: reduce) {
   .municipal-admin *, .municipal-admin *::before, .municipal-admin *::after {
@@ -556,100 +551,19 @@ html.sg-dark .sg-app-shell .sg-form-section-title {
   }
 }
 
-/* Manual app dark mode: Collector-dashboard style surface for all shared cards. */
-html.sg-dark .sg-app-shell :is(.sg-card, .sg-card-lg, .sg-card-muted, .sg-stat-card) {
-  background: #111827 !important;
-  border-color: #334155 !important;
-  color: #e2e8f0 !important;
+/* Shared card defaults; colored actions and child utilities retain their colors. */
+@layer utilities {
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *):is(.sg-card, .sg-card-lg, .sg-card-muted, .sg-stat-card) {
+  background-color: #111827;
+  border-color: #334155;
+  color: #e2e8f0;
   box-shadow: none;
 }
-
-/* Compatibility layer for older dashboard cards that still use light status
-   backgrounds directly on a DIV/SECTION/ARTICLE. Badges/buttons are untouched. */
-html.sg-dark .sg-app-shell
-:is(div, section, article)[class*="rounded"][class*="border"]
-:is(
-  [class*="bg-emerald-50"],
-  [class*="bg-emerald-100"],
-  [class*="bg-amber-50"],
-  [class*="bg-amber-100"],
-  [class*="bg-blue-50"],
-  [class*="bg-blue-100"],
-  [class*="bg-indigo-50"],
-  [class*="bg-indigo-100"],
-  [class*="bg-cyan-50"],
-  [class*="bg-cyan-100"],
-  [class*="bg-rose-50"],
-  [class*="bg-rose-100"],
-  [class*="bg-slate-50"],
-  [class*="bg-slate-100"]
-) {
-  background-color: #111827 !important;
-  border-color: #334155 !important;
+/* Include the outer shell, not only its descendants. */
+:where(html.sg-dark) .sg-app-shell {
+  background-color: #0f172a;
+  color: #e2e8f0;
 }
-
-/* Keep headings/body copy readable when an older colored card used dark status
-   text that was designed only for a pale background. */
-html.sg-dark .sg-app-shell
-:is(div, section, article)[class*="rounded"][class*="border"]
-:is(
-  [class*="bg-emerald-50"],
-  [class*="bg-emerald-100"],
-  [class*="bg-amber-50"],
-  [class*="bg-amber-100"],
-  [class*="bg-blue-50"],
-  [class*="bg-blue-100"],
-  [class*="bg-indigo-50"],
-  [class*="bg-indigo-100"],
-  [class*="bg-cyan-50"],
-  [class*="bg-cyan-100"],
-  [class*="bg-rose-50"],
-  [class*="bg-rose-100"]
-)
-:is(
-  [class*="text-emerald-800"],
-  [class*="text-emerald-900"],
-  [class*="text-emerald-950"],
-  [class*="text-amber-800"],
-  [class*="text-amber-900"],
-  [class*="text-amber-950"],
-  [class*="text-blue-800"],
-  [class*="text-blue-900"],
-  [class*="text-blue-950"],
-  [class*="text-indigo-800"],
-  [class*="text-indigo-900"],
-  [class*="text-cyan-800"],
-  [class*="text-cyan-900"],
-  [class*="text-rose-800"],
-  [class*="text-rose-900"]
-) {
-  color: #e2e8f0 !important;
-}
-
-/* The same readability rule for descendants inside those older cards. */
-html.sg-dark .sg-app-shell
-:is(div, section, article)[class*="rounded"][class*="border"]
-:is(
-  [class*="bg-emerald-50"],
-  [class*="bg-emerald-100"],
-  [class*="bg-amber-50"],
-  [class*="bg-amber-100"],
-  [class*="bg-blue-50"],
-  [class*="bg-blue-100"],
-  [class*="bg-indigo-50"],
-  [class*="bg-indigo-100"],
-  [class*="bg-cyan-50"],
-  [class*="bg-cyan-100"],
-  [class*="bg-rose-50"],
-  [class*="bg-rose-100"]
-)
-:is(
-  [class*="text-slate-950"],
-  [class*="text-slate-900"],
-  [class*="text-slate-800"],
-  [class*="text-slate-700"]
-) {
-  color: #f8fafc !important;
 }
 
 
@@ -679,174 +593,243 @@ html.sg-dark .sg-app-shell
   animation-duration: 2.5s !important;
 }
 
-/* =========================================================
-   GLOBAL DARK-MODE HARDENING
-   The application uses html.sg-dark as the single source of truth.
-   These rules intentionally override component-level Tailwind dark:
-   behavior so light mode is not affected by the OS/browser theme.
-   ========================================================= */
-
-/* Prevent OS-level Tailwind dark variants from visually overriding
-   the app's own light theme when html.sg-dark is NOT present. */
-html:not(.sg-dark) .sg-app-shell [class*="dark:bg-"],
-html:not(.sg-dark) .sg-app-shell [class*="dark:text-"],
-html:not(.sg-dark) .sg-app-shell [class*="dark:border-"] {
-  color-scheme: light;
+/* Exact pastel defaults preserve chart/accent colors and translucent navy
+   decorations. Semantic card overrides follow these defaults once. */
+@layer utilities {
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-amber-50"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-amber-100"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-yellow-50"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-yellow-100"] {
+  background-color: #2a2112;
 }
 
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-emerald-50"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-emerald-100"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-green-50"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-green-100"] {
+  background-color: #0f241c;
+}
+
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-rose-50"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-rose-100"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-red-50"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-red-100"] {
+  background-color: #2a1519;
+}
+
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-blue-50"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-blue-100"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-sky-50"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-sky-100"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-indigo-50"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-indigo-100"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-cyan-50"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-cyan-100"] {
+  background-color: #111c2d;
+}
+
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-emerald-50/50"] {
+  background-color: rgb(15 36 28 / .5);
+}
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-emerald-50/60"] {
+  background-color: rgb(15 36 28 / .6);
+}
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-emerald-50/70"] {
+  background-color: rgb(15 36 28 / .7);
+}
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="bg-amber-50/50"] {
+  background-color: rgb(42 33 18 / .5);
+}
+
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="hover:bg-emerald-50"]:hover,
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="hover:bg-emerald-100"]:hover {
+  background-color: #12372f;
+}
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="hover:bg-emerald-50/40"]:hover {
+  background-color: rgb(18 55 47 / .4);
+}
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="hover:bg-amber-50"]:hover,
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="hover:bg-amber-100"]:hover {
+  background-color: #2a2112;
+}
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="hover:bg-rose-50"]:hover,
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="hover:bg-rose-100"]:hover,
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="hover:bg-rose-200"]:hover,
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="hover:bg-red-50"]:hover {
+  background-color: #2a1519;
+}
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="hover:bg-blue-50"]:hover {
+  background-color: #111c2d;
+}
+
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="border-amber-100"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="border-amber-200"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="border-yellow-100"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="border-yellow-200"] {
+  border-color: rgb(245 158 11 / .32);
+}
+
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="border-emerald-100"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="border-emerald-150"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="border-emerald-200"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="border-green-100"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="border-green-200"] {
+  border-color: rgb(16 185 129 / .28);
+}
+
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="border-rose-100"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="border-rose-200"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="border-red-100"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="border-red-200"] {
+  border-color: rgb(244 63 94 / .28);
+}
+
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-amber-700"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-amber-800"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-amber-900"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-amber-950"] {
+  color: #fbbf24;
+}
+
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-emerald-600"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-emerald-700"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-emerald-800"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-emerald-900"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-emerald-950"] {
+  color: #34d399;
+}
+
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-rose-700"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-rose-800"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-rose-900"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-red-700"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-red-800"] {
+  color: #fb7185;
+}
+
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-blue-600"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-blue-700"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-blue-800"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-blue-900"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-blue-950"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-indigo-600"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-indigo-700"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-indigo-800"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-indigo-900"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-cyan-700"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-cyan-800"],
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-cyan-900"] {
+  color: #93c5fd;
+}
+
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-emerald-700/80"] {
+  color: rgb(52 211 153 / .8);
+}
+
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-blue-700/80"] {
+  color: rgb(147 197 253 / .8);
+}
+
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *)[class~="text-amber-700/80"] {
+  color: rgb(251 191 36 / .8);
+}
+
+:where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *):is(
+  .hover\:text-emerald-600, .hover\:text-emerald-700, .hover\:text-emerald-800
+):hover {
+  color: #6ee7b7;
+}
+
+/* Semantic surfaces and labels keep their palette without recoloring
+   every descendant button, badge, or icon. */
 /* Generic semantic warning / pending cards */
-html.sg-dark .sg-payment-pending-card,
-html.sg-dark .sg-warning-card,
-html.sg-dark .sg-pending-card {
-  background-color: #2a2112 !important;
-  border-color: rgba(245, 158, 11, 0.35) !important;
+:where(html.sg-dark .sg-app-shell) .sg-payment-pending-card,
+:where(html.sg-dark .sg-app-shell) .sg-warning-card,
+:where(html.sg-dark .sg-app-shell) .sg-pending-card {
+  background-color: #2a2112;
+  border-color: rgba(245, 158, 11, 0.35);
 }
 
-html.sg-dark .sg-payment-pending-label,
-html.sg-dark .sg-warning-label,
-html.sg-dark .sg-pending-label {
-  color: #fbbf24 !important;
+:where(html.sg-dark .sg-app-shell) .sg-payment-pending-label,
+:where(html.sg-dark .sg-app-shell) .sg-warning-label,
+:where(html.sg-dark .sg-app-shell) .sg-pending-label {
+  color: #fbbf24;
 }
 
-html.sg-dark .sg-payment-pending-amount,
-html.sg-dark .sg-warning-value,
-html.sg-dark .sg-pending-value {
-  color: #fef3c7 !important;
+:where(html.sg-dark .sg-app-shell) .sg-payment-pending-amount,
+:where(html.sg-dark .sg-app-shell) .sg-warning-value,
+:where(html.sg-dark .sg-app-shell) .sg-pending-value {
+  color: #fef3c7;
 }
 
 /* Generic semantic success / confirmed cards */
-html.sg-dark .sg-success-card,
-html.sg-dark .sg-confirmed-card {
-  background-color: #0f241c !important;
-  border-color: rgba(16, 185, 129, 0.28) !important;
-}
-
-html.sg-dark .sg-success-card *,
-html.sg-dark .sg-confirmed-card * {
-  color: #f8fafc;
+:where(html.sg-dark .sg-app-shell) .sg-success-card,
+:where(html.sg-dark .sg-app-shell) .sg-confirmed-card {
+  background-color: #0f241c;
+  border-color: rgba(16, 185, 129, 0.28);
 }
 
 /* Complaint-specific semantic cards */
-html.sg-dark .sg-complaint-assigned-card {
-  background-color: #241b0d !important;
-  border-color: rgba(245, 158, 11, 0.28) !important;
+:where(html.sg-dark .sg-app-shell) .sg-complaint-assigned-card {
+  background-color: #241b0d;
+  border-color: rgba(245, 158, 11, 0.28);
 }
 
-html.sg-dark .sg-complaint-assigned-label {
-  color: #fbbf24 !important;
+:where(html.sg-dark .sg-app-shell) .sg-complaint-assigned-label {
+  color: #fbbf24;
 }
 
-html.sg-dark .sg-complaint-assigned-value {
-  color: #f8fafc !important;
+:where(html.sg-dark .sg-app-shell) .sg-complaint-assigned-value {
+  color: #f8fafc;
 }
 
-html.sg-dark .sg-complaint-resolution-card {
-  background-color: #0f241c !important;
-  border-color: rgba(16, 185, 129, 0.28) !important;
+:where(html.sg-dark .sg-app-shell) .sg-complaint-resolution-card {
+  background-color: #0f241c;
+  border-color: rgba(16, 185, 129, 0.28);
 }
 
-html.sg-dark .sg-complaint-resolution-label {
-  color: #34d399 !important;
+:where(html.sg-dark .sg-app-shell) .sg-complaint-resolution-label {
+  color: #34d399;
 }
 
-html.sg-dark .sg-complaint-resolution-value {
-  color: #f8fafc !important;
+:where(html.sg-dark .sg-app-shell) .sg-complaint-resolution-value {
+  color: #f8fafc;
 }
 
-html.sg-dark .sg-complaint-message-card {
-  background-color: #1e293b !important;
-  border-color: #334155 !important;
+:where(html.sg-dark .sg-app-shell) .sg-complaint-message-card {
+  background-color: #1e293b;
+  border-color: #334155;
 }
 
-html.sg-dark .sg-complaint-message-author {
-  color: #f8fafc !important;
+:where(html.sg-dark .sg-app-shell) .sg-complaint-message-author {
+  color: #f8fafc;
 }
 
-html.sg-dark .sg-complaint-message-date {
-  color: #cbd5e1 !important;
+:where(html.sg-dark .sg-app-shell) .sg-complaint-message-date {
+  color: #cbd5e1;
 }
 
-html.sg-dark .sg-complaint-message-text {
-  color: #e2e8f0 !important;
+:where(html.sg-dark .sg-app-shell) .sg-complaint-message-text {
+  color: #e2e8f0;
 }
 
-/* Make common light pastel cards readable in app dark mode */
-html.sg-dark .sg-app-shell [class~="bg-amber-50"],
-html.sg-dark .sg-app-shell [class~="bg-yellow-50"] {
-  background-color: #2a2112 !important;
+:where(html.sg-dark .sg-app-shell) .sg-payment-reminder-card,
+:where(html.sg-dark .sg-app-shell) .sg-admin-attention-card {
+  background-color: #2a1d0b;
+  border-color: #92400e;
 }
-
-html.sg-dark .sg-app-shell [class~="bg-emerald-50"],
-html.sg-dark .sg-app-shell [class~="bg-green-50"] {
-  background-color: #0f241c !important;
+:where(html.sg-dark .sg-app-shell) .sg-weekly-fee-card {
+  background-color: #062d24;
+  border-color: #047857;
 }
-
-html.sg-dark .sg-app-shell [class~="bg-rose-50"],
-html.sg-dark .sg-app-shell [class~="bg-red-50"] {
-  background-color: #2a1519 !important;
+:where(html.sg-dark .sg-app-shell) .sg-weekly-fee-card .text-emerald-700 { color: #6ee7b7; }
+:where(html.sg-dark .sg-app-shell) .sg-admin-attention-card .text-amber-800 { color: #fcd34d; }
+:where(html.sg-dark .sg-app-shell) .sg-modal-surface,
+:where(html.sg-dark .sg-app-shell) .sg-detail-panel,
+:where(html.sg-dark .sg-app-shell) .sg-panel {
+  background-color: #111827;
+  border-color: #334155;
+  color: #e2e8f0;
 }
-
-html.sg-dark .sg-app-shell [class~="bg-blue-50"],
-html.sg-dark .sg-app-shell [class~="bg-sky-50"],
-html.sg-dark .sg-app-shell [class~="bg-indigo-50"] {
-  background-color: #111c2d !important;
-}
-
-/* Pastel borders */
-html.sg-dark .sg-app-shell [class~="border-amber-100"],
-html.sg-dark .sg-app-shell [class~="border-amber-200"],
-html.sg-dark .sg-app-shell [class~="border-yellow-100"],
-html.sg-dark .sg-app-shell [class~="border-yellow-200"] {
-  border-color: rgba(245, 158, 11, 0.32) !important;
-}
-
-html.sg-dark .sg-app-shell [class~="border-emerald-100"],
-html.sg-dark .sg-app-shell [class~="border-emerald-200"],
-html.sg-dark .sg-app-shell [class~="border-green-100"],
-html.sg-dark .sg-app-shell [class~="border-green-200"] {
-  border-color: rgba(16, 185, 129, 0.28) !important;
-}
-
-html.sg-dark .sg-app-shell [class~="border-rose-100"],
-html.sg-dark .sg-app-shell [class~="border-rose-200"],
-html.sg-dark .sg-app-shell [class~="border-red-100"],
-html.sg-dark .sg-app-shell [class~="border-red-200"] {
-  border-color: rgba(244, 63, 94, 0.28) !important;
-}
-
-/* Ensure strong foreground contrast for common text colors on dark cards */
-html.sg-dark .sg-app-shell [class~="text-amber-700"],
-html.sg-dark .sg-app-shell [class~="text-amber-800"] {
-  color: #fbbf24 !important;
-}
-
-html.sg-dark .sg-app-shell [class~="text-emerald-700"],
-html.sg-dark .sg-app-shell [class~="text-emerald-800"] {
-  color: #34d399 !important;
-}
-
-html.sg-dark .sg-app-shell [class~="text-rose-700"],
-html.sg-dark .sg-app-shell [class~="text-rose-800"] {
-  color: #fb7185 !important;
-}
-
-/* Buttons/cards that explicitly use white text should remain white */
-html.sg-dark .sg-app-shell [class~="text-white"] {
-  color: #ffffff !important;
-}
-
-/* Modal surfaces */
-html.sg-dark .sg-app-shell [role="dialog"],
-html.sg-dark .sg-app-shell .sg-modal-surface {
-  background-color: #111827 !important;
-  color: #e2e8f0 !important;
-}
-
-/* Scrollable/detail panels */
-html.sg-dark .sg-app-shell .sg-detail-panel,
-html.sg-dark .sg-app-shell .sg-panel {
-  background-color: #111827 !important;
-  border-color: #334155 !important;
-  color: #e2e8f0 !important;
 }
 

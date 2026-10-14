@@ -741,7 +741,7 @@ export default function AdminDashboard({
 
               <button 
                 onClick={() => setCurrentScreen('endorsements')}
-                className="w-full py-3 bg-white text-emerald-990 hover:bg-emerald-50 active:scale-95 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-md flex items-center justify-center gap-2 text-emerald-900"
+                className="w-full py-3 bg-white hover:bg-emerald-50 active:scale-95 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-md flex items-center justify-center gap-2 text-emerald-900"
               >
                 <span>
                   Browse Queue ({operationalLoading || endorsementError ? '—' : pendingAdminSign.length}) →
