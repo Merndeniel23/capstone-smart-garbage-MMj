@@ -115,7 +115,7 @@ export default function BottomNav({ activeTab, onTabChange, role, adminActionCou
     { id: 'complaints', icon: MessageSquare, label: 'Complaints', count: unreadComplaints },
     { id: 'endorsements', icon: Award, label: 'Endorsements' },
     { id: 'payments', icon: CreditCard, label: 'Payments' },
-    { id: 'notifications', icon: Bell, label: 'Alerts', count: unseenCount },
+    { id: 'notifications', icon: Bell, label: 'Notifications', count: unseenCount },
     { id: 'profile', icon: User, label: 'Profile' },
   ];
 
@@ -125,35 +125,37 @@ export default function BottomNav({ activeTab, onTabChange, role, adminActionCou
     { id: 'complaints', icon: MessageSquare, label: 'Complaints', count: unreadComplaints },
     { id: 'collector-pickup-log', icon: Truck, label: 'Pickup Log' },
     { id: 'schedule', icon: Calendar, label: 'Schedule' },
-    { id: 'notifications', icon: Bell, label: 'Alerts', count: unseenCount },
+    { id: 'notifications', icon: Bell, label: 'Notifications', count: unseenCount },
     { id: 'profile', icon: User, label: 'Profile' },
   ];
 
   const leaderTabs = [
     { id: 'leader-dashboard', icon: LayoutDashboard, label: 'Leader HUD' },
     { id: 'garbage-bins', icon: MapPinned, label: 'Garbage Bins' },
+    // Keep the approval queue visible early in the horizontally scrolling mobile bar.
+    { id: 'endorsements', icon: Award, label: 'Endorsements', count: pendingEndorsements },
     { id: 'bin-inspections', icon: ClipboardCheck, label: 'Inspect Bins' },
     { id: 'members-list', icon: Users, label: 'Purok Members' },
     { id: 'payments', icon: CreditCard, label: 'Verify Payments', count: pendingPayments },
     { id: 'complaints', icon: MessageSquare, label: 'Complaints', count: unreadComplaints },
     { id: 'schedule', icon: Calendar, label: 'Schedule' },
-    { id: 'notifications', icon: Bell, label: 'System Alerts', count: unseenCount },
+    { id: 'notifications', icon: Bell, label: 'Notifications', count: unseenCount },
     { id: 'profile', icon: User, label: 'Profile' },
   ];
 
   const adminTabs = [
     { id: 'admin-dashboard', icon: Shield, label: 'Admin Panel' },
     { id: 'garbage-bins', icon: MapPinned, label: 'Garbage Bins' },
+    { id: 'endorsements', icon: Award, label: 'Endorsements', count: pendingEndorsements },
     { id: 'bin-inspections', icon: ClipboardCheck, label: 'Inspections' },
     { id: 'user-management', icon: Users, label: 'Manage Users', count: unreadAccounts },
     { id: 'payments', icon: CreditCard, label: 'Ledger Audit', count: pendingPayments },
     { id: 'complaints', icon: MessageSquare, label: 'Complaints', count: unreadComplaints },
-    { id: 'endorsements', icon: Award, label: 'Endorsements', count: pendingEndorsements },
     { id: 'route-map', icon: Map, label: 'Global Map' },
     { id: 'schedule', icon: Calendar, label: 'Schedule' },
-    { id: 'notifications', icon: Bell, label: 'Global Alerts', count: unseenCount },
+    { id: 'notifications', icon: Bell, label: 'Notifications', count: unseenCount },
     { id: 'reports', icon: FileText, label: 'Reports' },
-    { id: 'profile', icon: User, label: 'Control Center' },
+    { id: 'profile', icon: User, label: 'Profile' },
   ];
 
   const superAdminTabs = [
@@ -166,9 +168,9 @@ export default function BottomNav({ activeTab, onTabChange, role, adminActionCou
     { id: 'complaints', icon: MessageSquare, label: 'Complaints', count: unreadComplaints },
     { id: 'payments', icon: CreditCard, label: 'Payments', count: pendingPayments },
     { id: 'schedule', icon: Calendar, label: 'Schedules' },
-    { id: 'notifications', icon: Bell, label: 'Alerts', count: unseenCount },
+    { id: 'notifications', icon: Bell, label: 'Notifications', count: unseenCount },
     { id: 'reports', icon: FileText, label: 'Reports' },
-    { id: 'profile', icon: User, label: 'Security' },
+    { id: 'profile', icon: User, label: 'Profile' },
   ];
 
   const residentAccessRestricted =
