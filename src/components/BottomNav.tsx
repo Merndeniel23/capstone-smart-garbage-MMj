@@ -146,7 +146,6 @@ export default function BottomNav({ activeTab, onTabChange, role, adminActionCou
   const adminTabs = [
     { id: 'admin-dashboard', icon: Shield, label: 'Admin Panel' },
     { id: 'garbage-bins', icon: MapPinned, label: 'Garbage Bins' },
-    { id: 'endorsements', icon: Award, label: 'Endorsements', count: pendingEndorsements },
     { id: 'bin-inspections', icon: ClipboardCheck, label: 'Inspections' },
     { id: 'user-management', icon: Users, label: 'Manage Users', count: unreadAccounts },
     { id: 'payments', icon: CreditCard, label: 'Ledger Audit', count: pendingPayments },

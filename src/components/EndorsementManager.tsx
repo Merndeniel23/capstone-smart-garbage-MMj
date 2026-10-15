@@ -32,6 +32,7 @@ type EndorsementStatus =
   | 'Pending Leader Review'
   | 'Purok Leader Endorsed'
   | 'Barangay Approved'
+  | 'Purok Leader Approved'
   | 'Rejected by Purok Leader'
   | 'Rejected by Barangay Captain'
   | 'Withdrawn';
@@ -131,6 +132,7 @@ function formatDate(value: unknown) {
 
 function displayStatus(
   value: EndorsementRequest['rawStatus'],
+  captainApproved = false,
 ): EndorsementStatus {
   switch (value) {
     case 'leader_endorsed':
@@ -138,7 +140,7 @@ function displayStatus(
     case 'leader_rejected':
       return 'Rejected by Purok Leader';
     case 'approved':
-      return 'Barangay Approved';
+      return captainApproved ? 'Barangay Approved' : 'Purok Leader Approved';
     case 'admin_rejected':
       return 'Rejected by Barangay Captain';
     case 'withdrawn':
@@ -178,7 +180,7 @@ function mapEndorsement(row: any): EndorsementRequest {
     requestedService: String(row.requested_service || ''),
     date: formatDate(row.created_at),
     description: String(row.purpose || ''),
-    status: displayStatus(rawStatus),
+    status: displayStatus(rawStatus, Boolean(row.admin_reviewed_by || row.admin_name_snapshot)),
     rawStatus,
     adminMemo: row.admin_remarks || undefined,
     leaderMemo: row.leader_remarks || undefined,
@@ -294,7 +296,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
   // Admin-specific processing states
   const [selectedRequest, setSelectedRequest] = useState<EndorsementRequest | null>(null);
   const [adminMemoInput, setAdminMemoInput] = useState('');
-  const [activeTab, setActiveTab] = useState<'all' | 'pending_leader' | 'leader_endorsed' | 'approved'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'pending_leader' | 'approved' | 'rejected'>('all');
   const [endorsementSearch, setEndorsementSearch] = useState('');
   const [endorsementPage, setEndorsementPage] = useState(1);
   const [endorsementPageSize, setEndorsementPageSize] = useState(DEFAULT_PAGE_SIZE);
@@ -307,6 +309,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
   const loadEndorsements = useCallback(
     async (quiet = false) => {
+      if (role === 'admin') { setRecordsLoading(false); setProfileLoading(false); return; }
       if (!quiet) {
         setRecordsLoading(true);
       }
@@ -359,6 +362,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
       }
     },
     [
+      role,
       displayName,
       initialAddress,
       initialAccountCode,
@@ -422,8 +426,8 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
   const reviewRequest = async (
     request: EndorsementRequest,
-    reviewer: 'leader' | 'admin',
-    action: 'endorse' | 'approve' | 'reject',
+    reviewer: 'leader',
+    action: 'approve' | 'reject',
   ) => {
     setActionLoading(true);
     setErrorMessage('');
@@ -459,25 +463,12 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
   const handleLeaderEndorse = (
     request: EndorsementRequest,
   ) => {
-    void reviewRequest(request, 'leader', 'endorse');
-  };
-
-  const handleAdminApprove = (
-    request: EndorsementRequest,
-  ) => {
-    if (request.outstandingPaymentCount > 0) {
-      setErrorMessage(
-        'This request cannot be released until the resident has no unresolved payment records.',
-      );
-      return;
-    }
-
-    void reviewRequest(request, 'admin', 'approve');
+    void reviewRequest(request, 'leader', 'approve');
   };
 
   const handleReject = (
     request: EndorsementRequest,
-    reviewer: 'leader' | 'admin',
+    reviewer: 'leader',
   ) => {
     if (adminMemoInput.trim().length < 5) {
       setErrorMessage(
@@ -599,9 +590,9 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
     return endorsements.filter((item) => {
       const matchesTab =
         activeTab === 'all' ||
-        (activeTab === 'pending_leader' && item.status === 'Pending Leader Review') ||
-        (activeTab === 'leader_endorsed' && item.status === 'Purok Leader Endorsed') ||
-        (activeTab === 'approved' && item.status === 'Barangay Approved');
+        (activeTab === 'pending_leader' && ['pending_leader_review', 'leader_endorsed'].includes(item.rawStatus)) ||
+        (activeTab === 'approved' && item.rawStatus === 'approved') ||
+        (activeTab === 'rejected' && ['leader_rejected', 'admin_rejected', 'withdrawn'].includes(item.rawStatus));
 
       if (!matchesTab || !normalizedSearch) {
         return matchesTab;
@@ -640,15 +631,25 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
     }
   }, [endorsementPage, endorsementPageCount]);
 
-  const approvedDocs = filteredEndorsements.filter(item => item.status === 'Barangay Approved');
+  const approvedDocs = filteredEndorsements.filter(item => item.rawStatus === 'approved');
   const endorsedDocs = filteredEndorsements.filter(item => item.status === 'Purok Leader Endorsed');
   const certificateBarangayName =
     activeCertificate?.barangay ||
     barangay ||
     'Registered Barangay';
   const certificateApproverName =
-    activeCertificate?.approvedBy ||
-    'Awaiting Barangay Captain';
+    activeCertificate?.approvedBy || activeCertificate?.endorsedBy ||
+    'Awaiting Purok Leader';
+  const certificateApprovedByCaptain = Boolean(activeCertificate?.approvedBy);
+
+   if (role === 'admin') {
+     return (
+       <section className="rounded-2xl border border-slate-200 bg-white p-6 text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+         <h2 className="text-lg font-bold">Endorsement approvals are handled by Purok Leaders</h2>
+         <p className="mt-2 text-sm text-slate-500 dark:text-slate-300">Residents submit requests directly to their assigned Purok Leader for final review. No Barangay Captain action is required.</p>
+       </section>
+     );
+   }
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500 pb-20 md:pb-0">
@@ -761,9 +762,9 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
           </div>
           <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight dark:text-white">Endorsement Panel</h1>
           <p className="text-slate-500 text-sm">
-            {role === 'household' ? 'Request an endorsement for a barangay document, permit, assistance, or other service' :
-             role === 'leader' ? 'Review resident requests and endorse eligible barangay service requests' :
-             'Verify payment compliance and release approved barangay service endorsements'}
+            {role === 'household' ? 'Request a service endorsement for a document, permit, or assistance' :
+             role === 'leader' ? 'Make the final approval or rejection decision for residents of your purok' :
+             'Endorsements are managed by Purok Leaders.'}
           </p>
         </div>
         
@@ -839,7 +840,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                 </div>
                 <div>
                   <h2 className="text-lg font-black text-slate-800">Endorsement Application</h2>
-                  <p className="text-[11px] text-slate-400 font-medium">Tell us what you need from the barangay. Requests with unresolved payments cannot be released.</p>
+                  <p className="text-[11px] text-slate-400 font-medium">Describe your request. Your Purok Leader reviews it and makes the final decision; unresolved payments can block approval.</p>
                 </div>
               </div>
 
@@ -932,7 +933,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                 </div>
                 <div>
                   <h2 className="text-lg font-black text-slate-800">Received Request Processor</h2>
-                  <p className="text-[11px] text-slate-400 font-medium">Review resident details and release approved barangay service endorsements</p>
+                  <p className="text-[11px] text-slate-400 font-medium">Review resident details and make the final endorsement decision</p>
                 </div>
               </div>
 
@@ -966,9 +967,9 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       <span>•</span>
                        <span>Status: <strong className="text-indigo-600 underline font-bold">{selectedRequest.status}</strong></span>
                      </div>
-                      {role === 'admin' && selectedRequest.outstandingPaymentCount > 0 && (
+                      {role === 'leader' && selectedRequest.outstandingPaymentCount > 0 && (
                         <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-[10px] font-black leading-relaxed text-rose-700">
-                          Release blocked: this resident has {selectedRequest.outstandingPaymentCount} unresolved payment record{selectedRequest.outstandingPaymentCount === 1 ? '' : 's'}. Confirm the payment in the Payments panel before releasing this endorsement.
+                          Approval blocked: this resident has {selectedRequest.outstandingPaymentCount} unresolved payment record{selectedRequest.outstandingPaymentCount === 1 ? '' : 's'}. Complete verification in the Payments panel first.
                         </div>
                       )}
                     </div>
@@ -976,10 +977,10 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                    {/* Operational workflow form based on status & role */}
                   <div className="space-y-4">
                     
-                    {role === 'leader' && selectedRequest.status === 'Pending Leader Review' && (
+                    {role === 'leader' && ['pending_leader_review', 'leader_endorsed'].includes(selectedRequest.rawStatus) && (
                       <div className="space-y-3 bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100">
                         <p className="text-xs text-emerald-800 font-medium leading-relaxed">
-                          As <strong className="text-emerald-700">Purok Leader</strong>, verify that this resident and the requested barangay service information are valid before endorsing the request to the Barangay Captain.
+                          As <strong className="text-emerald-700">Purok Leader</strong>, verify the resident's service area and request. Your decision is final; the Barangay Captain is not part of this workflow.
                         </p>
                         <textarea
                           value={adminMemoInput}
@@ -990,14 +991,14 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                         />
                         <div className="flex gap-2">
                           <button
-                            disabled={actionLoading}
+                            disabled={actionLoading || selectedRequest.outstandingPaymentCount > 0}
                             onClick={() => {
                               handleLeaderEndorse(selectedRequest);
                             }}
                             className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md shadow-emerald-700/10 active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
                           >
                             <UserCheck className="w-4 h-4" />
-                            Endorse to Captain
+                            {selectedRequest.outstandingPaymentCount > 0 ? 'Resolve Payment First' : 'Approve & Issue'}
                           </button>
                           <button
                             disabled={actionLoading}
@@ -1010,50 +1011,8 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       </div>
                     )}
 
-                    {role === 'admin' && selectedRequest.status === 'Purok Leader Endorsed' && (
-                      <div className="space-y-3">
-                        <div className="space-y-1">
-                          <label className="text-slate-500 font-extrabold text-[10px] uppercase tracking-wider block font-bold">Barangay Captain Verification Memo (Optional)</label>
-                          <textarea
-                            value={adminMemoInput}
-                            onChange={(e) => setAdminMemoInput(e.target.value)}
-                            placeholder="Add release notes or payment-compliance remarks."
-                            rows={3}
-                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                          />
-                        </div>
-
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            disabled={actionLoading || selectedRequest.outstandingPaymentCount > 0}
-                            onClick={() => handleAdminApprove(selectedRequest)}
-                            className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-lg shadow-indigo-600/10 cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
-                          >
-                            <ShieldCheck className="w-4 h-4" />
-                            {selectedRequest.outstandingPaymentCount > 0 ? 'Resolve Payment First' : 'Approve & Release Endorsement'}
-                          </button>
-                          <button
-                            type="button"
-                            disabled={actionLoading}
-                            onClick={() => handleReject(selectedRequest, 'admin')}
-                            className="px-4 py-3 bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center disabled:opacity-50"
-                          >
-                            Reject
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {role === 'admin' && selectedRequest.status === 'Pending Leader Review' && (
-                      <div className="bg-amber-50 p-3 rounded-xl border border-amber-100 flex gap-2 items-start text-[10px] text-amber-800 font-medium leading-relaxed">
-                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                        <span>This request must be endorsed by its assigned Purok Leader before Barangay Captain review.</span>
-                      </div>
-                    )}
-
-                    {role === 'admin' && (
-                      selectedRequest.status === 'Barangay Approved' ||
+                    {role === 'leader' && (
+                      selectedRequest.rawStatus === 'approved' ||
                       selectedRequest.status === 'Rejected by Purok Leader' ||
                       selectedRequest.status === 'Rejected by Barangay Captain'
                     ) && (
@@ -1095,13 +1054,13 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
               <div className="space-y-1">
                 <span className="text-[10px] uppercase tracking-wider font-extrabold text-emerald-700 block flex items-center gap-1.5 font-sans">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 animate-ping" />
-                  Barangay Service Approved!
+                  Endorsement Approved!
                 </span>
                 <p className="text-sm font-extrabold text-slate-800">
                   Your requested barangay service endorsement is ready!
                 </p>
                 <p className="text-xs text-slate-500 leading-relaxed font-medium">
-                  Signed and officially issued by Barangay Captain <strong>{approvedDocs[0].approvedBy}</strong>. You can view, download, or print it now.
+                  Approved by {approvedDocs[0].approvedBy ? 'Barangay Captain' : 'Purok Leader'} <strong>{approvedDocs[0].approvedBy || approvedDocs[0].endorsedBy}</strong>. View or print the endorsement copy.
                 </p>
               </div>
               <button 
@@ -1121,13 +1080,13 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
               <div className="space-y-1 flex-1">
                 <span className="text-[10px] uppercase tracking-wider font-extrabold text-indigo-700 block flex items-center gap-1.5 font-sans">
                   <span className="w-2 h-2 rounded-full bg-indigo-500 shrink-0" />
-                  Purok Endorsement Active
+                  Purok Leader Final Review Required
                 </span>
                 <p className="text-sm font-extrabold text-slate-800">
-                  Your Purok leader signature is verified!
+                  Your prior endorsement is pending final approval.
                 </p>
                 <p className="text-xs text-slate-500 leading-relaxed font-medium">
-                  Endorsed by your Purok Leader. The request is awaiting Barangay Captain review before release.
+                  This older request is awaiting final issuance by your assigned Purok Leader.
                 </p>
               </div>
               <button 
@@ -1151,7 +1110,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                     ? 'Your Applications'
                     : role === 'leader'
                       ? 'Assigned Purok Submissions'
-                      : 'Barangay Submissions'}
+                      : 'Endorsement Requests'}
                 </h2>
                 <p className="mt-0.5 text-[10px] font-semibold text-slate-400">
                   {filteredEndorsements.length} matching request{filteredEndorsements.length === 1 ? '' : 's'}
@@ -1200,12 +1159,12 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setActiveTab('leader_endorsed')}
+                  onClick={() => setActiveTab('rejected')}
                   className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
-                    activeTab === 'leader_endorsed' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-400 hover:text-slate-600'
+                    activeTab === 'rejected' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-400 hover:text-slate-600'
                   }`}
                 >
-                  Endorsed
+                  Rejected
                 </button>
                 <button
                   type="button"
@@ -1214,7 +1173,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                     activeTab === 'approved' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-400 hover:text-slate-600'
                   }`}
                 >
-                  Signed
+                  Approved
                 </button>
               </div>
             </div>
@@ -1234,7 +1193,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                 onClick={() => {
                   if (role !== 'household') {
                     setSelectedRequest(item);
-                    setAdminMemoInput(item.adminMemo || '');
+                    setAdminMemoInput(item.leaderMemo || '');
                   }
                 }}
                 className={`p-4 rounded-2xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 select-none ${
@@ -1263,7 +1222,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                   <div>
                     <h4 className="font-extrabold text-slate-800 text-sm flex items-center gap-1.5">
                       {item.householdName}
-                      {item.status === 'Barangay Approved' && (
+                      {item.rawStatus === 'approved' && (
                         <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
                       )}
                     </h4>
@@ -1271,7 +1230,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                     <p className="truncate text-xs font-bold text-slate-600">Purpose: {item.description}</p>
                   </div>
 
-                  {role === 'admin' && item.outstandingPaymentCount > 0 && (
+                  {role === 'leader' && item.outstandingPaymentCount > 0 && (
                     <p className="mt-2 text-[10px] font-black uppercase text-rose-600">
                       {item.outstandingPaymentCount} unresolved payment record{item.outstandingPaymentCount === 1 ? '' : 's'} — release blocked
                     </p>
@@ -1299,7 +1258,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                 {/* Status Column */}
                 <div className="flex flex-col items-end gap-2 shrink-0 border-t border-slate-50 pt-3 md:border-0 md:pt-0">
                   <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider block text-center border ${
-                    item.status === 'Barangay Approved' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                    item.rawStatus === 'approved' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
                     item.status === 'Purok Leader Endorsed' ? 'bg-indigo-50 text-indigo-600 border-indigo-100' :
                     'bg-amber-50 text-amber-600 border-amber-100'
                   }`}>
@@ -1320,23 +1279,23 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       {expandedRequestId === item.id ? 'Hide details' : 'Details'}
                     </button>
                     
-                    {role !== 'household' && item.status === 'Pending Leader Review' && (
+                    {role === 'leader' && ['pending_leader_review', 'leader_endorsed'].includes(item.rawStatus) && (
                       <span className="text-[9px] text-slate-400 italic">Reviewing...</span>
                     )}
 
                     {/* View Certificate Button when Approved or Endorsed */}
-                    {(item.status === 'Barangay Approved' || item.status === 'Purok Leader Endorsed') && (
+                    {(item.rawStatus === 'approved' || item.status === 'Purok Leader Endorsed') && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           setActiveCertificate(item);
                         }}
                         className={`px-2.5 py-1 text-white rounded-lg text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer ${
-                          item.status === 'Barangay Approved' ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-indigo-500 hover:bg-indigo-600'
+                          item.rawStatus === 'approved' ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-indigo-500 hover:bg-indigo-600'
                         }`}
                       >
                         <Printer className="w-3 h-3" />
-                        {item.status === 'Barangay Approved' ? 'View Approved Endorsement' : 'Preview Endorsement'}
+                        {item.rawStatus === 'approved' ? 'View Approved Endorsement' : 'Preview Endorsement'}
                       </button>
                     )}
 
@@ -1351,8 +1310,8 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       </button>
                     )}
 
-                    {role === 'admin' && (
-                      item.status === 'Barangay Approved' ||
+                    {role === 'leader' && (
+                      item.rawStatus === 'approved' ||
                       item.status === 'Rejected by Purok Leader' ||
                       item.status === 'Rejected by Barangay Captain'
                     ) && (
@@ -1400,7 +1359,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
       </div>
 
-      {/* OFFICIAL DIGITAL CERTIFICATE PREVIEW MODAL */}
+      {/* ENDORSEMENT RECORD PREVIEW MODAL */}
       <AnimatePresence>
         {activeCertificate && (
           <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm z-50 overflow-y-auto p-2 md:p-6 lg:p-8 flex justify-center items-start print:p-0 print:bg-white print:absolute print:inset-0 print:overflow-visible">
@@ -1430,16 +1389,16 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                     <div className="border-b border-slate-800 pb-4">
                       <div className="flex items-center gap-2 text-emerald-400 font-extrabold text-[10px] uppercase tracking-wider mb-1 font-sans">
                         <div className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 animate-pulse" />
-                        <span>{activeCertificate.status === 'Barangay Approved' ? 'OFFICIAL REQUEST APPROVED' : 'ENDORSEMENT PROGRESS'}</span>
+                        <span>{activeCertificate.rawStatus === 'approved' ? 'OFFICIAL REQUEST APPROVED' : 'ENDORSEMENT PROGRESS'}</span>
                       </div>
                       <h3 className="font-extrabold text-base text-slate-100 uppercase tracking-tight flex items-center gap-1.5 font-sans">
                         <Award className="w-5 h-5 text-emerald-400 shrink-0" />
                         Barangay Service Endorsement
                       </h3>
                       <p className="text-[11px] text-slate-400 mt-1 font-medium leading-relaxed">
-                        {activeCertificate.status === 'Barangay Approved'
-                          ? 'Your barangay service endorsement has been approved and released by the Barangay Captain.'
-                          : 'Your request has been endorsed by your Purok Leader and is waiting for Barangay Captain review.'}
+                        {activeCertificate.rawStatus === 'approved'
+                          ? `Your endorsement is approved and issued by the ${certificateApprovedByCaptain ? 'Barangay Captain' : 'Purok Leader'}.`
+                          : 'This request is waiting for a final decision from your Purok Leader.'}
                       </p>
                     </div>
 
@@ -1473,17 +1432,17 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       </div>
 
                       <div className={`p-3 rounded-xl border text-[10px] leading-relaxed font-semibold ${
-                        activeCertificate.status === 'Barangay Approved'
+                        activeCertificate.rawStatus === 'approved'
                           ? 'bg-emerald-950/25 border-emerald-800/25 text-emerald-400' 
                           : 'bg-amber-950/25 border-amber-800/25 text-amber-400'
                       }`}>
-                        {activeCertificate.status === 'Barangay Approved'
-                          ? '✓ Verified Status Genuine: Fully signed & issued successfully.' 
-                          : '⌛ Status: Awaiting Barangay Captain review.'}
+                        {activeCertificate.rawStatus === 'approved'
+                          ? '✓ Approval recorded and verifiable in the registry.' 
+                          : '⌛ Status: Awaiting Purok Leader approval.'}
                       </div>
                     </div>
 
-                    {activeCertificate.status === 'Barangay Approved' ? (
+                    {activeCertificate.rawStatus === 'approved' ? (
                       <button
                         onClick={() => window.print()}
                         className="w-full mt-auto py-3 bg-[#05BC8F] hover:bg-[#049a75] active:scale-95 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer focus:outline-none font-sans"
@@ -1493,7 +1452,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       </button>
                     ) : (
                       <div className="mt-auto rounded-xl border border-amber-800/30 bg-amber-950/20 p-3 text-center text-[10px] font-bold text-amber-300">
-                        Preview only — waiting for Barangay Captain approval.
+                        Preview only — waiting for Purok Leader approval.
                       </div>
                     )}
                   </>
@@ -1573,7 +1532,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       </div>
 
                       <div className={`rounded-2xl border p-4 ${
-                        activeCertificate.status === 'Barangay Approved'
+                        activeCertificate.rawStatus === 'approved'
                           ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
                           : activeCertificate.status === 'Purok Leader Endorsed'
                             ? 'border-indigo-200 bg-indigo-50 text-indigo-800'
@@ -1587,10 +1546,16 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                         </p>
                       </div>
 
+                      {activeCertificate.leaderMemo && (
+                        <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                          <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">Purok Leader Review Note</p>
+                          <p className="mt-2 text-xs leading-relaxed text-slate-600">{activeCertificate.leaderMemo}</p>
+                        </div>
+                      )}
                       {activeCertificate.adminMemo && (
                         <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
                           <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">
-                            Barangay Verification Memo
+                            Historical Barangay Verification Memo
                           </p>
                           <p className="mt-2 text-xs leading-relaxed text-slate-600">
                             {activeCertificate.adminMemo}
@@ -1599,7 +1564,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       )}
                     </div>
 
-                    {activeCertificate.status === 'Barangay Approved' ? (
+                    {activeCertificate.rawStatus === 'approved' ? (
                       <button
                         onClick={() => window.print()}
                         className="mt-auto flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-xs font-extrabold uppercase tracking-wider text-white transition hover:bg-emerald-700"
@@ -1609,7 +1574,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       </button>
                     ) : (
                       <div className="mt-auto rounded-xl border border-amber-200 bg-amber-50 p-3 text-center text-[10px] font-bold text-amber-700">
-                        Preview only — official printing is enabled after Barangay Captain approval.
+                        Preview only — printing is enabled after Purok Leader approval.
                       </div>
                     )}
                   </>
@@ -1626,10 +1591,10 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                 <div className="border border-double border-slate-800/80 p-8 md:p-12 h-auto flex-none flex flex-col justify-between space-y-10 min-h-[750px] print:border-0 print:p-0 print:h-auto print:min-h-0 relative">
                   
                   {/* Subtle watermarking diagonal text */}
-                  {activeCertificate?.status !== 'Barangay Approved' && (
+                  {activeCertificate?.rawStatus !== 'approved' && (
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none overflow-hidden z-0">
                       <span className="endorsement-watermark text-slate-200/40 text-4xl sm:text-6xl font-sans font-black tracking-widest uppercase -rotate-12 select-none whitespace-nowrap">
-                        PENDING FINAL APPROVAL
+                        PENDING PUROK LEADER APPROVAL
                       </span>
                     </div>
                   )}
@@ -1657,7 +1622,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                     {/* DECREE OFFICINA STAMP & TITLE */}
                     <div className="text-center space-y-4">
                       <h2 className="text-slate-850 font-sans font-extrabold tracking-widest text-sm uppercase underline decoration-2 underline-offset-4">
-                        OFFICE OF THE PUNONG BARANGAY
+                        {certificateApprovedByCaptain ? 'OFFICE OF THE PUNONG BARANGAY (HISTORICAL RECORD)' : 'PUROK LEADER ENDORSEMENT RECORD'}
                       </h2>
                       <h1 className="text-2xl md:text-3xl font-sans font-black tracking-widest text-slate-950 uppercase pt-4">
                         BARANGAY SERVICE ENDORSEMENT
@@ -1723,12 +1688,14 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                     </p>
 
                     <p className="indent-8">
-                      The request has been reviewed through the Smart Garbage Monitoring System. The Purok Leader endorsement confirms the resident and service-area information shown above. Final issuance is subject to Barangay Captain approval.
+                      {certificateApprovedByCaptain
+                        ? 'This historical endorsement was reviewed by the Purok Leader and received final Barangay Captain approval under the former workflow.'
+                        : 'The request has been reviewed through the Smart Garbage Monitoring System. The assigned Purok Leader verified the registered resident and service-area information and recorded the final endorsement decision.'}
                     </p>
 
                     {activeCertificate.adminMemo && (
                       <p className="indent-8">
-                        Barangay verification note: <strong>{activeCertificate.adminMemo}</strong>
+                        Historical Barangay Captain review note: <strong>{activeCertificate.adminMemo}</strong>
                       </p>
                     )}
 
@@ -1761,30 +1728,22 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       </div>
                     </div>
 
-                    {/* Right: Chairman signature (only visible/stamped when fully approved) */}
+                    {/* Historical Captain approvals retain their original attribution. */}
                     <div className="space-y-1.5 min-w-[220px] text-center">
-                      <p className="text-[11px] text-slate-500 italic font-medium font-sans">Approved & Issued by:</p>
+                      <p className="text-[11px] text-slate-500 italic font-medium font-sans">Final decision by:</p>
                       <div className="pt-2">
-                        {activeCertificate?.status === 'Barangay Approved' ? (
+                        {activeCertificate.rawStatus === 'approved' ? (
                           <>
-                            <span className="text-xs text-emerald-600 font-sans font-bold italic block leading-none">✓ Official Digitally Signed</span>
+                            <span className="text-xs text-emerald-600 font-sans font-bold italic block leading-none">✓ Verified system approval record</span>
                             <strong className="text-xs md:text-sm text-slate-950 font-extrabold tracking-wide uppercase block border-b-2 border-slate-950 pb-0.5">
-                              HON. {certificateApproverName.toUpperCase()}
+                              {certificateApproverName.toUpperCase()}
                             </strong>
                             <span className="text-[10px] md:text-xs font-black uppercase tracking-wider text-slate-500 block font-sans">
-                              Barangay Captain
+                              {certificateApprovedByCaptain ? 'Barangay Captain (historical approval)' : 'Purok Leader (final approval)'}
                             </span>
                           </>
                         ) : (
-                          <>
-                            <span className="text-xs text-amber-600 font-sans font-medium italic block leading-none">⌛ Awaiting Admin Review</span>
-                            <strong className="text-xs md:text-sm text-slate-400 font-bold tracking-wide uppercase block border-b-2 border-slate-200 pb-0.5">
-                              HON. {certificateApproverName.toUpperCase()}
-                            </strong>
-                            <span className="text-[10px] md:text-xs font-black uppercase tracking-wider text-slate-300 block font-sans">
-                              Barangay Captain
-                            </span>
-                          </>
+                          <span className="text-xs text-amber-600 font-sans font-medium italic block">Awaiting Purok Leader approval</span>
                         )}
                       </div>
                     </div>
@@ -1802,7 +1761,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                 >
                   ✕ Close
                 </button>
-                {activeCertificate.status === 'Barangay Approved' ? (
+                {activeCertificate.rawStatus === 'approved' ? (
                   <button
                     onClick={() => window.print()}
                     className="px-5 py-2.5 bg-[#05BC8F] hover:bg-[#049a75] text-white text-xs font-black rounded-lg shadow-md transition-all flex items-center gap-1.5"

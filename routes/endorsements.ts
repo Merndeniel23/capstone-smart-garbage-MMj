@@ -339,13 +339,6 @@ function canViewRequest(
     );
   }
 
-  if (role === "admin") {
-    return (
-      viewer.barangay_id !== null &&
-      Number(request.barangay_id) ===
-        Number(viewer.barangay_id)
-    );
-  }
 
   return false;
 }
@@ -513,19 +506,6 @@ router.get("/", async (req: AuthRequest, res) => {
 
       whereClause = "WHERE er.purok_id = ?";
       parameters = [purokId];
-    } else if (role === "admin") {
-      const barangayId = positiveInteger(viewer.barangay_id);
-
-      if (!barangayId) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Your Barangay Captain account has no assigned barangay.",
-        });
-      }
-
-      whereClause = "WHERE er.barangay_id = ?";
-      parameters = [barangayId];
     } else {
       return res.status(403).json({
         success: false,
@@ -851,10 +831,10 @@ router.patch(
         });
       }
 
-      if (action !== "endorse" && action !== "reject") {
+      if (!["endorse", "approve", "reject"].includes(action)) {
         return res.status(400).json({
           success: false,
-          message: "Action must be endorse or reject.",
+          message: "Action must be approve or reject.",
         });
       }
 
@@ -905,48 +885,61 @@ router.patch(
         });
       }
 
-      if (request.status !== "pending_leader_review") {
+      // Legacy requests may be stuck in leader_endorsed while waiting for the
+      // now-removed Barangay Captain step. Let the assigned leader finalize them.
+      const reviewable = ["pending_leader_review", "leader_endorsed"];
+      if (!reviewable.includes(String(request.status))) {
         await connection.rollback();
         return res.status(409).json({
           success: false,
-          message:
-            "Only a request awaiting Purok Leader review can be processed.",
+          message: "This endorsement has already received a final decision.",
         });
       }
 
-      const nextStatus: EndorsementStatus =
-        action === "endorse"
-          ? "leader_endorsed"
-          : "leader_rejected";
+      const approving = action === "approve" || action === "endorse";
+      if (approving) {
+        // Preserve the existing payment-compliance rule. Do not trust a stale
+        // frontend count; always verify against MySQL at the point of approval.
+        const [outstandingRows] = await connection.query<any[]>(
+          `SELECT COUNT(*) AS total FROM payments
+           WHERE resident_id = ? AND COALESCE(status, '') <> 'completed'`,
+          [request.requester_id],
+        );
+        const outstanding = Number(outstandingRows[0]?.total || 0);
+        if (outstanding > 0) {
+          await connection.rollback();
+          return res.status(409).json({
+            success: false,
+            message: "Resolve outstanding payment records before final endorsement approval.",
+            outstandingPaymentCount: outstanding,
+          });
+        }
+      }
+
+      const nextStatus: EndorsementStatus = approving
+        ? "approved"
+        : "leader_rejected";
+      const certificateNumber = approving
+        ? generateCertificateNumber(Number(request.barangay_id))
+        : null;
+      const verificationCode = approving ? generateVerificationCode() : null;
 
       await connection.execute(
-        `
-        UPDATE endorsement_requests
-        SET
-          status = ?,
-          leader_reviewed_by = ?,
-          leader_name_snapshot = ?,
-          leader_reviewed_at = NOW(),
-          leader_remarks = ?
-        WHERE id = ?
-        `,
-        [
-          nextStatus,
-          viewer.id,
-          viewer.full_name,
-          remarks || null,
-          requestId,
-        ],
+        `UPDATE endorsement_requests
+         SET status = ?, leader_reviewed_by = ?, leader_name_snapshot = ?,
+             leader_reviewed_at = NOW(), leader_remarks = ?,
+             certificate_number = ?, verification_code = ?,
+             issued_at = CASE WHEN ? = 'approved' THEN NOW() ELSE NULL END
+         WHERE id = ?`,
+        [nextStatus, viewer.id, viewer.full_name, remarks || null,
+         certificateNumber, verificationCode, nextStatus, requestId],
       );
 
       await appendHistory(connection, {
         requestId,
         actor: viewer,
-        action:
-          action === "endorse"
-            ? "leader_endorsed"
-            : "leader_rejected",
-        fromStatus: "pending_leader_review",
+        action: approving ? "leader_final_approval" : "leader_rejected",
+        fromStatus: request.status as EndorsementStatus,
         toStatus: nextStatus,
         remarks: remarks || null,
       });
@@ -961,9 +954,9 @@ router.patch(
       return res.json({
         success: true,
         message:
-          action === "endorse"
-            ? "Request endorsed to the Barangay Captain."
-            : "Request rejected by the Purok Leader.",
+          action === "reject"
+            ? "Request rejected by the Purok Leader."
+            : "Endorsement approved and issued by the Purok Leader.",
         endorsement,
       });
     } catch (error) {
@@ -981,205 +974,8 @@ router.patch(
   },
 );
 
-router.patch(
-  "/:id/admin-review",
-  async (req: AuthRequest, res) => {
-    const connection = await db.getConnection();
-
-    try {
-      const viewerId = positiveInteger(req.user?.id);
-      const requestId = positiveInteger(req.params.id);
-      const action = cleanText(req.body.action, 20)
-        .toLowerCase();
-      const remarks = cleanText(req.body.remarks, 1000);
-
-      if (!viewerId || !requestId) {
-        return res.status(400).json({
-          success: false,
-          message: "A valid endorsement request is required.",
-        });
-      }
-
-      if (action !== "approve" && action !== "reject") {
-        return res.status(400).json({
-          success: false,
-          message: "Action must be approve or reject.",
-        });
-      }
-
-      if (action === "reject" && remarks.length < 5) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Provide a short reason when rejecting a request.",
-        });
-      }
-
-      await connection.beginTransaction();
-
-      const viewer = await loadCurrentUser(
-        viewerId,
-        connection,
-      );
-
-      if (
-        !viewer ||
-        viewer.status !== "active" ||
-        normalizeRole(viewer.role) !== "admin"
-      ) {
-        await connection.rollback();
-        return res.status(403).json({
-          success: false,
-          message: "Barangay Captain access is required.",
-        });
-      }
-
-      const request = await loadRequestById(
-        connection,
-        requestId,
-        true,
-      );
-
-      if (
-        !request ||
-        !viewer.barangay_id ||
-        Number(request.barangay_id) !==
-          Number(viewer.barangay_id)
-      ) {
-        await connection.rollback();
-        return res.status(404).json({
-          success: false,
-          message:
-            "Endorsement request was not found in your assigned barangay.",
-        });
-      }
-
-      if (request.status !== "leader_endorsed") {
-        await connection.rollback();
-        return res.status(409).json({
-          success: false,
-          message:
-            "Barangay review requires a Purok Leader endorsement first.",
-        });
-      }
-
-      const [outstandingPaymentRows] = await connection.query<any[]>(
-        `
-        SELECT status, COUNT(*) AS count
-        FROM payments
-        WHERE resident_id = ?
-          AND COALESCE(status, '') <> 'completed'
-        GROUP BY status
-        `,
-        [request.requester_id],
-      );
-
-      const outstandingPaymentCount =
-        outstandingPaymentRows.reduce(
-          (total, row) => total + Number(row.count || 0),
-          0,
-        );
-
-      if (action === "approve" && outstandingPaymentCount > 0) {
-        await connection.rollback();
-        return res.status(409).json({
-          success: false,
-          message:
-            "This endorsement cannot be released until all outstanding payment records are completed.",
-          outstandingPaymentCount,
-        });
-      }
-
-      const nextStatus: EndorsementStatus =
-        action === "approve"
-          ? "approved"
-          : "admin_rejected";
-
-      const certificateNumber =
-        action === "approve"
-          ? generateCertificateNumber(
-              Number(request.barangay_id),
-            )
-          : null;
-
-      const verificationCode =
-        action === "approve"
-          ? generateVerificationCode()
-          : null;
-
-      await connection.execute(
-        `
-        UPDATE endorsement_requests
-        SET
-          status = ?,
-          admin_reviewed_by = ?,
-          admin_name_snapshot = ?,
-          admin_reviewed_at = NOW(),
-          admin_remarks = ?,
-          certificate_number = ?,
-          verification_code = ?,
-          issued_at = CASE
-            WHEN ? = 'approved' THEN NOW()
-            ELSE NULL
-          END
-        WHERE id = ?
-        `,
-        [
-          nextStatus,
-          viewer.id,
-          viewer.full_name,
-          remarks ||
-            (action === "approve"
-              ? "Approved after barangay review."
-              : null),
-          certificateNumber,
-          verificationCode,
-          nextStatus,
-          requestId,
-        ],
-      );
-
-      await appendHistory(connection, {
-        requestId,
-        actor: viewer,
-        action:
-          action === "approve"
-            ? "endorsement_released"
-            : "admin_rejected",
-        fromStatus: "leader_endorsed",
-        toStatus: nextStatus,
-        remarks: remarks || null,
-      });
-
-      await connection.commit();
-
-      const endorsement = await loadRequestById(
-        db,
-        requestId,
-      );
-
-      return res.json({
-        success: true,
-        message:
-          action === "approve"
-            ? "Barangay service endorsement approved and released successfully."
-            : "Request rejected by the Barangay Captain.",
-        endorsement,
-      });
-    } catch (error) {
-      await connection.rollback();
-      console.error("Admin endorsement review error:", error);
-
-      return res.status(500).json({
-        success: false,
-        message:
-          "Unable to complete the Barangay Captain review.",
-      });
-    } finally {
-      connection.release();
-    }
-  },
-);
+// Barangay Captain approval is no longer part of the endorsement workflow.
+// There is deliberately no /:id/admin-review write endpoint.
 
 /**
  * Residents may withdraw only their own request while it is still waiting
@@ -1279,20 +1075,19 @@ router.delete("/:id", async (req: AuthRequest, res) => {
       });
     }
 
-    // Barangay Captains may permanently remove only FINAL requests in their
-    // own barangay. In-progress requests remain protected.
-    if (role === "admin") {
+    // Purok Leaders may permanently remove only FINAL requests in their
+    // own assigned purok. In-progress requests remain protected.
+    if (role === "purok_leader") {
       if (
-        !viewer.barangay_id ||
-        Number(request.barangay_id) !==
-          Number(viewer.barangay_id)
+        !viewer.purok_id ||
+        Number(request.purok_id) !== Number(viewer.purok_id)
       ) {
         await connection.rollback();
 
         return res.status(404).json({
           success: false,
           message:
-            "Endorsement request was not found in your assigned barangay.",
+            "Endorsement request was not found in your assigned purok.",
         });
       }
 
