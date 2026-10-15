@@ -8,15 +8,18 @@ import {
   ClipboardList,
   CreditCard,
   FileText,
+  KeyRound,
   LayoutDashboard,
   Map,
   MapPinned,
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  Settings,
   Shield,
   Truck,
   User,
+  UserCog,
   Users,
 } from "lucide-react";
 import {
@@ -257,7 +260,7 @@ export default function Sidebar({
     {
       id: "notifications",
       icon: Bell,
-      label: "Notifications",
+      label: "Alerts",
       count: unseenCount,
     },
     {
@@ -314,7 +317,7 @@ export default function Sidebar({
     {
       id: "notifications",
       icon: Bell,
-      label: "Notifications",
+      label: "System Alerts",
       count: unseenCount,
     },
     {
@@ -353,12 +356,6 @@ export default function Sidebar({
       count: unreadComplaints,
     },
     {
-      id: "endorsements",
-      icon: Award,
-      label: "Barangay Endorsements",
-      count: pendingEndorsements,
-    },
-    {
       id: "payments",
       icon: CreditCard,
       label: "Ledger Audit",
@@ -372,7 +369,7 @@ export default function Sidebar({
     {
       id: "notifications",
       icon: Bell,
-      label: "Notifications",
+      label: "Barangay Alerts",
       count: unseenCount,
     },
     {
@@ -382,8 +379,8 @@ export default function Sidebar({
     },
     {
       id: "profile",
-      icon: User,
-      label: "Profile",
+      icon: Settings,
+      label: "Control Center",
     },
   ];
 
@@ -394,11 +391,22 @@ export default function Sidebar({
       label: "Municipal Dashboard",
     },
     {
+      id: "captain-accounts",
+      icon: UserCog,
+      label: "Barangay Captains",
+      directoryRole: "admin",
+      count: unreadAccounts,
+    },
+    {
       id: "user-management",
       icon: Users,
       label: "User Directory",
       directoryRole: "all",
-      count: unreadAccounts,
+    },
+    {
+      id: "members-list",
+      icon: Users,
+      label: "Household Directory",
     },
     {
       id: "garbage-bins",
@@ -430,7 +438,7 @@ export default function Sidebar({
     {
       id: "notifications",
       icon: Bell,
-      label: "Notifications",
+      label: "Municipal Alerts",
       count: unseenCount,
     },
     {
@@ -440,8 +448,8 @@ export default function Sidebar({
     },
     {
       id: "profile",
-      icon: User,
-      label: "Profile",
+      icon: KeyRound,
+      label: "Recovery & Security",
     },
   ];
 
