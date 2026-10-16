@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ClipboardCheck, LayoutDashboard, Calendar, User, Bell, Map, ClipboardList, Shield, Users, Award, CreditCard, MessageSquare, FileText, Truck, MapPinned, UserCog } from 'lucide-react';
+import { ClipboardCheck, LayoutDashboard, Calendar, User, Bell, Map, ClipboardList, Shield, Users, Award, CreditCard, MessageSquare, FileText, Truck, MapPinned } from 'lucide-react';
 import type { AdminActionCounts } from "../hooks/useAdminActionCounts";
 
 interface BottomNavProps {
@@ -11,7 +11,7 @@ interface BottomNavProps {
   onOpenDirectory?: (role: string) => void;
 }
 
-export default function BottomNav({ activeTab, onTabChange, role, adminActionCounts, directoryRoleFilter = "all", onOpenDirectory }: BottomNavProps) {
+export default function BottomNav({ activeTab, onTabChange, role, adminActionCounts, onOpenDirectory }: BottomNavProps) {
   const [unseenCount, setUnseenCount] =
     useState(0);
 
@@ -159,9 +159,7 @@ export default function BottomNav({ activeTab, onTabChange, role, adminActionCou
 
   const superAdminTabs = [
     { id: 'super-admin-dashboard', icon: LayoutDashboard, label: 'Municipal' },
-    { id: 'captain-accounts', icon: UserCog, label: 'Captains', count: unreadAccounts },
     { id: 'user-management', icon: Users, label: 'User Directory' },
-    { id: 'members-list', icon: Users, label: 'Households' },
     { id: 'garbage-bins', icon: MapPinned, label: 'Bins' },
     { id: 'truck-crew-management', icon: Truck, label: 'Truck & Crew' },
     { id: 'complaints', icon: MessageSquare, label: 'Complaints', count: unreadComplaints },
@@ -201,10 +199,8 @@ export default function BottomNav({ activeTab, onTabChange, role, adminActionCou
     <nav aria-label="Mobile navigation" className="h-20 bg-white border-t border-slate-100 flex items-center gap-1 overflow-x-auto shrink-0 pb-2 px-3 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] w-full">
       {tabs.map((tab) => {
         const Icon = tab.icon;
-        const isDirectoryTab = role === 'super_admin' && (tab.id === 'captain-accounts' || tab.id === 'user-management');
-        const isActive = isDirectoryTab
-          ? activeTab === 'user-management' && (tab.id === 'captain-accounts' ? directoryRoleFilter === 'admin' : directoryRoleFilter !== 'admin')
-          : activeTab === tab.id;
+        const isDirectoryTab = role === 'super_admin' && tab.id === 'user-management';
+        const isActive = activeTab === tab.id;
         
         return (
           <button
@@ -212,7 +208,7 @@ export default function BottomNav({ activeTab, onTabChange, role, adminActionCou
             type="button"
             aria-label={tab.label}
             aria-current={isActive ? 'page' : undefined}
-            onClick={() => isDirectoryTab && onOpenDirectory ? onOpenDirectory(tab.id === 'captain-accounts' ? 'admin' : 'all') : onTabChange(tab.id === 'captain-accounts' ? 'user-management' : tab.id)}
+            onClick={() => isDirectoryTab && onOpenDirectory ? onOpenDirectory('all') : onTabChange(tab.id)}
             className={`flex flex-col items-center gap-1 transition-all duration-300 shrink-0 min-w-[76px] cursor-pointer ${
               isActive ? 'text-emerald-500 scale-105' : 'text-slate-400'
             }`}

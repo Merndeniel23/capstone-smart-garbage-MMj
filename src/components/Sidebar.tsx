@@ -17,7 +17,6 @@ import {
   Shield,
   Truck,
   User,
-  UserCog,
   Users,
 } from "lucide-react";
 import {
@@ -49,7 +48,6 @@ export default function Sidebar({
   onTabChange,
   role,
   adminActionCounts,
-  directoryRoleFilter = "all",
   onOpenDirectory,
 }: SidebarProps) {
   const {
@@ -389,22 +387,10 @@ export default function Sidebar({
       label: "Municipal Dashboard",
     },
     {
-      id: "captain-accounts",
-      icon: UserCog,
-      label: "Barangay Captains",
-      directoryRole: "admin",
-      count: unreadAccounts,
-    },
-    {
       id: "user-management",
       icon: Users,
       label: "User Directory",
       directoryRole: "all",
-    },
-    {
-      id: "members-list",
-      icon: Users,
-      label: "Household Directory",
     },
     {
       id: "garbage-bins",
@@ -591,9 +577,7 @@ export default function Sidebar({
       >
         {menuItems.map((item) => {
           const Icon = item.icon;
-          const isActive = item.directoryRole
-            ? activeTab === "user-management" && (item.directoryRole === "admin" ? directoryRoleFilter === "admin" : directoryRoleFilter !== "admin")
-            : activeTab === item.id;
+          const isActive = activeTab === item.id;
 
           return (
             <button
@@ -608,7 +592,7 @@ export default function Sidebar({
               aria-current={isActive ? "page" : undefined}
               onClick={() => item.directoryRole && onOpenDirectory
                 ? onOpenDirectory(item.directoryRole)
-                : onTabChange(item.id === "captain-accounts" ? "user-management" : item.id)}
+                : onTabChange(item.id)}
               className={`group relative flex w-full items-center rounded-xl py-3 transition-all duration-200 ${
                 collapsed
                   ? "justify-center px-0"
