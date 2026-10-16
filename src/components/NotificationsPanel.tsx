@@ -1,6 +1,7 @@
 import React, {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -135,6 +136,18 @@ function normalizeRole(role: NotificationsPanelProps["role"]) {
   return role;
 }
 
+class NotificationRequestError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "NotificationRequestError";
+  }
+}
+
+function isAccessDenied(error: unknown): boolean {
+  return error instanceof NotificationRequestError &&
+    (error.status === 401 || error.status === 403);
+}
+
 async function apiRequest(
   url: string,
   options: RequestInit = {},
@@ -142,8 +155,9 @@ async function apiRequest(
   const token = getToken();
 
   if (!token) {
-    throw new Error(
+    throw new NotificationRequestError(
       "Login session is missing. Please log in again.",
+      401,
     );
   }
 
@@ -161,8 +175,9 @@ async function apiRequest(
     .catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(
+    throw new NotificationRequestError(
       data.message || "Request failed.",
+      response.status,
     );
   }
 
@@ -271,76 +286,99 @@ export default function NotificationsPanel({
   const [recipientRole, setRecipientRole] =
     useState("");
 
-  const loadNotifications = async () => {
+  // Pending/inactive accounts must not repeatedly hit a protected API.
+  // A manual Refresh (or a new login/mount) can re-check after approval.
+  const accessBlockedRef = useRef(false);
+  const requestInFlightRef = useRef(false);
+  const initialSeenSyncedRef = useRef(false);
+  const [accessPaused, setAccessPaused] = useState(false);
+
+  const pauseForAccessDenial = (requestError: unknown) => {
+    if (!isAccessDenied(requestError)) return false;
+
+    accessBlockedRef.current = true;
+    setAccessPaused(true);
+    setNotifications([]);
+    setError(
+      requestError instanceof Error && requestError.message
+        ? requestError.message
+        : "Notifications are unavailable until your account is approved.",
+    );
+    return true;
+  };
+
+  const loadNotifications = async (manualRetry = false): Promise<boolean> => {
+    // Suppress polling after 401/403, and avoid overlapping network requests.
+    if (requestInFlightRef.current || (accessBlockedRef.current && !manualRetry)) {
+      return false;
+    }
+
+    if (manualRetry) {
+      accessBlockedRef.current = false;
+      setAccessPaused(false);
+    }
+
+    requestInFlightRef.current = true;
     setLoading(true);
     setError("");
 
     try {
-      const data = await apiRequest(
-        "/api/notifications",
-      );
-
-      setNotifications(
-        Array.isArray(data.notifications)
-          ? data.notifications
-          : [],
-      );
+      const data = await apiRequest("/api/notifications");
+      setNotifications(Array.isArray(data.notifications) ? data.notifications : []);
+      return true;
     } catch (requestError) {
-      setError(
-        requestError instanceof Error
-          ? requestError.message
-          : "Unable to load notifications.",
-      );
+      if (!pauseForAccessDenial(requestError)) {
+        setError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Unable to load notifications.",
+        );
+      }
+      return false;
     } finally {
+      requestInFlightRef.current = false;
       setLoading(false);
     }
   };
 
   const markAllSeen = async () => {
+    if (accessBlockedRef.current) return;
+
     try {
-      await apiRequest(
-        "/api/notifications/seen-all",
-        {
-          method: "PATCH",
-        },
-      );
+      await apiRequest("/api/notifications/seen-all", { method: "PATCH" });
 
       setNotifications((current) =>
         current.map((item) => ({
           ...item,
           is_seen: 1,
-          seen_at:
-            item.seen_at ||
-            new Date().toISOString(),
+          seen_at: item.seen_at || new Date().toISOString(),
         })),
       );
 
-      // The sidebar/bottom-nav badge should disappear
-      // once the notification center has been opened,
-      // while unread items remain visually unread.
-      window.dispatchEvent(
-        new Event("notifications-seen-all"),
-      );
-    } catch {
-      // Seeing notifications should never block
-      // the notification center from opening.
+      window.dispatchEvent(new Event("notifications-seen-all"));
+    } catch (requestError) {
+      // In particular, don't retry every 10 seconds after an access denial.
+      pauseForAccessDenial(requestError);
+    }
+  };
+
+  const refreshNotifications = async (manualRetry = false) => {
+    const loaded = await loadNotifications(manualRetry);
+    if (loaded && !accessBlockedRef.current && !initialSeenSyncedRef.current) {
+      // Mark seen once upon successfully opening the inbox, not every poll.
+      initialSeenSyncedRef.current = true;
+      await markAllSeen();
     }
   };
 
   useEffect(() => {
-    const refreshVisibleNotifications =
-      async () => {
-        await loadNotifications();
-        await markAllSeen();
-      };
+    void refreshNotifications();
 
-    void refreshVisibleNotifications();
-
-    const timer = window.setInterval(
-      () =>
-        void refreshVisibleNotifications(),
-      10000,
-    );
+    const timer = window.setInterval(() => {
+      if (!document.hidden && !accessBlockedRef.current) {
+        void refreshNotifications();
+      }
+    }, 10000);
 
     return () => {
       window.clearInterval(timer);
@@ -687,9 +725,7 @@ export default function NotificationsPanel({
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() =>
-              void loadNotifications()
-            }
+            onClick={() => void refreshNotifications(true)}
             className="flex h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black uppercase text-slate-700 transition hover:bg-slate-50"
           >
             <RefreshCw
@@ -775,6 +811,13 @@ export default function NotificationsPanel({
           <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" />
           {error}
         </div>
+      )}
+
+      {accessPaused && (
+        <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
+          Automatic notification checks are paused because this account cannot access notifications yet.
+          After your account is approved, click Refresh or sign in again to retry.
+        </p>
       )}
 
       {successMessage && (
