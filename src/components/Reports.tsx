@@ -2,7 +2,6 @@ import {
   AlertTriangle,
   Building2,
   CheckCircle2,
-  FileText,
   Loader2,
   Printer,
   RefreshCw,
@@ -157,10 +156,6 @@ export default function Reports() {
     ];
   }, [report]);
 
-  const exportPdf = () => {
-    window.print();
-  };
-
   if (loading) {
     return (
       <div className="flex min-h-[500px] items-center justify-center">
@@ -210,7 +205,7 @@ export default function Reports() {
           </h1>
 
           <p className="mt-1 text-sm text-slate-500">
-            Generate, review, print, and save municipal or barangay summaries.
+            Generate, review, and print municipal or barangay summaries.
           </p>
         </div>
 
@@ -233,14 +228,6 @@ export default function Reports() {
             Print
           </button>
 
-          <button
-            type="button"
-            onClick={exportPdf}
-            className="flex min-h-10 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white shadow-sm transition hover:bg-emerald-800"
-          >
-            <FileText className="h-4 w-4" />
-            Export PDF
-          </button>
         </div>
       </header>
 
@@ -344,10 +331,6 @@ export default function Reports() {
         </section>
       )}
 
-      <div className="no-print rounded-2xl border border-blue-200 bg-blue-50 p-4 text-xs leading-relaxed text-blue-800">
-        To save as PDF, click <strong>Export PDF</strong>, then choose
-        <strong> Save as PDF</strong> in the browser print window.
-      </div>
     </div>
   );
 }

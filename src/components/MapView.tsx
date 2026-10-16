@@ -132,6 +132,23 @@ const DEFAULT_CENTER: L.LatLngExpression = [
 
 const MAX_USABLE_ACCURACY_METERS = 1000;
 
+// OSRM's public demo is useful for testing, but has no production SLA.
+// For production, set VITE_ROUTING_API_URL to your managed/private OSRM route endpoint.
+// Expected endpoint: https://your-router.example/route/v1/driving
+const ROUTING_API_URL = String(
+  import.meta.env.VITE_ROUTING_API_URL ||
+    "https://router.project-osrm.org/route/v1/driving",
+).replace(/\/+$/, "");
+const ROAD_ROUTE_RECALC_MS = 30_000;
+
+type DrivingRouteState = {
+  status: "idle" | "loading" | "ready" | "unavailable";
+  message: string;
+  distanceMeters?: number;
+};
+
+
+
 function hasUsableCollectorCoordinates(
   collector?: CollectorLocation | null,
 ): collector is CollectorLocation {
@@ -405,6 +422,16 @@ export default function MapView({
     useRef<L.LayerGroup | null>(null);
   const destinationLayerRef =
     useRef<L.LayerGroup | null>(null);
+
+  const lastDrivingRouteAttemptRef = useRef<{
+    destinationKey: string;
+    attemptedAt: number;
+  } | null>(null);
+  const [drivingRoute, setDrivingRoute] = useState<DrivingRouteState>({
+    status: "idle",
+    message: "Choose a destination and enable a usable collector location.",
+  });
+  const [roadRouteRetry, setRoadRouteRetry] = useState(0);
 
   const hasAutoFocusedRef =
     useRef(false);
@@ -1158,21 +1185,134 @@ export default function MapView({
     });
   }, [collectorHistory]);
 
+  // Only route between the collector and the next bin on drivable roads.
+  // Rounded source coordinates avoid calling the router on every GPS jitter.
+  const routeStartLat = hasUsableCollectorCoordinates(ownCollectorLocation)
+    ? Number(ownCollectorLocation.latitude).toFixed(4)
+    : null;
+  const routeStartLng = hasUsableCollectorCoordinates(ownCollectorLocation)
+    ? Number(ownCollectorLocation.longitude).toFixed(4)
+    : null;
+  const routeEndLat = nextCollectionBin && hasCoordinates(nextCollectionBin)
+    ? Number(nextCollectionBin.latitude).toFixed(5)
+    : null;
+  const routeEndLng = nextCollectionBin && hasCoordinates(nextCollectionBin)
+    ? Number(nextCollectionBin.longitude).toFixed(5)
+    : null;
+  const routeDestinationId = nextCollectionBin?.id ?? null;
+
   useEffect(() => {
     const destinationLayer = destinationLayerRef.current;
     if (!destinationLayer) return;
+
+    // Never show an old road line for a new or moved destination.
     destinationLayer.clearLayers();
 
-    if (!ownCollectorLocation || !nextCollectionBin || !hasCoordinates(nextCollectionBin)) return;
+    if (
+      routeStartLat === null ||
+      routeStartLng === null ||
+      routeEndLat === null ||
+      routeEndLng === null
+    ) {
+      setDrivingRoute({
+        status: "idle",
+        message: "A usable truck position and mapped destination are required.",
+      });
+      return;
+    }
 
-    const currentPoint: L.LatLngTuple = [Number(ownCollectorLocation.latitude), Number(ownCollectorLocation.longitude)];
-    const destinationPoint: L.LatLngTuple = [Number(nextCollectionBin.latitude), Number(nextCollectionBin.longitude)];
+    const destinationKey = `${routeDestinationId}:${routeEndLat},${routeEndLng}`;
+    const previousAttempt = lastDrivingRouteAttemptRef.current;
+    const delayMs = previousAttempt?.destinationKey === destinationKey
+      ? Math.max(0, ROAD_ROUTE_RECALC_MS - (Date.now() - previousAttempt.attemptedAt))
+      : 0;
 
-    if (!currentPoint.every(Number.isFinite) || !destinationPoint.every(Number.isFinite)) return;
+    let disposed = false;
+    let timerId: number | null = null;
+    const controller = new AbortController();
 
-    L.polyline([currentPoint, destinationPoint], { weight: 4, opacity: 0.85, dashArray: "10 10" })
-      .addTo(destinationLayer);
-  }, [ownCollectorLocation, nextCollectionBin]);
+    const loadRoadRoute = async () => {
+      if (disposed) return;
+      lastDrivingRouteAttemptRef.current = {
+        destinationKey,
+        attemptedAt: Date.now(),
+      };
+      setDrivingRoute({ status: "loading", message: "Finding a driving route along roads..." });
+
+      // OSRM expects longitude,latitude coordinate order in the URL.
+      const coordinates = `${routeStartLng},${routeStartLat};${routeEndLng},${routeEndLat}`;
+      const url = `${ROUTING_API_URL}/${coordinates}?overview=full&geometries=geojson&steps=false`;
+
+      try {
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) throw new Error(`Routing service returned ${response.status}`);
+
+        const data = await response.json();
+        const route = data?.code === "Ok" ? data.routes?.[0] : null;
+        const geojsonPoints = route?.geometry?.coordinates;
+        if (!Array.isArray(geojsonPoints) || geojsonPoints.length < 2) {
+          throw new Error("No drivable road route was found.");
+        }
+
+        const roadPoints: L.LatLngTuple[] = geojsonPoints.map((point: unknown) => {
+          if (!Array.isArray(point) || point.length < 2) {
+            throw new Error("Invalid route geometry.");
+          }
+          const longitude = Number(point[0]);
+          const latitude = Number(point[1]);
+          if (!Number.isFinite(latitude) || !Number.isFinite(longitude) ||
+              Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+            throw new Error("Invalid route coordinates.");
+          }
+          return [latitude, longitude];
+        });
+
+        if (disposed) return;
+        destinationLayer.clearLayers();
+        L.polyline(roadPoints, {
+          color: "#2563eb",
+          weight: 5,
+          opacity: 0.9,
+          dashArray: "10 8",
+          lineJoin: "round",
+        }).addTo(destinationLayer);
+
+        const distanceMeters = Number(route?.distance);
+        setDrivingRoute({
+          status: "ready",
+          message: "Driving route follows mapped roads (not live traffic).",
+          distanceMeters: Number.isFinite(distanceMeters) ? distanceMeters : undefined,
+        });
+      } catch (error) {
+        if (disposed || controller.signal.aborted) return;
+        destinationLayer.clearLayers();
+        setDrivingRoute({
+          status: "unavailable",
+          message: "Road directions unavailable. No straight-line driving route is shown.",
+        });
+        console.warn("Unable to load driving route:", error);
+      }
+    };
+
+    if (delayMs > 0) {
+      setDrivingRoute({ status: "loading", message: "Updating road route after truck movement..." });
+      timerId = window.setTimeout(() => void loadRoadRoute(), delayMs);
+    } else {
+      // Starting on a timer also avoids an unnecessary request in React StrictMode's
+      // development-only mount/cleanup/mount cycle.
+      timerId = window.setTimeout(() => void loadRoadRoute(), 0);
+    }
+
+    return () => {
+      disposed = true;
+      controller.abort();
+      if (timerId !== null) window.clearTimeout(timerId);
+      destinationLayer.clearLayers();
+    };
+  }, [routeStartLat, routeStartLng, routeEndLat, routeEndLng, routeDestinationId, roadRouteRetry]);
 
   useEffect(() => {
     const collectorLayer =
@@ -1487,6 +1627,31 @@ export default function MapView({
             {nextCollectionBin.purok_name || "No purok"}
             {nextCollectionBin.request ? ` • ${statusLabel(nextCollectionBin.request.status)}` : ""}
           </p>
+          {getStoredRole() === "collector" && (
+            <p
+              role="status"
+              className={`mt-2 text-xs font-semibold ${
+                drivingRoute.status === "unavailable" ? "text-amber-800" : "text-blue-700"
+              }`}
+            >
+              {drivingRoute.message}
+              {drivingRoute.status === "ready" && drivingRoute.distanceMeters !== undefined
+                ? ` • ${(drivingRoute.distanceMeters / 1000).toFixed(1)} km by road`
+                : ""}
+            </p>
+          )}
+          {getStoredRole() === "collector" && drivingRoute.status === "unavailable" && (
+            <button
+              type="button"
+              onClick={() => {
+                lastDrivingRouteAttemptRef.current = null;
+                setRoadRouteRetry((count) => count + 1);
+              }}
+              className="mt-2 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold text-amber-900 hover:bg-amber-50"
+            >
+              Retry road directions
+            </button>
+          )}
         </div>
       )}
 
