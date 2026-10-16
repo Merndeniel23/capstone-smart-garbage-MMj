@@ -1059,16 +1059,6 @@ export default function Schedule() {
             <h2 className="text-lg font-bold text-slate-900">{selectedDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</h2>
             <div className="flex items-center gap-2">
               <span role="status" className="text-xs text-slate-500">{selectedDateSchedules.length} published collection {selectedDateSchedules.length === 1 ? "window" : "windows"}</span>
-              {canManage && (
-                <button
-                  type="button"
-                  onClick={() => openNewForm(selectedDate)}
-                  className="rounded-full bg-emerald-600 px-3 py-2 text-[11px] font-bold text-white hover:bg-emerald-700"
-                >
-                  <Plus className="mr-1 inline h-3.5 w-3.5" />
-                  Add for this day
-                </button>
-              )}
             </div>
           </div>
           <p className="text-xs text-slate-500">Dates follow the recurring weekly plan. Select a collection window to see its published details.</p>
