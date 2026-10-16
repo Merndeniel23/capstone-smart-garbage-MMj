@@ -126,6 +126,9 @@ export default function BinInspections() {
   const [showForm, setShowForm] = useState(false);
   const [photoData, setPhotoData] = useState('');
   const [photoName, setPhotoName] = useState('');
+  const [photoReading, setPhotoReading] = useState(false);
+  // Discard stale FileReader results after changing/removing a photo.
+  const photoReadIdRef = useRef(0);
   const uploadPhotoInputRef = useRef<HTMLInputElement>(null);
   const cameraPhotoInputRef = useRef<HTMLInputElement>(null);
 
@@ -386,6 +389,12 @@ export default function BinInspections() {
       return;
     }
 
+    // A new selection invalidates any previous photo, including a pending read.
+    const photoReadId = ++photoReadIdRef.current;
+    setPhotoData('');
+    setPhotoName('');
+    setPhotoReading(false);
+
     const allowedTypes = [
       'image/jpeg',
       'image/png',
@@ -398,26 +407,34 @@ export default function BinInspections() {
       return;
     }
 
-    if (file.size > 3_500_000) {
-      setError('Inspection photo must be 3.5 MB or smaller.');
+    if (file.size === 0 || file.size > 3_500_000) {
+      setError('Inspection photo must be a non-empty image up to 3.5 MB.');
       event.target.value = '';
       return;
     }
 
+    setPhotoReading(true);
     const reader = new FileReader();
 
     reader.onload = () => {
-      if (typeof reader.result !== 'string') {
-        setError('Unable to read the selected inspection photo.');
+      if (photoReadIdRef.current !== photoReadId) return;
+      setPhotoReading(false);
+
+      const result = reader.result;
+      if (typeof result !== 'string' ||
+          !/^data:image\/(?:jpeg|png|webp);base64,[a-z0-9+/=]+$/i.test(result)) {
+        setError('Unable to read a valid inspection photo. Please select another image.');
         return;
       }
 
-      setPhotoData(reader.result);
+      setPhotoData(result);
       setPhotoName(file.name);
       setError('');
     };
 
     reader.onerror = () => {
+      if (photoReadIdRef.current !== photoReadId) return;
+      setPhotoReading(false);
       setError('Unable to read the selected inspection photo.');
     };
 
@@ -425,8 +442,10 @@ export default function BinInspections() {
   };
 
   const clearPhoto = () => {
+    ++photoReadIdRef.current;
     setPhotoData('');
     setPhotoName('');
+    setPhotoReading(false);
 
     if (uploadPhotoInputRef.current) {
       uploadPhotoInputRef.current.value = '';
@@ -450,6 +469,12 @@ export default function BinInspections() {
       return;
     }
 
+    if (photoReading || !photoData ||
+        !/^data:image\/(?:jpeg|png|webp);base64,[a-z0-9+/=]+$/i.test(photoData)) {
+      setError('Please attach an inspection photo before submitting.');
+      return;
+    }
+
     setSubmitting(true);
 
     try {
@@ -459,7 +484,7 @@ export default function BinInspections() {
           bin_id: binId,
           status: form.status,
           remarks: form.remarks.trim() || null,
-          photo_path: photoData || null,
+          photo_path: photoData,
         }),
       });
 
@@ -732,8 +757,8 @@ export default function BinInspections() {
                 <span className="text-xs font-bold text-slate-600">
                   Inspection Photo
                 </span>
-                <span className="text-[10px] font-semibold text-slate-400">
-                  Optional
+                <span className="text-[10px] font-black text-rose-600">
+                  Required *
                 </span>
               </div>
 
@@ -774,9 +799,14 @@ export default function BinInspections() {
                 </button>
               </div>
 
-              <p className="text-[10px] font-medium text-slate-400">
-                JPG, PNG, or WebP • Maximum 3.5 MB
+              <p className="text-[10px] font-medium text-slate-500">
+                An inspection photo is required. JPG, PNG, or WebP • Maximum 3.5 MB.
               </p>
+              {!photoData && (
+                <p role="status" className="text-xs font-semibold text-amber-700">
+                  {photoReading ? 'Preparing inspection photo…' : 'Please attach an inspection photo before submitting.'}
+                </p>
+              )}
 
               {photoData && (
                 <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
@@ -824,10 +854,10 @@ export default function BinInspections() {
 
           <button
             type="submit"
-            disabled={submitting || binsLoading || availableBins.length === 0}
+            disabled={submitting || binsLoading || availableBins.length === 0 || photoReading || !photoData}
             className="w-full md:w-auto bg-emerald-500 hover:bg-emerald-600 active:scale-[0.98] text-white px-6 py-3 rounded-xl font-black border-none cursor-pointer shadow-lg shadow-emerald-500/15 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {submitting ? 'Saving Inspection...' : 'Submit Inspection'}
+            {submitting ? 'Saving Inspection...' : photoReading ? 'Preparing Photo...' : 'Submit Inspection'}
           </button>
         </form>
       )}

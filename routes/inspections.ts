@@ -186,6 +186,46 @@ router.post(
         });
       }
 
+      // A submitted inspection must include a newly uploaded image, not an
+      // empty value or an unverified remote URL.
+      if (!photoInput) {
+        return res.status(400).json({
+          success: false,
+          message: "Please attach an inspection photo before submitting.",
+        });
+      }
+
+      const photoDataMatch = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(photoInput);
+      if (!photoDataMatch) {
+        return res.status(400).json({
+          success: false,
+          message: "Upload a valid JPG, PNG, or WebP inspection photo.",
+        });
+      }
+
+      const photoBytes = Buffer.from(photoDataMatch[2], "base64");
+      if (photoBytes.length === 0 || photoBytes.length > 3_500_000) {
+        return res.status(400).json({
+          success: false,
+          message: "Inspection photo must be 3.5 MB or smaller.",
+        });
+      }
+
+      // Basic file signature check: MIME labels alone are not evidence that
+      // uploaded bytes represent an image. Storage performs any deeper checks.
+      const imageType = photoDataMatch[1].toLowerCase();
+      const hasValidSignature = imageType === "jpeg"
+        ? photoBytes.length >= 3 && photoBytes[0] === 0xff && photoBytes[1] === 0xd8 && photoBytes[2] === 0xff
+        : imageType === "png"
+          ? photoBytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+          : photoBytes.length >= 12 && photoBytes.toString("ascii", 0, 4) === "RIFF" && photoBytes.toString("ascii", 8, 12) === "WEBP";
+      if (!hasValidSignature) {
+        return res.status(400).json({
+          success: false,
+          message: "The selected file is not a valid JPG, PNG, or WebP image.",
+        });
+      }
+
       const estimatedFillLevel = fillLevelByStatus[status];
 
       if (estimatedFillLevel === undefined) {
@@ -234,60 +274,39 @@ router.post(
         });
       }
 
-      let photoReference: string | null = null;
+      // The above validation requires a real uploaded image for all new
+      // inspections. Existing records with external photo URLs can still be read.
+      if (!isCloudStorageConfigured()) {
+        return res.status(503).json({
+          success: false,
+          message: "Inspection image storage is not configured. Contact the administrator.",
+        });
+      }
 
-      if (photoInput) {
-        if (/^data:image\//i.test(photoInput)) {
-          if (!isCloudStorageConfigured()) {
-            return res.status(503).json({
-              success: false,
-              message:
-                "Inspection image storage is not configured. Submit without a photo or configure Supabase Storage.",
-            });
-          }
+      let extension: "png" | "jpg" | "webp";
+      try {
+        extension = imageExtensionForDataUrl(photoInput);
+      } catch {
+        return res.status(400).json({
+          success: false,
+          message: "Choose a valid JPG, PNG, or WebP image up to 3.5 MB.",
+        });
+      }
 
-          let extension: "png" | "jpg" | "webp";
+      const storagePath =
+        `inspections/${leaderId}/${Date.now()}-${crypto.randomUUID()}.${extension}`;
 
-          try {
-            extension = imageExtensionForDataUrl(photoInput);
-          } catch {
-            return res.status(400).json({
-              success: false,
-              message:
-                "Choose a valid JPG, PNG, or WebP image up to 3.5 MB.",
-            });
-          }
+      let photoReference: string;
+      try {
+        photoReference = await storeProof(photoInput, storagePath);
+        uploadedPhotoReference = photoReference;
+      } catch (storageError) {
+        console.error("Inspection photo upload error:", storageError);
 
-          const storagePath =
-            `inspections/${leaderId}/${Date.now()}-${crypto.randomUUID()}.${extension}`;
-
-          try {
-            photoReference = await storeProof(photoInput, storagePath);
-            uploadedPhotoReference = photoReference;
-          } catch (storageError) {
-            console.error("Inspection photo upload error:", storageError);
-
-            return res.status(500).json({
-              success: false,
-              message: "Unable to upload the inspection photo.",
-            });
-          }
-        } else if (/^https:\/\//i.test(photoInput)) {
-          // Backward compatibility for older records/API clients.
-          if (photoInput.length > 255) {
-            return res.status(400).json({
-              success: false,
-              message: "Inspection photo URL is too long.",
-            });
-          }
-
-          photoReference = photoInput;
-        } else {
-          return res.status(400).json({
-            success: false,
-            message: "Choose a JPG, PNG, or WebP inspection photo.",
-          });
-        }
+        return res.status(500).json({
+          success: false,
+          message: "Unable to upload the inspection photo.",
+        });
       }
 
       await connection.beginTransaction();
