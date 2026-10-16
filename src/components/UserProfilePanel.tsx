@@ -81,18 +81,16 @@ async function apiRequest(
   return data;
 }
 
+// Standardize displayed numbers as Philippine 11-digit mobile numbers.
+// Existing +63/63 mobile records can be shown using their local 09 format.
 function sanitizePhoneInput(value: string) {
-  const trimmed = value.trimStart();
-  const hasPlus = trimmed.startsWith("+");
-  const digits = value.replace(/\D/g, "").slice(0, 15);
-
-  return hasPlus && digits
-    ? `+${digits}`
-    : digits;
+  const digits = String(value || "").replace(/\D/g, "");
+  const local = digits.startsWith("639") ? `0${digits.slice(2)}` : digits;
+  return local.slice(0, 11);
 }
 
 function isValidPhone(value: string) {
-  return /^\+?\d{7,15}$/.test(value);
+  return /^09\d{9}$/.test(value);
 }
 
 function roleLabel(role?: ProfileUser["role"]) {
@@ -475,7 +473,7 @@ export default function UserProfilePanel() {
 
     if (cleanPhone && !isValidPhone(cleanPhone)) {
       setError(
-        "Enter a valid phone number using digits only (7 to 15 digits, optional + at the start).",
+        "Enter an 11-digit Philippine mobile number starting with 09 (e.g. 09123456789).",
       );
       return;
     }
@@ -998,16 +996,18 @@ export default function UserProfilePanel() {
                 <Phone className="absolute left-4 h-4 w-4 text-slate-400" />
                 <input
                   type="tel"
-                  inputMode="tel"
+                  inputMode="numeric"
                   autoComplete="tel"
+                  pattern="09[0-9]{9}"
+                  title="Enter exactly 11 digits starting with 09"
                   value={phone}
                   onChange={(event) =>
                     setPhone(
                       sanitizePhoneInput(event.target.value),
                     )
                   }
-                  placeholder="+639XXXXXXXXX"
-                  maxLength={16}
+                  placeholder="09XXXXXXXXX"
+                  maxLength={11}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-11 pr-4 font-extrabold text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
                 />
               </div>

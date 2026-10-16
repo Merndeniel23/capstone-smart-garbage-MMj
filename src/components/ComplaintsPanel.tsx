@@ -201,6 +201,18 @@ function statusClass(
   }
 }
 
+// Philippine local mobile number: digits only, exactly 11 digits starting with 09.
+// Convert existing +639/639 stored values for display without changing saved records.
+function normalizeMobileInput(value: string): string {
+  const digits = String(value || "").replace(/\D/g, "");
+  const local = digits.startsWith("639") ? `0${digits.slice(2)}` : digits;
+  return local.slice(0, 11);
+}
+
+function isValidMobileInput(value: string): boolean {
+  return /^09\d{9}$/.test(value);
+}
+
 export default function ComplaintsPanel({
   role,
   initialComplaintId = null,
@@ -740,6 +752,11 @@ export default function ComplaintsPanel({
       return;
     }
 
+    if (!isValidMobileInput(newPhone)) {
+      setError("Enter an 11-digit mobile number starting with 09 (e.g. 09123456789).");
+      return;
+    }
+
     if (!currentUser?.purok_id) {
       setError(
         "Your account has no assigned purok.",
@@ -790,7 +807,7 @@ export default function ComplaintsPanel({
         complaintCameraInputRef.current.value = "";
       }
       setNewPhone(
-        currentUser.phone || "",
+        normalizeMobileInput(currentUser.phone || ""),
       );
 
       await loadData();
@@ -1181,8 +1198,7 @@ export default function ComplaintsPanel({
                 true,
               );
               setNewPhone(
-                currentUser?.phone ||
-                  "",
+                normalizeMobileInput(currentUser?.phone || ""),
               );
               stopComplaintCamera();
               setCameraError("");
@@ -1992,16 +2008,15 @@ export default function ComplaintsPanel({
                 <label className="sg-complaint-modal-label block text-[10px] font-black uppercase tracking-widest text-slate-500">
                   Contact Phone
                   <input
-                    type="text"
+                    type="tel"
+                    inputMode="numeric"
+                    autoComplete="tel"
+                    maxLength={11}
+                    pattern="09[0-9]{9}"
+                    title="Enter exactly 11 digits starting with 09"
+                    placeholder="09XXXXXXXXX"
                     value={newPhone}
-                    onChange={(
-                      event,
-                    ) =>
-                      setNewPhone(
-                        event.target
-                          .value,
-                      )
-                    }
+                    onChange={(event) => setNewPhone(normalizeMobileInput(event.target.value))}
                     className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs font-semibold text-slate-800"
                   />
                 </label>

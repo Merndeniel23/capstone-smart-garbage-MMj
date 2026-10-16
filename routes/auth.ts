@@ -1078,11 +1078,11 @@ router.put(
 
       if (
         phone &&
-        !/^\+?\d{7,15}$/.test(phone)
+        !/^09\d{9}$/.test(phone)
       ) {
         return res.status(400).json({
           message:
-            "Phone number must contain digits only (7 to 15 digits, optional + at the start).",
+            "Enter an 11-digit Philippine mobile number starting with 09 (e.g. 09123456789).",
         });
       }
 

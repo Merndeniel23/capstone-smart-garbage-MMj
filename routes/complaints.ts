@@ -602,10 +602,13 @@ router.post(
         });
       }
 
-      if (phone.length > 30) {
+      // A contact number remains optional. When provided, require the
+      // Philippine 11-digit mobile format used by the frontend (09XXXXXXXXX).
+      // Validate on the server as well; a client-side maxLength can be bypassed.
+      if (phone && !/^09\d{9}$/.test(phone)) {
         return res.status(400).json({
           success: false,
-          message: "Contact number is too long.",
+          message: "Enter an 11-digit mobile number starting with 09 (e.g. 09123456789).",
         });
       }
 
