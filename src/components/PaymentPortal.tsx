@@ -2709,7 +2709,7 @@ export default function PaymentPortal({
                     key={item.value}
                     value={item.value}
                   >
-                    {item.label} — Suggested ₱{item.amount}
+                    {item.label}
                   </option>
                 ),
               )}
@@ -2745,7 +2745,7 @@ export default function PaymentPortal({
             />
               </div>
               <p className="mt-2 text-[11px] font-medium text-slate-500">
-                You may enter any positive amount. The category fee shown above is only a suggested reference.
+                Enter the amount you are paying. Any positive amount is accepted.
               </p>
             </fieldset>
 

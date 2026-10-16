@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  Award,
   Camera,
   ChevronDown,
   HelpCircle,
@@ -1122,21 +1121,6 @@ export default function UserProfilePanel() {
                   />
                 </div>
               )}
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="ml-1 block font-black uppercase tracking-widest text-slate-500">
-                LGU Account Code
-              </label>
-              <div className="relative flex items-center">
-                <Award className="absolute left-4 h-4 w-4 text-slate-400" />
-                <input
-                  type="text"
-                  value={userCode(profile)}
-                  disabled
-                  className="w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-100 py-2.5 pl-11 pr-4 font-bold text-slate-500"
-                />
-              </div>
             </div>
 
             <div className="space-y-1.5 sm:col-span-2">

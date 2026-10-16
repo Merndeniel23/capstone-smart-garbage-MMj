@@ -1,5 +1,6 @@
 import React, {
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -268,6 +269,32 @@ export default function NotificationsPanel({
 
   const [notificationToDelete, setNotificationToDelete] =
     useState<NotificationItem | null>(null);
+
+  const [notificationDetails, setNotificationDetails] =
+    useState<NotificationItem | null>(null);
+  const detailsDialogRef = useRef<HTMLDialogElement>(null);
+  const detailsTitleRef = useRef<HTMLHeadingElement>(null);
+  const detailsTitleId = useId();
+  const detailsMetaId = useId();
+
+  useEffect(() => {
+    const dialog = detailsDialogRef.current;
+    if (!dialog || !notificationDetails) return;
+
+    const previousFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const previousOverflow = document.body.style.overflow;
+    if (!dialog.open) dialog.showModal();
+    document.body.style.overflow = "hidden";
+    detailsTitleRef.current?.focus({ preventScroll: true });
+
+    return () => {
+      if (dialog.open) dialog.close();
+      document.body.style.overflow = previousOverflow;
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+    };
+  }, [notificationDetails]);
 
   const [deletingNotificationId, setDeletingNotificationId] =
     useState<number | null>(null);
@@ -782,23 +809,34 @@ export default function NotificationsPanel({
                   {unreadEmergency.title}
                 </h2>
 
-                <p className="mt-1 line-clamp-2 text-sm font-semibold text-white/90">
+                <p className="mt-1 line-clamp-2 whitespace-pre-wrap break-words text-sm font-semibold text-white/90">
                   {unreadEmergency.message}
                 </p>
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={() =>
-                void markRead(
-                  unreadEmergency.id,
-                )
-              }
-              className="h-10 shrink-0 rounded-xl bg-white px-4 text-xs font-black uppercase text-rose-700 transition hover:bg-rose-50"
-            >
-              Acknowledge
-            </button>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setNotificationDetails(unreadEmergency)}
+                aria-haspopup="dialog"
+                aria-label={`View details for ${unreadEmergency.title}`}
+                className="h-10 rounded-xl border border-white/40 px-4 text-xs font-black uppercase text-white transition hover:bg-white/10"
+              >
+                View details
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  void markRead(
+                    unreadEmergency.id,
+                  )
+                }
+                className="h-10 shrink-0 rounded-xl bg-white px-4 text-xs font-black uppercase text-rose-700 transition hover:bg-rose-50"
+              >
+                Acknowledge
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1031,9 +1069,22 @@ export default function NotificationsPanel({
                       {item.title}
                     </h2>
 
-                    <p className="sg-notification-message mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-[#475569]">
+                    <p className="sg-notification-message mt-1 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-relaxed text-[#475569]">
                       {item.message}
                     </p>
+
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setNotificationDetails(item);
+                      }}
+                      aria-haspopup="dialog"
+                      aria-label={`View details for ${item.title}`}
+                      className="mt-2 min-h-9 rounded-lg px-2 text-xs font-bold text-emerald-700 transition hover:bg-emerald-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-600 dark:text-emerald-300"
+                    >
+                      View details
+                    </button>
 
                     <p className="sg-notification-meta mt-2 text-[10px] font-bold uppercase tracking-wide text-[#64748b]">
                       Issued by{" "}
@@ -1127,6 +1178,73 @@ export default function NotificationsPanel({
           </div>
         )}
       </section>
+
+      {notificationDetails && (
+        <dialog
+          ref={detailsDialogRef}
+          aria-labelledby={detailsTitleId}
+          aria-describedby={detailsMetaId}
+          onCancel={(event) => {
+            event.preventDefault();
+            setNotificationDetails(null);
+          }}
+          className="sg-notification-card m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white p-0 shadow-2xl backdrop:bg-slate-950/60 backdrop:backdrop-blur-sm"
+        >
+          <div className="flex max-h-[calc(100dvh-2rem-2px)] flex-col">
+            <div className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 px-4 py-3 sm:px-5">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">
+                Notification details
+              </p>
+              <button
+                type="button"
+                onClick={() => setNotificationDetails(null)}
+                aria-label="Close notification details"
+                className="shrink-0 rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div
+              role="region"
+              aria-label="Full notification message"
+              tabIndex={0}
+              className="min-h-0 overflow-y-auto overscroll-contain p-4 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-emerald-600 sm:p-5"
+            >
+              <h2
+                ref={detailsTitleRef}
+                id={detailsTitleId}
+                tabIndex={-1}
+                className="sg-notification-title text-lg font-black text-slate-900 focus:outline-none [overflow-wrap:anywhere]"
+              >
+                {notificationDetails.title}
+              </h2>
+              <p id={detailsMetaId} className="sg-notification-meta mt-2 text-xs text-slate-500 [overflow-wrap:anywhere]">
+                {notificationDetails.created_by_name || "System"}
+                {" • "}
+                {formatDate(notificationDetails.created_at)}
+                {(notificationDetails.purok_name || notificationDetails.barangay_name) && (
+                  <span className="mt-1 block">
+                    {[notificationDetails.purok_name, notificationDetails.barangay_name]
+                      .filter(Boolean).join(", ")}
+                  </span>
+                )}
+              </p>
+              <p className="sg-notification-message mt-4 whitespace-pre-wrap text-sm leading-relaxed text-slate-600 [overflow-wrap:anywhere]">
+                {notificationDetails.message}
+              </p>
+            </div>
+            <div className="flex shrink-0 justify-end border-t border-slate-200 p-3 sm:px-5">
+              <button
+                type="button"
+                onClick={() => setNotificationDetails(null)}
+                className="h-10 rounded-xl bg-emerald-700 px-5 text-xs font-black uppercase text-white transition hover:bg-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </dialog>
+      )}
 
       {showCompose && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">

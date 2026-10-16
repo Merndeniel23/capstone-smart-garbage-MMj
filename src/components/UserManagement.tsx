@@ -236,6 +236,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
   const [searchTerm, setSearchTerm] = useState("");
   const [roleFilter, setRoleFilter] = useState(initialRoleFilter);
   const [barangayFilter, setBarangayFilter] = useState("all");
+  const [purokFilter, setPurokFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState(initialStatusFilter);
   const [sortBy, setSortBy] = useState("priority");
   const [sortDirection, setSortDirection] = useState("asc");
@@ -277,8 +278,11 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
   const [editPurokError, setEditPurokError] = useState("");
   const [editPurokSuccess, setEditPurokSuccess] = useState("");
   const [verification, setVerification] = useState<{ email: string; resendAfter: number } | null>(null);
+  // The locations endpoint returns only the captain's assigned barangay.
   const assignedBarangay = isBarangayCaptain ? barangays[0] : undefined;
-  const staffPuroks = puroks.filter((purok) => Number(purok.barangay_id) === Number(assignedBarangay?.id));
+  const staffPuroks = puroks
+    .filter((purok) => Number(purok.barangay_id) === Number(assignedBarangay?.id))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
 
   const [showCaptainModal, setShowCaptainModal] = useState(initialCreateCaptain && isSuperAdmin);
   const [captainFullName, setCaptainFullName] = useState("");
@@ -514,13 +518,17 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
 
       return matchesSearch && matchesTab &&
         (roleFilter === "all" || user.role === roleFilter) &&
-        (barangayFilter === "all" || String(user.barangay_id) === barangayFilter) &&
+        (isBarangayCaptain
+          ? purokFilter === "all" || (purokFilter === "unassigned" ? !user.purok_id : String(user.purok_id) === purokFilter)
+          : barangayFilter === "all" || String(user.barangay_id) === barangayFilter) &&
         (statusFilter === "all" || user.status === statusFilter);
     }).sort((a, b) => {
       if (sortBy !== "priority") {
         const value = (user: ManagedUser) => sortBy === "name" ? user.full_name
           : sortBy === "role" ? roleLabel(user.role)
-          : sortBy === "barangay" ? user.barangay_name || "" : user.status;
+          : sortBy === "barangay" ? user.barangay_name || ""
+          : sortBy === "purok" ? user.purok_name || (user.role === "collector" ? "Barangay-wide assignment" : "No purok assigned")
+          : user.status;
         return value(a).localeCompare(value(b), undefined, { sensitivity: "base", numeric: true }) * (sortDirection === "asc" ? 1 : -1);
       }
       const pendingDifference =
@@ -536,7 +544,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
         new Date(a.created_at).getTime()
       );
     });
-  }, [users, searchTerm, activeTab, roleFilter, barangayFilter, statusFilter, sortBy, sortDirection]);
+  }, [users, searchTerm, activeTab, roleFilter, barangayFilter, purokFilter, isBarangayCaptain, statusFilter, sortBy, sortDirection]);
 
   const viewedUser = detailsUser
     ? users.find((user) => user.id === detailsUser.id) ?? detailsUser
@@ -581,6 +589,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
     activeTab,
     roleFilter,
     barangayFilter,
+    purokFilter,
     statusFilter,
     sortBy,
     sortDirection,
@@ -597,6 +606,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
     setRoleFilter("all");
     onRoleFilterChange?.("all");
     setBarangayFilter("all");
+    setPurokFilter("all");
     setStatusFilter("all");
     setActiveTab("all");
   };
@@ -825,6 +835,11 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
       setError(
         "This barangay already has a Barangay Captain. Only one captain account is allowed per barangay.",
       );
+      return;
+    }
+
+    if (!availableCaptainBarangays.some((barangay) => Number(barangay.id) === Number(captainBarangayId))) {
+      setError("Select an active barangay without an assigned captain.");
       return;
     }
 
@@ -1223,12 +1238,22 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
               <option value="purok_leader">Purok Leader</option><option value="collector">Collector</option><option value="resident">Resident</option>
             </select>
           </label>
-          <label className="text-xs font-bold text-slate-600">Barangay
-            <select value={barangayFilter} onChange={(event) => setBarangayFilter(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm">
-              <option value="all">All barangays</option>
-              {barangays.map((barangay) => <option key={barangay.id} value={barangay.id}>{barangay.name}</option>)}
-            </select>
-          </label>
+          {isBarangayCaptain ? (
+            <label className="text-xs font-bold text-slate-600">Purok
+              <select value={purokFilter} onChange={(event) => setPurokFilter(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm">
+                <option value="all">All puroks / assignments</option>
+                {staffPuroks.map((purok) => <option key={purok.id} value={purok.id}>{purok.name}</option>)}
+                <option value="unassigned">No purok / barangay-wide</option>
+              </select>
+            </label>
+          ) : (
+            <label className="text-xs font-bold text-slate-600">Barangay
+              <select value={barangayFilter} onChange={(event) => setBarangayFilter(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm">
+                <option value="all">All barangays</option>
+                {barangays.map((barangay) => <option key={barangay.id} value={barangay.id}>{barangay.name}</option>)}
+              </select>
+            </label>
+          )}
           <label className="text-xs font-bold text-slate-600">Account status
             <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setActiveTab("all"); }} className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm">
               <option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive / suspended</option><option value="pending">Pending</option>
@@ -1236,7 +1261,9 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
           </label>
           <label className="text-xs font-bold text-slate-600">Sort by
             <select value={sortBy} onChange={(event) => setSortBy(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm">
-              <option value="priority">Pending approval first</option><option value="name">Name</option><option value="role">Role</option><option value="barangay">Barangay</option><option value="status">Status</option>
+              <option value="priority">Pending approval first</option><option value="name">Name</option><option value="role">Role</option>
+              {isBarangayCaptain ? <option value="purok">Purok</option> : <option value="barangay">Barangay</option>}
+              <option value="status">Status</option>
             </select>
           </label>
           <label className="text-xs font-bold text-slate-600">Order
@@ -1246,7 +1273,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
           </label>
         </div>
         <div className="mt-3 flex items-center justify-between gap-3 text-xs text-slate-500">
-          <span role="status">{loading ? "Loading accounts..." : `${filteredUsers.length} of ${users.length} accounts`}</span>
+          <span role="status">{loading ? "Loading accounts..." : `${filteredUsers.length} of ${users.length} accounts${assignedBarangay ? ` in ${assignedBarangay.name}` : ""}`}</span>
           <button type="button" onClick={resetFilters} className="rounded-lg px-3 py-2 font-bold text-emerald-700 hover:bg-emerald-50">Clear filters</button>
         </div>
       </section>
@@ -1258,7 +1285,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
               <tr className="text-[10px] font-black uppercase tracking-widest text-slate-400">
                 <th className="px-4 py-3">User Identity</th>
                 <th className="px-4 py-3">LGU Role</th>
-                <th className="hidden px-4 py-3 xl:table-cell">Assignment</th>
+                <th className={isBarangayCaptain ? "px-4 py-3" : "hidden px-4 py-3 xl:table-cell"}>{isBarangayCaptain ? "Purok" : "Assignment"}</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Actions</th>
               </tr>
@@ -1315,12 +1342,14 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                       </span>
                     </td>
 
-                    <td className="hidden px-4 py-3 xl:table-cell">
+                    <td className={isBarangayCaptain ? "px-4 py-3" : "hidden px-4 py-3 xl:table-cell"}>
                       <p className="text-xs font-bold text-slate-700">
-                        {user.barangay_name || "No barangay"}
+                        {isBarangayCaptain
+                          ? user.purok_name || (user.role === "collector" ? "Barangay-wide assignment" : "No purok assigned")
+                          : user.barangay_name || "No barangay"}
                       </p>
                       <p className="text-[10px] text-slate-400">
-                        {user.purok_name ||
+                        {isBarangayCaptain ? user.barangay_name || "No barangay" : user.purok_name ||
                           (user.role === "collector"
                             ? "Barangay-wide assignment"
                             : "No purok assigned")}
@@ -1478,13 +1507,15 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
               <div className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 text-xs">
                 <div>
                   <p className="text-[9px] font-black uppercase tracking-wide text-slate-400">
-                    Assignment
+                    {isBarangayCaptain ? "Purok" : "Assignment"}
                   </p>
                   <p className="mt-1 truncate font-bold text-slate-700">
-                    {user.barangay_name || "No barangay"}
+                    {isBarangayCaptain
+                      ? user.purok_name || (user.role === "collector" ? "Barangay-wide" : "No purok assigned")
+                      : user.barangay_name || "No barangay"}
                   </p>
                   <p className="truncate text-[10px] text-slate-400">
-                    {user.purok_name ||
+                    {isBarangayCaptain ? user.barangay_name || "No barangay" : user.purok_name ||
                       (user.role === "collector"
                         ? "Barangay-wide"
                         : "No purok")}
@@ -1879,16 +1910,19 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                     className="w-full appearance-none rounded-xl border border-slate-200 bg-white p-3 pr-10 text-sm"
                   >
                     <option value="">Select barangay</option>
-                    {availableCaptainBarangays.map((barangay) => (
-                      <option key={barangay.id} value={barangay.id}>
-                        {barangay.name}
-                      </option>
-                    ))}
+                    {barangays.map((barangay) => {
+                      const occupied = barangayCaptainIds.has(Number(barangay.id));
+                      return (
+                        <option key={barangay.id} value={barangay.id} disabled={occupied}>
+                          {barangay.name}{occupied ? " — Captain already assigned" : ""}
+                        </option>
+                      );
+                    })}
                   </select>
                   <ChevronDown className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-slate-400" />
                 </div>
                 <p className="mt-2 text-[10px] font-semibold text-slate-400">
-                  Only barangays without an existing Barangay Captain are available. One captain account is allowed per barangay.
+                  All active barangays are listed. Barangays with an assigned captain are disabled because only one captain account is allowed per barangay.
                 </p>
                 {availableCaptainBarangays.length === 0 && (
                   <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-[10px] font-bold text-amber-700">
