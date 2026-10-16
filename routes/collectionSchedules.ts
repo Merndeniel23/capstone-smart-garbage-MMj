@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { PoolConnection } from "mysql2/promise";
 import { db } from "../config/db.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 import { signedProofUrl } from "../config/storage.js";
@@ -31,6 +32,34 @@ async function getScheduleViewer(
   );
 
   return rows[0] || null;
+}
+
+/** Lock the current administrator and explicit barangay assignment for a write. */
+async function getScheduleManager(userId: number, connection: PoolConnection) {
+  const [rows] = await connection.query<any[]>(
+    `
+    SELECT u.id, u.role, u.barangay_id
+    FROM users u
+    INNER JOIN barangays b ON b.id = u.barangay_id
+    WHERE u.id = ?
+      AND u.role = 'admin'
+      AND u.status = 'active'
+      AND b.is_active = 1
+    LIMIT 1
+    FOR UPDATE
+    `,
+    [userId],
+  );
+  const manager = rows[0];
+  const barangayId = Number(manager?.barangay_id);
+
+  if (
+    manager?.role !== "admin" ||
+    !Number.isSafeInteger(barangayId) ||
+    barangayId <= 0
+  ) return null;
+
+  return { id: Number(manager.id), barangay_id: barangayId };
 }
 
 function normalizeTime(
@@ -204,18 +233,19 @@ router.get(
 );
 
 /**
- * ADD OR UPDATE COLLECTION SCHEDULE
+ * ADD OR UPDATE COLLECTION SCHEDULE IN THE ADMINISTRATOR'S ASSIGNED BARANGAY
  */
 router.post(
   "/",
   requireAuth,
   async (req: AuthRequest, res) => {
+    let connection: PoolConnection | null = null;
     try {
-      if (req.user?.role !== "super_admin") {
+      if (req.user?.role !== "admin") {
         return res.status(403).json({
           success: false,
           message:
-            "Municipal Administrator access required.",
+            "Barangay Administrator access required.",
         });
       }
 
@@ -236,17 +266,6 @@ router.post(
         "Saturday",
         "Sunday",
       ];
-
-      const viewer = await getScheduleViewer(
-        Number(req.user.id),
-      );
-
-      if (viewer?.role !== "super_admin") {
-        return res.status(403).json({
-          success: false,
-          message: "An active Municipal Administrator account is required.",
-        });
-      }
 
       const requestedBarangayId = Number(
         barangay_id,
@@ -301,19 +320,27 @@ router.post(
         });
       }
 
-      const [barangayRows] = await db.query<any[]>(
-        `SELECT id FROM barangays WHERE id = ? AND is_active = 1 LIMIT 1`,
-        [requestedBarangayId],
-      );
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+      const manager = await getScheduleManager(Number(req.user.id), connection);
 
-      if (!barangayRows[0]) {
-        return res.status(404).json({
+      if (!manager) {
+        await connection.rollback();
+        return res.status(403).json({
           success: false,
-          message: "The selected barangay was not found or is inactive.",
+          message: "An active Barangay Administrator with an assigned active barangay is required.",
         });
       }
 
-      await db.query(
+      if (requestedBarangayId !== manager.barangay_id) {
+        await connection.rollback();
+        return res.status(403).json({
+          success: false,
+          message: "You can manage schedules only for your assigned barangay.",
+        });
+      }
+
+      await connection.query(
         `
         INSERT INTO barangay_collection_schedules
         (
@@ -335,14 +362,16 @@ router.post(
           created_by = VALUES(created_by)
         `,
         [
-          requestedBarangayId,
+          manager.barangay_id,
           day_of_week,
           normalizedStartTime,
           normalizedEndTime,
           normalizedNotes || null,
-          req.user.id,
+          manager.id,
         ],
       );
+
+      await connection.commit();
 
       return res.status(201).json({
         success: true,
@@ -350,6 +379,7 @@ router.post(
           "Collection schedule saved successfully.",
       });
     } catch (error) {
+      if (connection) await connection.rollback();
       console.error(
         "Save collection schedule error:",
         error,
@@ -360,6 +390,8 @@ router.post(
         message:
           "Failed to save collection schedule.",
       });
+    } finally {
+      connection?.release();
     }
   },
 );
@@ -367,17 +399,18 @@ router.post(
 
 /**
  * UPDATE COLLECTION SCHEDULE
- * Only the Municipal Administrator may edit a published schedule.
+ * Only the assigned Barangay Administrator may edit a published schedule.
  */
 router.put(
   "/:id",
   requireAuth,
   async (req: AuthRequest, res) => {
+    let connection: PoolConnection | null = null;
     try {
-      if (req.user?.role !== "super_admin") {
+      if (req.user?.role !== "admin") {
         return res.status(403).json({
           success: false,
-          message: "Municipal Administrator access required.",
+          message: "Barangay Administrator access required.",
         });
       }
 
@@ -439,54 +472,65 @@ router.put(
         });
       }
 
-      const [barangayRows] = await db.query<any[]>(
-        `SELECT id FROM barangays WHERE id = ? AND is_active = 1 LIMIT 1`,
-        [requestedBarangayId],
-      );
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+      const manager = await getScheduleManager(Number(req.user.id), connection);
 
-      if (!barangayRows[0]) {
-        return res.status(404).json({
+      if (!manager) {
+        await connection.rollback();
+        return res.status(403).json({
           success: false,
-          message: "The selected barangay was not found or is inactive.",
+          message: "An active Barangay Administrator with an assigned active barangay is required.",
         });
       }
 
-      const [result]: any = await db.execute(
+      if (requestedBarangayId !== manager.barangay_id) {
+        await connection.rollback();
+        return res.status(403).json({
+          success: false,
+          message: "You can manage schedules only for your assigned barangay.",
+        });
+      }
+
+      const [result]: any = await connection.execute(
         `
           UPDATE barangay_collection_schedules
           SET
-            barangay_id = ?,
             day_of_week = ?,
             start_time = ?,
             end_time = ?,
             notes = ?,
             is_active = 1,
             created_by = ?
-          WHERE id = ?
+          WHERE id = ? AND barangay_id = ?
         `,
         [
-          requestedBarangayId,
           dayOfWeek,
           normalizedStartTime,
           normalizedEndTime,
           normalizedNotes || null,
-          req.user.id,
+          manager.id,
           scheduleId,
+          manager.barangay_id,
         ],
       );
 
       if (Number(result.affectedRows) !== 1) {
+        await connection.rollback();
         return res.status(404).json({
           success: false,
           message: "Collection schedule not found.",
         });
       }
 
+      await connection.commit();
+
       return res.json({
         success: true,
         message: "Collection schedule updated successfully.",
       });
     } catch (error: any) {
+      if (connection) await connection.rollback();
       if (error?.code === "ER_DUP_ENTRY") {
         return res.status(409).json({
           success: false,
@@ -499,6 +543,8 @@ router.put(
         success: false,
         message: "Failed to update collection schedule.",
       });
+    } finally {
+      connection?.release();
     }
   },
 );
@@ -510,12 +556,13 @@ router.delete(
   "/:id",
   requireAuth,
   async (req: AuthRequest, res) => {
+    let connection: PoolConnection | null = null;
     try {
-      if (req.user?.role !== "super_admin") {
+      if (req.user?.role !== "admin") {
         return res.status(403).json({
           success: false,
           message:
-            "Municipal Administrator access required.",
+            "Barangay Administrator access required.",
         });
       }
 
@@ -534,27 +581,29 @@ router.delete(
         });
       }
 
-      const viewer = await getScheduleViewer(
-        Number(req.user.id),
-      );
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+      const manager = await getScheduleManager(Number(req.user.id), connection);
 
-      if (viewer?.role !== "super_admin") {
+      if (!manager) {
+        await connection.rollback();
         return res.status(403).json({
           success: false,
-          message: "An active Municipal Administrator account is required.",
+          message: "An active Barangay Administrator with an assigned active barangay is required.",
         });
       }
 
       const [result]: any =
-        await db.query(
+        await connection.query(
           `
           DELETE FROM barangay_collection_schedules
-          WHERE id = ?
+          WHERE id = ? AND barangay_id = ?
           `,
-          [scheduleId],
+          [scheduleId, manager.barangay_id],
         );
 
       if (result.affectedRows === 0) {
+        await connection.rollback();
         return res.status(404).json({
           success: false,
           message:
@@ -562,12 +611,15 @@ router.delete(
         });
       }
 
+      await connection.commit();
+
       return res.json({
         success: true,
         message:
           "Collection schedule deleted successfully.",
       });
     } catch (error) {
+      if (connection) await connection.rollback();
       console.error(
         "Delete collection schedule error:",
         error,
@@ -578,6 +630,8 @@ router.delete(
         message:
           "Failed to delete collection schedule.",
       });
+    } finally {
+      connection?.release();
     }
   },
 );

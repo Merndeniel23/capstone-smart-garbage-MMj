@@ -117,6 +117,8 @@ type InspectionFilter = 'all' | DatabaseStatus;
 export default function BinInspections() {
   const { userRole } = useAppState();
   const canCreateInspection = userRole === 'leader';
+  // UI guard only; backend must validate the leader's ownership/purok before deletion.
+  const canDeleteInspection = userRole === 'leader';
   const [inspections, setInspections] = useState<InspectionRecord[]>([]);
   const [availableBins, setAvailableBins] = useState<GarbageBinOption[]>([]);
   const [binsLoading, setBinsLoading] = useState(false);
@@ -138,6 +140,9 @@ export default function BinInspections() {
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [selectedInspection, setSelectedInspection] = useState<InspectionRecord | null>(null);
   const [expandedPhoto, setExpandedPhoto] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<InspectionRecord | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const detailCloseRef = useRef<HTMLButtonElement>(null);
   const lastDetailTriggerRef = useRef<HTMLButtonElement | null>(null);
 
@@ -149,7 +154,7 @@ export default function BinInspections() {
   };
 
   useEffect(() => {
-    if (!selectedInspection) return;
+    if (!selectedInspection || deleteTarget) return;
 
     detailCloseRef.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -165,7 +170,59 @@ export default function BinInspections() {
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [selectedInspection, expandedPhoto]);
+  }, [selectedInspection, expandedPhoto, deleteTarget]);
+
+  useEffect(() => {
+    if (!deleteTarget || deleting) return;
+    const handleDeleteEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setDeleteTarget(null);
+        setDeleteError('');
+      }
+    };
+    document.addEventListener('keydown', handleDeleteEscape);
+    return () => document.removeEventListener('keydown', handleDeleteEscape);
+  }, [deleteTarget, deleting]);
+
+  const requestDeleteInspection = (inspection: InspectionRecord) => {
+    if (!canDeleteInspection || deleting) return;
+    setDeleteError('');
+    setDeleteTarget(inspection);
+  };
+
+  const confirmDeleteInspection = async () => {
+    if (!deleteTarget || !canDeleteInspection || deleting) return;
+
+    const inspectionId = Number(deleteTarget.id);
+    if (!Number.isInteger(inspectionId) || inspectionId <= 0) {
+      setDeleteError('Invalid inspection record.');
+      return;
+    }
+
+    setDeleting(true);
+    setDeleteError('');
+    setError('');
+    setSuccessMessage('');
+
+    try {
+      // This endpoint must exist on the backend and enforce the leader's assigned scope.
+      await apiRequest(`${API_URL}/${inspectionId}`, { method: 'DELETE' });
+      setInspections((current) => current.filter((item) => item.id !== inspectionId));
+      if (selectedInspection?.id === inspectionId) {
+        setSelectedInspection(null);
+        setExpandedPhoto(false);
+      }
+      setDeleteTarget(null);
+      setSuccessMessage(`Inspection #${inspectionId} deleted successfully.`);
+    } catch (err) {
+      setDeleteError(
+        err instanceof Error ? err.message : 'Unable to delete this inspection.',
+      );
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const loadAvailableBins = async () => {
     if (!canCreateInspection) {
@@ -849,6 +906,7 @@ export default function BinInspections() {
                   {' · '}
                   {formatDate(item.inspected_at)}
                 </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={(event) => {
@@ -862,6 +920,18 @@ export default function BinInspections() {
                   <Eye className="h-4 w-4" aria-hidden="true" />
                   View Details
                 </button>
+                {canDeleteInspection && (
+                  <button
+                    type="button"
+                    onClick={() => requestDeleteInspection(item)}
+                    className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-bold text-rose-700 transition hover:bg-rose-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500"
+                    aria-label={`Delete inspection ${item.id}`}
+                  >
+                    <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    Delete
+                  </button>
+                )}
+                </div>
               </div>
             </article>
           ))}
@@ -920,6 +990,19 @@ export default function BinInspections() {
                 <X className="h-5 w-5" aria-hidden="true" />
               </button>
             </div>
+
+            {canDeleteInspection && !expandedPhoto && (
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => requestDeleteInspection(selectedInspection)}
+                  className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100"
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                  Delete inspection
+                </button>
+              </div>
+            )}
 
             {expandedPhoto && selectedInspection.photo_path ? (
               <div className="mt-5 space-y-3">
@@ -995,6 +1078,57 @@ export default function BinInspections() {
                 </div>
               </div>
             )}
+          </section>
+        </div>
+      )}
+      {deleteTarget && canDeleteInspection && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 p-4"
+          role="presentation"
+        >
+          <section
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-inspection-title"
+            aria-describedby="delete-inspection-description"
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+          >
+            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-rose-50 text-rose-600">
+              <Trash2 className="h-6 w-6" aria-hidden="true" />
+            </div>
+            <h2 id="delete-inspection-title" className="text-xl font-black text-slate-900">
+              Delete inspection #{deleteTarget.id}?
+            </h2>
+            <p id="delete-inspection-description" className="mt-2 text-sm leading-relaxed text-slate-600">
+              This will request deletion of the inspection for{' '}
+              <strong>{deleteTarget.bin_code || `Bin ID ${deleteTarget.bin_id || 'Unknown'}`}</strong>.
+              This action may be permanent and cannot be undone.
+            </p>
+            {deleteError && (
+              <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">
+                {deleteError}
+              </p>
+            )}
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                autoFocus
+                disabled={deleting}
+                onClick={() => { setDeleteTarget(null); setDeleteError(''); }}
+                className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => void confirmDeleteInspection()}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-bold text-white hover:bg-rose-700 disabled:cursor-wait disabled:opacity-60"
+              >
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+                {deleting ? 'Deleting...' : 'Yes, delete'}
+              </button>
+            </div>
           </section>
         </div>
       )}
