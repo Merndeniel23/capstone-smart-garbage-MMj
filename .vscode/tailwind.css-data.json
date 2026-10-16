@@ -2,6 +2,10 @@
   "version": 1.1,
   "atDirectives": [
     {
+      "name": "@custom-variant",
+      "description": "Defines a custom Tailwind CSS variant, such as the dashboard dark mode variant."
+    },
+    {
       "name": "@theme",
       "description": "Defines Tailwind CSS theme variables used to generate utility classes."
     },
