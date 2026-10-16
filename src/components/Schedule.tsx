@@ -118,6 +118,29 @@ function formatTimeRange(
   return "Time to be announced";
 }
 
+/** Count active collection windows by their weekly recurring weekday. */
+function countActiveSchedulesByWeekday(
+  entries: CollectionSchedule[],
+): Map<DayOfWeek, number> {
+  const counts = new Map<DayOfWeek, number>();
+  for (const schedule of entries) {
+    if (Number(schedule.is_active) !== 1) continue;
+    counts.set(schedule.day_of_week, (counts.get(schedule.day_of_week) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/** Show only active windows as published for the selected calendar day. */
+function getPublishedSchedulesForWeekday(
+  entries: CollectionSchedule[],
+  weekday: DayOfWeek,
+): CollectionSchedule[] {
+  return entries.filter(
+    (schedule) =>
+      Number(schedule.is_active) === 1 && schedule.day_of_week === weekday,
+  );
+}
+
 function roleLabel(role: string): string {
   switch (role) {
     case "admin":
@@ -187,6 +210,9 @@ export default function Schedule() {
 
   const canManage = currentUser?.role === "super_admin";
   const isMunicipal = currentUser?.role === "super_admin";
+  // With all barangays selected, multiple weekly plans can cover every weekday.
+  // Use dots rather than filling the entire calendar green in that overview.
+  const isAllBarangaysView = isMunicipal && !barangayFilter;
 
   const barangays = useMemo(() => {
     if (barangayOptions.length) {
@@ -240,9 +266,7 @@ export default function Schedule() {
   const selectedWeekday = DAYS[(selectedDate.getDay() + 6) % 7];
   const selectedDateSchedules = useMemo(
     () =>
-      visibleSchedules.filter(
-        (schedule) => schedule.day_of_week === selectedWeekday,
-      ),
+      getPublishedSchedulesForWeekday(visibleSchedules, selectedWeekday),
     [visibleSchedules, selectedWeekday],
   );
   const timelinePageCount = Math.max(
@@ -302,13 +326,9 @@ export default function Schedule() {
     return cells;
   }, [visibleMonth]);
 
-  const scheduledWeekdays = useMemo(
-    () =>
-      new Set(
-        visibleSchedules.map(
-          (schedule) => schedule.day_of_week,
-        ),
-      ),
+  // Filters apply first; inactive plans never color calendar dates.
+  const scheduledWeekdayCounts = useMemo(
+    () => countActiveSchedulesByWeekday(visibleSchedules),
     [visibleSchedules],
   );
 
@@ -409,8 +429,8 @@ export default function Schedule() {
     ][weekdayIndex] as DayOfWeek;
   };
 
-  const hasScheduleOnDay = (day: number) =>
-    scheduledWeekdays.has(weekdayForDay(day));
+  const scheduleCountOnDay = (day: number) =>
+    scheduledWeekdayCounts.get(weekdayForDay(day)) ?? 0;
 
   const openNewForm = (date?: Date) => {
     const targetDate = date || selectedDate;
@@ -944,7 +964,8 @@ export default function Schedule() {
             }
 
             const todayCell = isToday(day);
-            const scheduledCell = hasScheduleOnDay(day);
+            const scheduleCount = scheduleCountOnDay(day);
+            const scheduledCell = scheduleCount > 0;
             const selectedCell = selectedDate.getFullYear() === visibleMonth.getFullYear() && selectedDate.getMonth() === visibleMonth.getMonth() && selectedDate.getDate() === day;
             const dayLabel = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
             const CalendarDay = "button";
@@ -954,19 +975,19 @@ export default function Schedule() {
                 type="button"
                 key={`${visibleMonth.getFullYear()}-${visibleMonth.getMonth()}-${day}`}
                 onClick={() => setSelectedDate(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day))}
-                aria-label={`${dayLabel}${scheduledCell ? ", collection scheduled" : ", no scheduled collection"}`}
+                aria-label={`${dayLabel}${scheduledCell ? `, ${scheduleCount} active collection ${scheduleCount === 1 ? "window" : "windows"}` : ", no active collection scheduled"}`}
                 aria-pressed={selectedCell}
                 aria-current={todayCell ? "date" : undefined}
                 className={`relative min-h-11 rounded-xl py-2 text-center text-xs font-medium transition-colors ${selectedCell ? "outline-2 outline-offset-2 outline-emerald-500" : ""} ${
                   todayCell
                     ? "bg-emerald-500 font-bold text-white shadow-sm ring-2 ring-emerald-100"
-                    : scheduledCell
+                    : scheduledCell && !isAllBarangaysView
                       ? "sg-calendar-scheduled-day bg-emerald-50 font-bold text-emerald-700"
                       : "text-slate-600 hover:bg-slate-50"
                 }`}
                 title={
                   scheduledCell
-                    ? `${weekdayForDay(day)} collection`
+                    ? `${scheduleCount} active collection ${scheduleCount === 1 ? "window" : "windows"} on ${weekdayForDay(day)}`
                     : undefined
                 }
               >
@@ -985,8 +1006,9 @@ export default function Schedule() {
         </div>
 
         <p className="mt-4 text-[11px] text-slate-400">
-          Highlighted dates repeat weekly based on the active barangay
-          collection plan.
+          {isAllBarangaysView
+            ? "Green dots show active weekly collection windows across all barangays. Choose a barangay to highlight its specific collection days."
+            : "Green dates and dots show active collection windows recurring weekly for the selected barangay scope."}
         </p>
       </div>
 
@@ -1092,8 +1114,8 @@ export default function Schedule() {
               </div>
 
               <div className="flex items-center gap-2 self-end sm:self-center">
-                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-emerald-600">
-                  Active
+                <span className={`rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wider ${Number(item.is_active) === 1 ? "border-emerald-200 bg-emerald-50 text-emerald-600" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
+                  {Number(item.is_active) === 1 ? "Active" : "Inactive"}
                 </span>
                 {canManage &&
                   Number(item.barangay_id) ===
