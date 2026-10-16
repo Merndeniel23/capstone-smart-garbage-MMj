@@ -208,8 +208,19 @@ export default function Schedule() {
   });
   const [savingBarangay, setSavingBarangay] = useState(false);
 
-  const canManage = currentUser?.role === "super_admin";
   const isMunicipal = currentUser?.role === "super_admin";
+  const isBarangayAdmin = currentUser?.role === "admin";
+  const assignedBarangayId = currentUser?.barangay_id;
+  const hasValidBarangayAssignment =
+    typeof assignedBarangayId === "number" &&
+    Number.isInteger(assignedBarangayId) &&
+    assignedBarangayId > 0;
+  // Only a barangay administrator may change collection schedules for their own barangay.
+  const canManage = isBarangayAdmin && hasValidBarangayAssignment;
+  // Keep the existing municipal-only barangay profile/settings permissions separate.
+  const canManageBarangaySettings = isMunicipal;
+  const canManageSchedule = (schedule: CollectionSchedule): boolean =>
+    canManage && Number(schedule.barangay_id) === assignedBarangayId;
   // With all barangays selected, multiple weekly plans can cover every weekday.
   // Use dots rather than filling the entire calendar green in that overview.
   const isAllBarangaysView = isMunicipal && !barangayFilter;
@@ -230,9 +241,11 @@ export default function Schedule() {
     () =>
       schedules.filter((schedule) => {
         const matchesBarangay =
-          !isMunicipal ||
-          !barangayFilter ||
-          String(schedule.barangay_id) === barangayFilter;
+          isMunicipal
+            ? !barangayFilter || String(schedule.barangay_id) === barangayFilter
+            : !isBarangayAdmin ||
+              (hasValidBarangayAssignment &&
+                Number(schedule.barangay_id) === assignedBarangayId);
 
         if (!matchesBarangay || !normalizedScheduleSearch) return matchesBarangay;
 
@@ -246,6 +259,9 @@ export default function Schedule() {
     [
       schedules,
       isMunicipal,
+      isBarangayAdmin,
+      hasValidBarangayAssignment,
+      assignedBarangayId,
       barangayFilter,
       normalizedScheduleSearch,
     ],
@@ -253,14 +269,14 @@ export default function Schedule() {
   const todayWeekday = DAYS[(today.getDay() + 6) % 7];
   const todaysPublishedSchedules = useMemo(
     () =>
-      schedules
+      visibleSchedules
         .filter(
           (schedule) =>
             Number(schedule.is_active) === 1 &&
             schedule.day_of_week === todayWeekday,
         )
         .sort((a, b) => a.barangay_name.localeCompare(b.barangay_name)),
-    [schedules, todayWeekday],
+    [visibleSchedules, todayWeekday],
   );
 
   const selectedWeekday = DAYS[(selectedDate.getDay() + 6) % 7];
@@ -297,12 +313,9 @@ export default function Schedule() {
   const weekStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - ((today.getDay() + 6) % 7));
   const dateForWeekday = (day: DayOfWeek) => new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + DAYS.indexOf(day));
 
-  const scopeLabel =
-    currentUser?.role === "super_admin"
-      ? "All barangays"
-      : currentUser?.barangay_name ||
-        schedules[0]?.barangay_name ||
-        "Assigned barangay";
+  const scopeLabel = isMunicipal
+    ? barangays.find(([id]) => String(id) === barangayFilter)?.[1] || "All barangays"
+    : currentUser?.barangay_name || "Assigned barangay";
 
   const calendarDays = useMemo(() => {
     const year = visibleMonth.getFullYear();
@@ -433,10 +446,14 @@ export default function Schedule() {
     scheduledWeekdayCounts.get(weekdayForDay(day)) ?? 0;
 
   const openNewForm = (date?: Date) => {
+    if (!canManage) {
+      setError("Only an assigned Barangay Administrator can manage collection schedules.");
+      return;
+    }
     const targetDate = date || selectedDate;
     setForm({
       ...emptyForm,
-      barangayId: barangayFilter || "",
+      barangayId: String(assignedBarangayId),
       dayOfWeek: DAYS[(targetDate.getDay() + 6) % 7],
     });
     setEditingScheduleId(null);
@@ -446,6 +463,10 @@ export default function Schedule() {
   };
 
   const openEditForm = (schedule: CollectionSchedule) => {
+    if (!canManageSchedule(schedule)) {
+      setError("You can edit schedules only for your assigned barangay.");
+      return;
+    }
     setForm({
       barangayId: String(schedule.barangay_id),
       dayOfWeek: schedule.day_of_week,
@@ -463,6 +484,10 @@ export default function Schedule() {
   const openDeleteDialog = (
     schedule: CollectionSchedule,
   ) => {
+    if (!canManageSchedule(schedule)) {
+      setError("You can delete schedules only for your assigned barangay.");
+      return;
+    }
     setError("");
     setNotice("");
     setDeleteTarget(schedule);
@@ -473,14 +498,21 @@ export default function Schedule() {
   ) => {
     event.preventDefault();
 
-    if (!canManage) {
-      setError("Only the Municipal Administrator can manage collection schedules.");
+    if (!canManage || !assignedBarangayId) {
+      setError("Only an assigned Barangay Administrator can manage collection schedules.");
       return;
     }
 
-    const selectedBarangayId = Number(form.barangayId);
-    if (!Number.isInteger(selectedBarangayId) || selectedBarangayId <= 0) {
-      setError("Please select a barangay.");
+    // Never trust a dropdown/form value to determine schedule ownership.
+    const selectedBarangayId = assignedBarangayId;
+    if (
+      editingScheduleId !== null &&
+      !schedules.some(
+        (schedule) =>
+          schedule.id === editingScheduleId && canManageSchedule(schedule),
+      )
+    ) {
+      setError("You can edit schedules only for your assigned barangay.");
       return;
     }
 
@@ -536,7 +568,10 @@ export default function Schedule() {
   };
 
   const deleteSchedule = async () => {
-    if (!deleteTarget || !canManage) return;
+    if (!deleteTarget || !canManageSchedule(deleteTarget)) {
+      setError("You can delete schedules only for your assigned barangay.");
+      return;
+    }
 
     setDeleting(true);
     setError("");
@@ -629,7 +664,7 @@ export default function Schedule() {
 
   const saveBarangaySettings = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canManage) return;
+    if (!canManageBarangaySettings) return;
 
     const barangayId = Number(settingsBarangayId);
     if (!Number.isInteger(barangayId) || barangayId <= 0) {
@@ -760,7 +795,7 @@ export default function Schedule() {
             Refresh
           </button>
 
-          {canManage && (
+          {canManageBarangaySettings && (
             <button
               type="button"
               onClick={() => openBarangaySettings()}
@@ -813,7 +848,7 @@ export default function Schedule() {
           <div>
             <p className="sg-today-kicker text-[10px] font-black uppercase tracking-widest text-emerald-700">Today's collection</p>
             <h2 className="sg-today-title mt-1 text-lg font-black text-emerald-950">{todayWeekday}</h2>
-            <p className="sg-today-copy mt-1 text-xs text-emerald-800">View-only for all users. Schedule management remains available only to the Municipal Administrator.</p>
+            <p className="sg-today-copy mt-1 text-xs text-emerald-800">Today's collection is visible here. Only assigned Barangay Administrators may add, edit, or delete their barangay schedules.</p>
           </div>
           <span className="sg-today-count rounded-full bg-white px-3 py-1.5 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200">
             {todaysPublishedSchedules.length} {todaysPublishedSchedules.length === 1 ? "barangay" : "barangays"}
@@ -852,13 +887,19 @@ export default function Schedule() {
         )}
       </section>
 
+      {isBarangayAdmin && !hasValidBarangayAssignment && (
+        <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+          This Barangay Administrator account has no valid barangay assignment. Schedule management is disabled until an administrator assigns the account to a barangay.
+        </div>
+      )}
+
       {isMunicipal && (
         <>
           <div className="flex gap-3 rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
             <Eye className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
             <div>
-              <p className="text-sm font-bold text-emerald-900">Municipal schedule management</p>
-              <p className="mt-1 text-sm leading-relaxed text-emerald-700">Municipal Administrators can create, edit, and remove collection schedules for all barangays. Other roles have read-only access.</p>
+              <p className="text-sm font-bold text-emerald-900">Municipal collection schedule overview</p>
+              <p className="mt-1 text-sm leading-relaxed text-emerald-700">Municipal Administrators can review schedules across barangays. Only the assigned Barangay Administrator can add, edit, or delete schedules for their own barangay.</p>
             </div>
           </div>
           <section
@@ -1117,9 +1158,7 @@ export default function Schedule() {
                 <span className={`rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wider ${Number(item.is_active) === 1 ? "border-emerald-200 bg-emerald-50 text-emerald-600" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
                   {Number(item.is_active) === 1 ? "Active" : "Inactive"}
                 </span>
-                {canManage &&
-                  Number(item.barangay_id) ===
-                    Number(currentUser?.barangay_id) && (
+                {canManageSchedule(item) && (
                     <button
                       type="button"
                       onClick={(event) => {
@@ -1146,7 +1185,7 @@ export default function Schedule() {
               <p className="mt-1 text-xs text-slate-400">
                 {error ? "Use Refresh to try again." : isMunicipal ? "No weekly collection plans have been published for the selected barangay scope." : canManage
                   ? "Add the first weekly collection day for your barangay."
-                  : "The Municipal Administrator has not published a weekly schedule yet."}
+                  : "No weekly collection schedule has been published for this scope yet."}
               </p>
               {canManage && (
                 <button
@@ -1183,9 +1222,9 @@ export default function Schedule() {
               : "Published Weekly Plan"}
           </h3>
           <p className="mb-4 mt-1 text-xs leading-relaxed text-emerald-700">
-            {isMunicipal ? "These recurring collection plans are managed by the Municipal Administrator. Select a date or collection window to review the available time and route notes." : canManage
+            {isMunicipal ? "Barangay Administrators manage their own collection schedules. Select a date or collection window to review the published time and route notes." : canManage
               ? "Publishing a collection day makes it visible to the assigned barangay users."
-              : "This is the official recurring collection plan published by the Municipal Administrator."}
+              : "This is the recurring collection plan published by the Barangay Administrator."}
           </p>
           {canManage && (
             <button
@@ -1201,7 +1240,7 @@ export default function Schedule() {
       </div>
 
 
-      {showBarangaySettings && canManage && (
+      {showBarangaySettings && canManageBarangaySettings && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 p-4 backdrop-blur-md"
           role="dialog"
@@ -1377,29 +1416,17 @@ export default function Schedule() {
             )}
 
             <div className="mt-6 space-y-4">
-              <label className="block">
+              <div className="block">
                 <span className="mb-2 block text-xs font-bold text-slate-700">
                   Barangay
                 </span>
-                <select
-                  value={form.barangayId}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      barangayId: event.target.value,
-                    }))
-                  }
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
-                  required
-                >
-                  <option value="">Select barangay</option>
-                  {barangayOptions.map((barangay) => (
-                    <option key={barangay.id} value={barangay.id}>
-                      {barangay.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <p className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-800">
+                  {scopeLabel}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Schedules can only be managed for your assigned barangay.
+                </p>
+              </div>
 
               <label className="block">
                 <span className="mb-2 block text-xs font-bold text-slate-700">
@@ -1619,7 +1646,7 @@ export default function Schedule() {
                     Your Access
                   </p>
                   <p className="text-sm font-bold text-slate-900">
-                    {canManage
+                    {canManageSchedule(selectedSchedule)
                       ? "Manage this barangay schedule"
                       : "View published schedule"}
                   </p>
@@ -1635,9 +1662,9 @@ export default function Schedule() {
               </div>
 
               <div
-                className={`grid gap-3 ${canManage ? "sm:grid-cols-3" : ""}`}
+                className={`grid gap-3 ${canManageSchedule(selectedSchedule) ? "sm:grid-cols-3" : ""}`}
               >
-                {canManage && (
+                {canManageSchedule(selectedSchedule) && (
                   <button
                     type="button"
                     onClick={() => openEditForm(selectedSchedule)}
@@ -1646,7 +1673,7 @@ export default function Schedule() {
                     Edit Schedule
                   </button>
                 )}
-                {canManage && (
+                {canManageSchedule(selectedSchedule) && (
                   <button
                     type="button"
                     onClick={() =>
@@ -1699,7 +1726,7 @@ export default function Schedule() {
         </div>
       )}
 
-      {deleteTarget && canManage && (
+      {deleteTarget && canManageSchedule(deleteTarget) && (
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/80 p-4 backdrop-blur-md"
           role="dialog"
