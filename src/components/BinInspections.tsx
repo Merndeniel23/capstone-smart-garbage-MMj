@@ -9,6 +9,7 @@ import {
 import {
   Camera,
   ClipboardCheck,
+  Eye,
   ImagePlus,
   MapPin,
   Plus,
@@ -16,6 +17,7 @@ import {
   Search,
   Trash2,
   X,
+  ZoomIn,
 } from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
 import Pagination, { DEFAULT_PAGE_SIZE } from './Pagination';
@@ -134,6 +136,36 @@ export default function BinInspections() {
   const [statusFilter, setStatusFilter] = useState<InspectionFilter>('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [selectedInspection, setSelectedInspection] = useState<InspectionRecord | null>(null);
+  const [expandedPhoto, setExpandedPhoto] = useState(false);
+  const detailCloseRef = useRef<HTMLButtonElement>(null);
+  const lastDetailTriggerRef = useRef<HTMLButtonElement | null>(null);
+
+  const closeInspectionDetails = () => {
+    setSelectedInspection(null);
+    setExpandedPhoto(false);
+    // Return keyboard focus to the record that opened the dialog.
+    window.requestAnimationFrame(() => lastDetailTriggerRef.current?.focus());
+  };
+
+  useEffect(() => {
+    if (!selectedInspection) return;
+
+    detailCloseRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        if (expandedPhoto) {
+          setExpandedPhoto(false);
+        } else {
+          closeInspectionDetails();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [selectedInspection, expandedPhoto]);
 
   const loadAvailableBins = async () => {
     if (!canCreateInspection) {
@@ -817,6 +849,19 @@ export default function BinInspections() {
                   {' · '}
                   {formatDate(item.inspected_at)}
                 </p>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    lastDetailTriggerRef.current = event.currentTarget;
+                    setExpandedPhoto(false);
+                    setSelectedInspection(item);
+                  }}
+                  className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-700 transition hover:bg-emerald-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+                  aria-label={`View details for inspection ${item.id}`}
+                >
+                  <Eye className="h-4 w-4" aria-hidden="true" />
+                  View Details
+                </button>
               </div>
             </article>
           ))}
@@ -839,6 +884,120 @@ export default function BinInspections() {
           </div>
         )}
       </section>
+
+      {selectedInspection && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-3 backdrop-blur-sm sm:p-6"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeInspectionDetails();
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="inspection-detail-title"
+            aria-describedby="inspection-detail-description"
+            className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl sm:p-6"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-xs font-bold uppercase tracking-widest text-emerald-600">Inspection record</p>
+                <h2 id="inspection-detail-title" className="mt-1 text-xl font-black text-slate-900">
+                  {selectedInspection.bin_code || `Bin ID ${selectedInspection.bin_id || 'Unknown'}`}
+                </h2>
+                <p id="inspection-detail-description" className="mt-1 text-sm text-slate-500">
+                  Inspection #{selectedInspection.id} · Physical garbage-bin inspection
+                </p>
+              </div>
+              <button
+                ref={detailCloseRef}
+                type="button"
+                onClick={closeInspectionDetails}
+                aria-label="Close inspection details"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500"
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </div>
+
+            {expandedPhoto && selectedInspection.photo_path ? (
+              <div className="mt-5 space-y-3">
+                <img
+                  src={selectedInspection.photo_path}
+                  alt={`Full-size inspection photo for ${selectedInspection.bin_code || `bin ${selectedInspection.bin_id || 'unknown'}`}`}
+                  className="max-h-[65vh] w-full rounded-xl bg-slate-900 object-contain"
+                />
+                <button
+                  type="button"
+                  onClick={() => setExpandedPhoto(false)}
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700"
+                >
+                  Back to inspection details
+                </button>
+              </div>
+            ) : (
+              <div className="mt-5 space-y-5">
+                <div className="flex flex-wrap items-center gap-3">
+                  {renderStatusBadge(selectedInspection.status)}
+                  {selectedInspection.estimated_fill_level !== null && selectedInspection.estimated_fill_level !== undefined && (
+                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
+                      Estimated fill: {selectedInspection.estimated_fill_level}%
+                    </span>
+                  )}
+                </div>
+
+                <dl className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <dt className="text-xs font-bold text-slate-500">Bin ID</dt>
+                    <dd className="mt-1 break-words text-sm font-semibold text-slate-900">{selectedInspection.bin_code || `Bin ID ${selectedInspection.bin_id || 'Unknown'}`}</dd>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <dt className="text-xs font-bold text-slate-500">Inspection date &amp; time</dt>
+                    <dd className="mt-1 text-sm font-semibold text-slate-900">{formatDate(selectedInspection.inspected_at)}</dd>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 p-3 sm:col-span-2">
+                    <dt className="text-xs font-bold text-slate-500">Inspected by</dt>
+                    <dd className="mt-1 break-words text-sm font-semibold text-slate-900">{selectedInspection.inspector || 'Unknown Purok Leader'}</dd>
+                  </div>
+                </dl>
+
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Remarks</h3>
+                  <p className="mt-2 whitespace-pre-wrap break-words rounded-xl bg-slate-50 p-4 text-sm text-slate-700">
+                    {selectedInspection.remarks || 'No remarks provided.'}
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="mb-2 text-sm font-bold text-slate-900">Inspection photo</h3>
+                  {selectedInspection.photo_path ? (
+                    <button
+                      type="button"
+                      onClick={() => setExpandedPhoto(true)}
+                      className="group relative block w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500"
+                      aria-label={`Enlarge inspection photo for inspection ${selectedInspection.id}`}
+                    >
+                      <img
+                        src={selectedInspection.photo_path}
+                        alt={`Inspection photo for ${selectedInspection.bin_code || `bin ${selectedInspection.bin_id || 'unknown'}`}`}
+                        className="max-h-72 w-full object-contain"
+                      />
+                      <span className="absolute bottom-3 right-3 flex items-center gap-1.5 rounded-lg bg-slate-900/85 px-3 py-2 text-xs font-bold text-white">
+                        <ZoomIn className="h-4 w-4" aria-hidden="true" /> Enlarge photo
+                      </span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
+                      <Camera className="h-5 w-5" aria-hidden="true" /> No photo attached to this inspection.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }
