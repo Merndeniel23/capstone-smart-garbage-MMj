@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleLogin } from '@react-oauth/google';
 import EmailVerificationForm from './EmailVerificationForm';
@@ -51,6 +51,11 @@ const [successMessage, setSuccessMessage] = useState('');
 
 const [forgotPasswordEmail, setForgotPasswordEmail] = useState('');
 const [showForgotModal, setShowForgotModal] = useState(false);
+const [forgotError, setForgotError] = useState('');
+const [forgotNotice, setForgotNotice] = useState('');
+const forgotDialogRef = useRef<HTMLDialogElement>(null);
+const forgotFeedbackRef = useRef<HTMLDivElement>(null);
+const recoveryRequestInFlight = useRef(false);
 
 const [forgotStep, setForgotStep] = useState<'email' | 'reset'>('email');
 const [forgotOtp, setForgotOtp] = useState('');
@@ -61,6 +66,25 @@ const [forgotLoading, setForgotLoading] = useState(false);
 const [resetLoading, setResetLoading] = useState(false);
 const [resendCountdown, setResendCountdown] = useState(0);
 
+  useEffect(() => {
+    const dialog = forgotDialogRef.current;
+    if (!showForgotModal || !dialog) return;
+
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    if (!dialog.open) dialog.showModal();
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      if (dialog.open) dialog.close();
+      document.body.style.overflow = previousOverflow;
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+    };
+  }, [showForgotModal]);
+
+  useEffect(() => {
+    if (forgotError) forgotFeedbackRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [forgotError]);
 
 
   useEffect(() => {
@@ -89,6 +113,8 @@ const [resendCountdown, setResendCountdown] = useState(0);
     setForgotLoading(false);
     setResetLoading(false);
     setResendCountdown(0);
+    setForgotError('');
+    setForgotNotice('');
     setError('');
     setSuccessMessage('');
   };
@@ -419,21 +445,23 @@ const [resendCountdown, setResendCountdown] = useState(0);
   };
 
 const sendForgotPasswordOtp = async () => {
-  setError('');
-  setSuccessMessage('');
+  if (recoveryRequestInFlight.current) return false;
+  setForgotError('');
+  setForgotNotice('');
 
   const email = forgotPasswordEmail.trim().toLowerCase();
 
   if (!email) {
-    setError('Please enter your email.');
+    setForgotError('Please enter your email.');
     return false;
   }
 
   if (!validateEmail(email)) {
-    setError('Please enter a valid email address.');
+    setForgotError('Please enter a valid email address.');
     return false;
   }
 
+  recoveryRequestInFlight.current = true;
   setForgotLoading(true);
 
   try {
@@ -453,25 +481,29 @@ const sendForgotPasswordOtp = async () => {
       .catch(() => ({}));
 
     if (!response.ok) {
-      setError(
-        data.message || 'Unable to send OTP.',
+      setForgotError(
+        data.message || (response.status >= 500
+          ? 'Password recovery is temporarily unavailable. Please try again.'
+          : 'Unable to send the code. Please try again.'),
       );
       return false;
     }
 
-    setSuccessMessage(
+    setForgotNotice(
       data.message ||
         'If the account exists, an OTP has been sent.',
     );
 
     setForgotStep('reset');
+    setForgotOtp('');
     setResendCountdown(60);
     return true;
   } catch (err) {
     console.error(err);
-    setError('Cannot connect to the server.');
+    setForgotError('Cannot connect to the server. Please try again.');
     return false;
   } finally {
+    recoveryRequestInFlight.current = false;
     setForgotLoading(false);
   }
 };
@@ -484,7 +516,7 @@ const handleForgotPasswordSubmit = async (
 };
 
 const handleResendOtp = async () => {
-  if (forgotLoading || resendCountdown > 0) {
+  if (recoveryRequestInFlight.current || resendCountdown > 0) {
     return;
   }
 
@@ -496,19 +528,20 @@ const handleResetPasswordSubmit = async (
 ) => {
   e.preventDefault();
 
-  setError('');
-  setSuccessMessage('');
+  if (recoveryRequestInFlight.current) return;
+  setForgotError('');
+  setForgotNotice('');
 
   const normalizedEmail =
     forgotPasswordEmail.trim().toLowerCase();
 
   if (!/^\d{6}$/.test(forgotOtp.trim())) {
-    setError('Please enter a valid 6-digit OTP.');
+    setForgotError('Please enter a valid 6-digit OTP.');
     return;
   }
 
   if (!newPassword || !confirmNewPassword) {
-    setError(
+    setForgotError(
       'Please fill in both password fields.',
     );
     return;
@@ -521,17 +554,18 @@ const handleResetPasswordSubmit = async (
     !/[a-z]/.test(newPassword) ||
     !/\d/.test(newPassword)
   ) {
-    setError(
+    setForgotError(
       'New password must be 8-72 characters with uppercase, lowercase, and a number.',
     );
     return;
   }
 
   if (newPassword !== confirmNewPassword) {
-    setError('New passwords do not match.');
+    setForgotError('New passwords do not match.');
     return;
   }
 
+  recoveryRequestInFlight.current = true;
   setResetLoading(true);
 
   try {
@@ -555,34 +589,26 @@ const handleResetPasswordSubmit = async (
       .catch(() => ({}));
 
     if (!response.ok) {
-      setError(
+      setForgotError(
         data.message ||
-          'Unable to reset password.',
+          (response.status >= 500
+            ? 'Password recovery is temporarily unavailable. Please try again.'
+            : 'Unable to reset the password. Check the latest code and try again.'),
       );
       return;
     }
 
+    resetForgotPasswordState();
+    setActiveTab('login');
     setLoginEmail(normalizedEmail);
-    setForgotOtp('');
-    setNewPassword('');
-    setConfirmNewPassword('');
-
-    setSuccessMessage(
-      data.message ||
-        'Password changed successfully. You may now sign in.',
-    );
-
-    window.setTimeout(() => {
-      resetForgotPasswordState();
-      setActiveTab('login');
-      setSuccessMessage(
-        'Password changed successfully. You may now sign in.',
-      );
-    }, 1200);
+    setLoginPassword('');
+    setShowPassword(false);
+    setSuccessMessage(data.message || 'Password changed successfully. You may now sign in.');
   } catch (err) {
     console.error(err);
-    setError('Cannot connect to the server.');
+    setForgotError('Cannot connect to the server. Please try again.');
   } finally {
+    recoveryRequestInFlight.current = false;
     setResetLoading(false);
   }
 };
@@ -768,6 +794,9 @@ const handleResetPasswordSubmit = async (
                     setNewPassword('');
                     setConfirmNewPassword('');
                     setResendCountdown(0);
+                    setForgotError('');
+                    setForgotNotice('');
+                    setShowPassword(false);
                     setError('');
                     setSuccessMessage('');
                   }}
@@ -1018,28 +1047,53 @@ const handleResetPasswordSubmit = async (
 
       {/* FORGOT PASSWORD MODAL */}
       {showForgotModal && (
-        <div className="auth-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-stone-900/60 p-4 backdrop-blur-sm">
-          <div className="auth-modal-card w-full max-w-md space-y-5 rounded-3xl border border-stone-200 bg-white p-6 shadow-2xl sm:p-8">
+          <dialog
+            ref={forgotDialogRef}
+            aria-labelledby="forgot-password-title"
+            aria-describedby="forgot-password-description"
+            aria-busy={forgotLoading || resetLoading}
+            onCancel={(event) => {
+              event.preventDefault();
+              if (!recoveryRequestInFlight.current) resetForgotPasswordState();
+            }}
+            className="auth-modal-card m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md space-y-5 overflow-y-auto overscroll-contain rounded-3xl border border-stone-200 bg-white p-6 shadow-2xl backdrop:bg-stone-900/60 backdrop:backdrop-blur-sm sm:p-8"
+          >
             <div className="flex items-center gap-3">
               <span className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-700">
                 <HelpCircle className="w-5 h-5" />
               </span>
-              <h3 className="text-sm font-black text-stone-800 uppercase tracking-tight">
+              <h3 id="forgot-password-title" className="text-sm font-black text-stone-800 uppercase tracking-tight">
                 {forgotStep === 'email' ? 'Forgot Password?' : 'Enter OTP & New Password'}
               </h3>
             </div>
 
-            <p className="text-[11px] text-stone-500 leading-relaxed font-medium">
+            <p id="forgot-password-description" className="text-[11px] text-stone-500 leading-relaxed font-medium">
               {forgotStep === 'email'
-                ? 'Enter your registered email address. We will send a six-digit OTP to your email.'
+                ? 'Enter your registered or recovery email address. We will send a six-digit OTP to your email.'
                 : `Enter the OTP sent to ${forgotPasswordEmail} and choose your new password.`}
             </p>
 
+            {forgotError && (
+              <div ref={forgotFeedbackRef} role="alert" className="flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50 p-3.5 text-xs font-semibold leading-relaxed text-rose-700">
+                <ShieldAlert aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+                <p>{forgotError}</p>
+              </div>
+            )}
+            {forgotNotice && (
+              <div role="status" className="flex items-start gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-xs font-semibold leading-relaxed text-emerald-800">
+                <CheckCircle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+                <p>{forgotNotice}</p>
+              </div>
+            )}
+
             {forgotStep === 'email' ? (
-              <form onSubmit={handleForgotPasswordSubmit} className="auth-form">
+              <form key="request-reset-code" onSubmit={handleForgotPasswordSubmit} className="auth-form">
                 <input
                   type="email"
                   required
+                  autoFocus
+                  autoComplete="email"
+                  disabled={forgotLoading || resetLoading}
                   placeholder="Enter your email address"
                   value={forgotPasswordEmail}
                   onChange={(e) => setForgotPasswordEmail(e.target.value)}
@@ -1050,13 +1104,14 @@ const handleResetPasswordSubmit = async (
                   <button
                     type="button"
                     onClick={resetForgotPasswordState}
+                    disabled={forgotLoading || resetLoading}
                     className="auth-secondary-action flex-1 rounded-xl border border-stone-200 py-2.5 text-[10px] font-extrabold uppercase tracking-wider text-stone-500 transition-colors hover:bg-stone-50"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    disabled={forgotLoading}
+                    disabled={forgotLoading || resetLoading}
                     className="auth-primary-action flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl border-none bg-emerald-700 py-2.5 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {forgotLoading && (
@@ -1067,12 +1122,15 @@ const handleResetPasswordSubmit = async (
                 </div>
               </form>
             ) : (
-              <form onSubmit={handleResetPasswordSubmit} className="auth-form">
+              <form key="confirm-password-reset" onSubmit={handleResetPasswordSubmit} className="auth-form">
                 <input
                   type="text"
                   inputMode="numeric"
                   maxLength={6}
                   required
+                  autoFocus
+                  autoComplete="one-time-code"
+                  disabled={forgotLoading || resetLoading}
                   placeholder="Enter 6-digit OTP"
                   value={forgotOtp}
                   onChange={(e) => setForgotOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
@@ -1089,6 +1147,7 @@ const handleResetPasswordSubmit = async (
                     onClick={handleResendOtp}
                     disabled={
                       forgotLoading ||
+                      resetLoading ||
                       resendCountdown > 0
                     }
                     className="auth-accent text-[10px] font-extrabold text-emerald-700 hover:underline disabled:cursor-not-allowed disabled:text-stone-400 disabled:no-underline"
@@ -1101,9 +1160,15 @@ const handleResetPasswordSubmit = async (
                   </button>
                 </div>
 
+                <p className="text-[11px] leading-relaxed text-stone-500">
+                  Use the code from the most recent email. Resending replaces the previous code.
+                </p>
+
                 <input
                   type={showPassword ? 'text' : 'password'}
                   required
+                  autoComplete="new-password"
+                  disabled={forgotLoading || resetLoading}
                   minLength={8}
                   maxLength={72}
                   placeholder="New password"
@@ -1115,6 +1180,8 @@ const handleResetPasswordSubmit = async (
                 <input
                   type={showPassword ? 'text' : 'password'}
                   required
+                  autoComplete="new-password"
+                  disabled={forgotLoading || resetLoading}
                   minLength={8}
                   maxLength={72}
                   placeholder="Confirm new password"
@@ -1134,14 +1201,15 @@ const handleResetPasswordSubmit = async (
                 <div className="auth-modal-actions">
                   <button
                     type="button"
+                    disabled={forgotLoading || resetLoading}
                     onClick={() => {
                       setForgotStep('email');
                       setForgotOtp('');
                       setNewPassword('');
                       setConfirmNewPassword('');
                       setResendCountdown(0);
-                      setError('');
-                      setSuccessMessage('');
+                      setForgotError('');
+                      setForgotNotice('');
                     }}
                     className="auth-secondary-action flex-1 rounded-xl border border-stone-200 py-2.5 text-[10px] font-extrabold uppercase tracking-wider text-stone-500 transition-colors hover:bg-stone-50"
                   >
@@ -1149,7 +1217,7 @@ const handleResetPasswordSubmit = async (
                   </button>
                   <button
                     type="submit"
-                    disabled={resetLoading}
+                    disabled={forgotLoading || resetLoading}
                     className="auth-primary-action flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl border-none bg-emerald-700 py-2.5 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {resetLoading && (
@@ -1162,8 +1230,7 @@ const handleResetPasswordSubmit = async (
                 </div>
               </form>
             )}
-          </div>
-        </div>
+          </dialog>
       )}
     </div>
   );
