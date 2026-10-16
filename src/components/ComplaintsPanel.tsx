@@ -266,6 +266,12 @@ export default function ComplaintsPanel({
     useRef<HTMLInputElement>(null);
   const complaintCameraInputRef =
     useRef<HTMLInputElement>(null);
+  const complaintVideoRef = useRef<HTMLVideoElement>(null);
+  const complaintCameraStreamRef = useRef<MediaStream | null>(null);
+  const cameraRequestIdRef = useRef(0);
+  const [showCameraPreview, setShowCameraPreview] = useState(false);
+  const [cameraStarting, setCameraStarting] = useState(false);
+  const [cameraError, setCameraError] = useState("");
 
   const [selectedCollectorId, setSelectedCollectorId] =
     useState("");
@@ -563,6 +569,107 @@ export default function ComplaintsPanel({
     };
   }, [complaints]);
 
+  // Stop the camera when leaving the form; invalidate pending permission prompts.
+  const stopComplaintCamera = () => {
+    cameraRequestIdRef.current += 1;
+    complaintCameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    complaintCameraStreamRef.current = null;
+    if (complaintVideoRef.current) complaintVideoRef.current.srcObject = null;
+    setShowCameraPreview(false);
+    setCameraStarting(false);
+  };
+
+  // Also release the camera if the component is unmounted during capture.
+  useEffect(() => () => {
+    cameraRequestIdRef.current += 1;
+    complaintCameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    complaintCameraStreamRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (!showCameraPreview || !complaintVideoRef.current || !complaintCameraStreamRef.current) return;
+    complaintVideoRef.current.srcObject = complaintCameraStreamRef.current;
+    void complaintVideoRef.current.play().catch(() => {
+      setCameraError("Camera preview could not start. Check your browser camera permissions.");
+    });
+  }, [showCameraPreview]);
+
+  const openComplaintCamera = async () => {
+    // Keep native camera capture on mobile devices where it already works.
+    if (window.matchMedia("(pointer: coarse)").matches && window.innerWidth < 768) {
+      complaintCameraInputRef.current?.click();
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError("Camera preview requires HTTPS or localhost and a supported browser. You can use Upload Photo instead.");
+      return;
+    }
+    if (cameraStarting || showCameraPreview) return;
+
+    setCameraError("");
+    setCameraStarting(true);
+    const requestId = ++cameraRequestIdRef.current;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: "environment" } },
+      });
+      if (requestId !== cameraRequestIdRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      complaintCameraStreamRef.current = stream;
+      setShowCameraPreview(true);
+    } catch (err) {
+      if (requestId !== cameraRequestIdRef.current) return;
+      const name = err instanceof DOMException ? err.name : "";
+      setCameraError(
+        name === "NotAllowedError" || name === "PermissionDeniedError"
+          ? "Camera access was denied. Allow camera permission in your browser settings and try again."
+          : name === "NotFoundError" || name === "DevicesNotFoundError"
+            ? "No camera was found on this device. You can use Upload Photo instead."
+            : name === "NotReadableError" || name === "TrackStartError"
+              ? "The camera is busy or unavailable. Close other camera apps and try again."
+              : "Unable to open the camera. Check browser permissions or use Upload Photo.",
+      );
+    } finally {
+      if (requestId === cameraRequestIdRef.current) setCameraStarting(false);
+    }
+  };
+
+  const captureComplaintPhoto = () => {
+    const video = complaintVideoRef.current;
+    if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) {
+      setCameraError("Camera is still starting. Please wait until the preview appears.");
+      return;
+    }
+
+    const scale = Math.min(1, 1600 / Math.max(video.videoWidth, video.videoHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) {
+      setCameraError("Could not capture the photo. Please try again.");
+      return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageData = canvas.toDataURL("image/jpeg", 0.82);
+    const encodedImage = imageData.split(",")[1] || "";
+    if (!encodedImage || Math.ceil(encodedImage.length * 3 / 4) > 3_500_000) {
+      setCameraError("Captured photo is too large (maximum 3.5 MB). Try Upload Photo instead.");
+      return;
+    }
+
+    setNewPhotoData(imageData);
+    setNewPhotoName(`complaint-photo-${Date.now()}.jpg`);
+    setError("");
+    setCameraError("");
+    if (complaintPhotoInputRef.current) complaintPhotoInputRef.current.value = "";
+    if (complaintCameraInputRef.current) complaintCameraInputRef.current.value = "";
+    stopComplaintCamera();
+  };
+
   const handleComplaintPhotoChange = (
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
@@ -670,6 +777,8 @@ export default function ComplaintsPanel({
           "Complaint submitted.",
       );
 
+      stopComplaintCamera();
+      setCameraError("");
       setShowSubmitModal(false);
       setNewDescription("");
       setNewPhotoData("");
@@ -1075,6 +1184,8 @@ export default function ComplaintsPanel({
                 currentUser?.phone ||
                   "",
               );
+              stopComplaintCamera();
+              setCameraError("");
               setNewPhotoData("");
               setNewPhotoName("");
               if (complaintPhotoInputRef.current) {
@@ -1807,6 +1918,8 @@ export default function ComplaintsPanel({
               <button
                 type="button"
                 onClick={() => {
+                  stopComplaintCamera();
+                  setCameraError("");
                   setShowSubmitModal(
                     false,
                   );
@@ -1944,9 +2057,11 @@ export default function ComplaintsPanel({
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <button
                     type="button"
-                    onClick={() =>
-                      complaintPhotoInputRef.current?.click()
-                    }
+                    onClick={() => {
+                      stopComplaintCamera();
+                      setCameraError("");
+                      complaintPhotoInputRef.current?.click();
+                    }}
                     className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-600 transition hover:border-amber-400 hover:bg-amber-50"
                   >
                     <ImagePlus className="h-5 w-5" />
@@ -1957,19 +2072,57 @@ export default function ComplaintsPanel({
 
                   <button
                     type="button"
-                    onClick={() =>
-                      complaintCameraInputRef.current?.click()
-                    }
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-600 transition hover:border-amber-400 hover:bg-amber-50"
+                    onClick={() => void openComplaintCamera()}
+                    disabled={cameraStarting || showCameraPreview}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-600 transition hover:border-amber-400 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <Camera className="h-5 w-5" />
-                    Take Photo
+                    {cameraStarting ? <Loader2 className="h-5 w-5 animate-spin" /> : <Camera className="h-5 w-5" />}
+                    {cameraStarting ? "Opening Camera..." : "Take Photo"}
                   </button>
                 </div>
 
                 <p className="sg-complaint-modal-helper text-[10px] font-medium text-slate-400">
                   Upload from your device or take a photo with the camera • JPG, PNG, or WebP • Maximum 3.5 MB
                 </p>
+
+                {cameraError && (
+                  <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-800">
+                    {cameraError}
+                  </p>
+                )}
+
+                {showCameraPreview && (
+                  <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-950 p-3">
+                    <video
+                      ref={complaintVideoRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      aria-label="Live camera preview for complaint photo"
+                      className="aspect-video max-h-72 w-full rounded-lg bg-black object-contain"
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={captureComplaintPhoto}
+                        className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-amber-600 px-3 py-2.5 text-xs font-bold text-white hover:bg-amber-700"
+                      >
+                        <Camera className="h-4 w-4" />
+                        Capture Photo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          stopComplaintCamera();
+                          setCameraError("");
+                        }}
+                        className="rounded-lg border border-slate-500 px-3 py-2.5 text-xs font-bold text-white hover:bg-slate-800"
+                      >
+                        Cancel Camera
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {newPhotoData && (
                   <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
