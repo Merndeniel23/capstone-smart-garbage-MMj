@@ -471,4 +471,150 @@ router.post(
   },
 );
 
+
+// DELETE inspection — restricted to the original Purok Leader in their assigned purok.
+// Do not remove inspections tied to collection requests: they are operational evidence.
+router.delete(
+  "/:id",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    const role = String(req.user?.role || "").toLowerCase();
+    if (!['purok_leader', 'leader'].includes(role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only a Purok Leader can delete their inspection records.',
+      });
+    }
+
+    const inspectionId = Number(req.params.id);
+    const leaderId = Number(req.user?.id);
+    const assignedPurokId = Number(req.user?.purok_id);
+    if (!Number.isSafeInteger(inspectionId) || inspectionId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'A valid inspection ID is required.',
+      });
+    }
+    if (!Number.isSafeInteger(leaderId) || leaderId <= 0 ||
+        !Number.isSafeInteger(assignedPurokId) || assignedPurokId <= 0) {
+      return res.status(403).json({
+        success: false,
+        message: 'Your Purok Leader account needs an assigned purok.',
+      });
+    }
+
+    const connection = await db.getConnection();
+    let committed = false;
+    let photoToRemove: string | null = null;
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.query<any[]>(
+        `SELECT bi.id, bi.bin_id, bi.purok_leader_id, bi.photo_path,
+                bi.inspected_at, gb.purok_id
+           FROM bin_inspections bi
+           INNER JOIN garbage_bins gb ON gb.id = bi.bin_id
+          WHERE bi.id = ?
+          LIMIT 1 FOR UPDATE`,
+        [inspectionId],
+      );
+      const inspection = rows[0];
+      if (!inspection) {
+        return res.status(404).json({ success: false, message: 'Inspection not found.' });
+      }
+      if (Number(inspection.purok_leader_id) !== leaderId ||
+          Number(inspection.purok_id) !== assignedPurokId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can delete only your own inspections in your assigned purok.',
+        });
+      }
+
+      const [linkedRequests] = await connection.query<any[]>(
+        `SELECT id FROM collection_requests WHERE inspection_id = ? LIMIT 1 FOR UPDATE`,
+        [inspectionId],
+      );
+      if (linkedRequests.length > 0) {
+        return res.status(409).json({
+          success: false,
+          message: 'This inspection is linked to a collection request and cannot be deleted. Contact your Barangay Captain to resolve the linked request.',
+        });
+      }
+
+      // Determine whether this record is the latest inspection for the bin.
+      const [latestRows] = await connection.query<any[]>(
+        `SELECT id FROM bin_inspections WHERE bin_id = ?
+         ORDER BY inspected_at DESC, id DESC LIMIT 1`,
+        [inspection.bin_id],
+      );
+      const wasLatest = Number(latestRows[0]?.id) === inspectionId;
+      const [result]: any = await connection.execute(
+        `DELETE FROM bin_inspections WHERE id = ? AND purok_leader_id = ?`,
+        [inspectionId, leaderId],
+      );
+      if (result.affectedRows !== 1) {
+        return res.status(409).json({
+          success: false,
+          message: 'The inspection changed. Please refresh and try again.',
+        });
+      }
+
+      // Keep the bin's last inspection summary consistent with remaining history.
+      if (wasLatest) {
+        const [previousRows] = await connection.query<any[]>(
+          `SELECT status, inspected_at FROM bin_inspections WHERE bin_id = ?
+           ORDER BY inspected_at DESC, id DESC LIMIT 1`,
+          [inspection.bin_id],
+        );
+        if (previousRows[0]) {
+          await connection.execute(
+            `UPDATE garbage_bins SET current_status = ?, last_inspected_at = ? WHERE id = ?`,
+            [previousRows[0].status, previousRows[0].inspected_at, inspection.bin_id],
+          );
+        } else {
+          // Do not invent a replacement bin condition when no prior inspection exists.
+          await connection.execute(
+            `UPDATE garbage_bins SET last_inspected_at = NULL WHERE id = ?`,
+            [inspection.bin_id],
+          );
+        }
+      }
+
+      photoToRemove = typeof inspection.photo_path === 'string'
+        ? inspection.photo_path
+        : null;
+      await connection.commit();
+      committed = true;
+
+      // Delete stored evidence only after database commit succeeds.
+      if (photoToRemove) {
+        try {
+          await deleteStoredProof(photoToRemove);
+        } catch (storageError) {
+          console.error('Deleted inspection photo cleanup error:', storageError);
+        }
+      }
+      return res.json({ success: true, message: 'Inspection deleted successfully.' });
+    } catch (error: any) {
+      if (error?.code === 'ER_ROW_IS_REFERENCED_2' || error?.code === 'ER_ROW_IS_REFERENCED') {
+        return res.status(409).json({
+          success: false,
+          message: 'This inspection has linked records and cannot be deleted.',
+        });
+      }
+      console.error('Delete inspection error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to delete inspection.',
+      });
+    } finally {
+      if (!committed) {
+        try { await connection.rollback(); } catch (rollbackError) {
+          console.error('Inspection delete rollback error:', rollbackError);
+        }
+      }
+      connection.release();
+    }
+  },
+);
+
 export default router;
