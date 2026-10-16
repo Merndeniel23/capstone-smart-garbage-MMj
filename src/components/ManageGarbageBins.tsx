@@ -702,8 +702,10 @@ export default function ManageGarbageBins() {
       });
     };
 
-    const observer = new ResizeObserver(resizeMap);
-    observer.observe(container);
+    const observer = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(resizeMap)
+      : null;
+    observer?.observe(container);
     window.addEventListener("resize", resizeMap);
 
     const timers = [0, 80, 220, 450].map((delay) =>
@@ -711,7 +713,7 @@ export default function ManageGarbageBins() {
     );
 
     return () => {
-      observer.disconnect();
+      observer?.disconnect();
       window.removeEventListener("resize", resizeMap);
       timers.forEach((timer) => window.clearTimeout(timer));
       window.cancelAnimationFrame(frame);
@@ -1116,7 +1118,7 @@ export default function ManageGarbageBins() {
       )}
 
       <div className="grid gap-5 xl:grid-cols-[1.6fr_1fr]">
-        <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
+        <div className="relative flex min-h-[360px] flex-col overflow-hidden rounded-2xl border bg-white shadow-sm sm:min-h-[520px]">
           {isSuperAdmin && (
             <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3 text-xs text-slate-500">
               <span aria-live="polite">{loading ? "Loading bin locations..." : `${mappedBinCount} of ${visibleBins.length} matching bins have coordinates`}</span>
@@ -1127,7 +1129,7 @@ export default function ManageGarbageBins() {
             ref={mapContainerRef}
             role="region"
             aria-label="Garbage bin locations map; bins can also be selected from the list below"
-            className="relative z-0 h-[360px] w-full sm:h-[520px]"
+            className="relative z-0 min-h-[360px] w-full flex-1 sm:min-h-[520px]"
           />
         </div>
 
