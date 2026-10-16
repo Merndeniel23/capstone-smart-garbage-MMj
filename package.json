@@ -13,6 +13,7 @@
     "lint": "tsc --noEmit",
     "test:registration": "tsx --test services/emailDomain.test.ts services/pendingRegistration.test.ts",
     "test:accounts": "tsx --test services/accountDeletion.test.ts",
+    "test:notifications": "tsx --test routes/notifications.test.ts",
     "db:setup": "tsx scripts/setupDatabase.ts",
     "create-super-admin": "tsx scripts/bootstrapSuperAdmin.ts"
   },

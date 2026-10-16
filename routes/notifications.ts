@@ -493,6 +493,7 @@ router.post(
         }
       }
 
+      // Unscoped Municipal Administrator broadcasts cover the municipality.
       let barangayId: number | null = null;
       let purokId: number | null = null;
       let recipientRole = recipientRoleRaw;
@@ -634,7 +635,7 @@ router.post(
 
           purokId = submittedPurokId;
         }
-      } else {
+      } else if (role === "purok_leader") {
         barangayId = positiveInteger(viewer.barangay_id);
         purokId = positiveInteger(viewer.purok_id);
 
