@@ -8,14 +8,12 @@ import {
   ClipboardList,
   CreditCard,
   FileText,
-  KeyRound,
   LayoutDashboard,
   Map,
   MapPinned,
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
-  Settings,
   Shield,
   Truck,
   User,
@@ -260,7 +258,7 @@ export default function Sidebar({
     {
       id: "notifications",
       icon: Bell,
-      label: "Alerts",
+      label: "Notifications",
       count: unseenCount,
     },
     {
@@ -317,7 +315,7 @@ export default function Sidebar({
     {
       id: "notifications",
       icon: Bell,
-      label: "System Alerts",
+      label: "Notifications",
       count: unseenCount,
     },
     {
@@ -369,7 +367,7 @@ export default function Sidebar({
     {
       id: "notifications",
       icon: Bell,
-      label: "Barangay Alerts",
+      label: "Notifications",
       count: unseenCount,
     },
     {
@@ -379,8 +377,8 @@ export default function Sidebar({
     },
     {
       id: "profile",
-      icon: Settings,
-      label: "Control Center",
+      icon: User,
+      label: "Profile",
     },
   ];
 
@@ -438,7 +436,7 @@ export default function Sidebar({
     {
       id: "notifications",
       icon: Bell,
-      label: "Municipal Alerts",
+      label: "Notifications",
       count: unseenCount,
     },
     {
@@ -448,8 +446,8 @@ export default function Sidebar({
     },
     {
       id: "profile",
-      icon: KeyRound,
-      label: "Recovery & Security",
+      icon: User,
+      label: "Profile",
     },
   ];
 

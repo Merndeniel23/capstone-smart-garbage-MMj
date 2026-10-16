@@ -957,6 +957,31 @@ export default function NotificationsPanel({
                       <span className="text-[10px] font-bold text-[#64748b]">
                         NOTIF-{item.id}
                       </span>
+
+                      {/* This shows the actual read status; viewing the inbox only
+                          marks notifications as seen, not read. */}
+                      <span
+                        aria-label={`Notification status: ${isRead ? "Read" : "Unread"}`}
+                        title={
+                          isRead && item.read_at
+                            ? `Read on ${formatDate(item.read_at)}`
+                            : isRead
+                              ? "Already read"
+                              : "Not yet read"
+                        }
+                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${
+                          isRead
+                            ? "border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                            : "border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-600 dark:bg-amber-950 dark:text-amber-200"
+                        }`}
+                      >
+                        {isRead ? (
+                          <Check aria-hidden="true" className="h-3 w-3" />
+                        ) : (
+                          <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-amber-600 dark:bg-amber-300" />
+                        )}
+                        {isRead ? "Read" : "Unread"}
+                      </span>
                     </div>
 
                     <h2 className="sg-notification-title mt-2 truncate text-sm font-black text-[#0f172a] sm:text-base">
