@@ -537,6 +537,13 @@ router.post(
   "/register",
   async (req, res) => {
     try {
+      if (req.body.acceptedPolicies !== true) {
+        return res.status(400).json({
+          message:
+            "Please agree to the Terms and Conditions and acknowledge the Privacy Policy before registering.",
+        });
+      }
+
       const fullName = String(
         req.body.fullName || "",
       ).trim();
@@ -770,6 +777,17 @@ router.post(
         existingRows[0];
 
       if (!user) {
+        if (req.body.acceptedPolicies !== true) {
+          return res.status(409).json({
+            success: false,
+            requiresPolicyAcceptance: true,
+            email,
+            fullName,
+            message:
+              "Please review the Privacy Policy and agree to the Terms and Conditions before creating your account.",
+          });
+        }
+
         /*
          * Google signup details are staged until the application OTP is
          * verified. Only then is a Resident account created for profile setup.

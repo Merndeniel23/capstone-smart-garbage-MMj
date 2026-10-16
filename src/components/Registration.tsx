@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleLogin } from '@react-oauth/google';
 import EmailVerificationForm from './EmailVerificationForm';
+import RegistrationLegalDialog from './RegistrationLegalDialog';
 import {
   User, 
   Mail, 
@@ -32,6 +33,13 @@ export default function Registration() {
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
+  const [acceptedPolicies, setAcceptedPolicies] = useState(false);
+  const [legalDocument, setLegalDocument] = useState<'privacy' | 'terms' | null>(null);
+  const [pendingGoogleRegistration, setPendingGoogleRegistration] = useState<{
+    credential: string;
+    fullName: string;
+    email: string;
+  } | null>(null);
   const [registrationSubmitting, setRegistrationSubmitting] = useState(false);
   const [registrationVerificationEmail, setRegistrationVerificationEmail] = useState('');
   const [registrationToken, setRegistrationToken] = useState('');
@@ -87,6 +95,15 @@ const [resendCountdown, setResendCountdown] = useState(0);
 
   const validateEmail = (emailStr: string) => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr);
+  };
+
+  const switchAuthTab = (tab: 'login' | 'register') => {
+    setActiveTab(tab);
+    setRegistrationVerificationStep(false);
+    setPendingGoogleRegistration(null);
+    setAcceptedPolicies(false);
+    setError('');
+    setSuccessMessage('');
   };
 
  
@@ -265,6 +282,16 @@ const [resendCountdown, setResendCountdown] = useState(0);
     setError('');
     setSuccessMessage('');
 
+    if (!acceptedPolicies) {
+      setError('Please agree to the Terms and Conditions and acknowledge the Privacy Policy before registering.');
+      return;
+    }
+
+    if (pendingGoogleRegistration) {
+      await handleGoogleLogin(pendingGoogleRegistration.credential);
+      return;
+    }
+
     if (
       !regFullName.trim() ||
       !regEmail.trim() ||
@@ -308,6 +335,7 @@ const [resendCountdown, setResendCountdown] = useState(0);
           fullName: regFullName.trim(),
           email: regEmail.trim().toLowerCase(),
           password: regPassword,
+          acceptedPolicies,
         }),
       });
 
@@ -328,10 +356,63 @@ const [resendCountdown, setResendCountdown] = useState(0);
       setRegEmail('');
       setRegPassword('');
       setRegConfirmPassword('');
+      setAcceptedPolicies(false);
 
     } catch (error) {
       console.error('Registration error:', error);
       setError('Cannot connect to the server.');
+    } finally {
+      setRegistrationSubmitting(false);
+    }
+  };
+
+  const handleGoogleLogin = async (credential: string) => {
+    if (registrationSubmitting) return;
+    setError('');
+    setSuccessMessage('');
+    setRegistrationSubmitting(true);
+
+    try {
+      const response = await fetch('/api/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credential, acceptedPolicies }),
+      });
+      const data = await response.json();
+
+      if (data.requiresPolicyAcceptance) {
+        setPendingGoogleRegistration({
+          credential,
+          fullName: data.fullName || 'Google account',
+          email: data.email || '',
+        });
+        setActiveTab('register');
+        setAcceptedPolicies(false);
+        setSuccessMessage(data.message || 'Review the policies before creating your Google account.');
+        return;
+      }
+
+      if (data.requiresEmailVerification && data.email) {
+        setRegistrationVerificationEmail(data.email);
+        setRegistrationToken(data.registrationToken || '');
+        setRegistrationResendCountdown(Number(data.resendAfter) || 0);
+        setRegistrationVerificationStep(true);
+        setPendingGoogleRegistration(null);
+        setAcceptedPolicies(false);
+        setSuccessMessage(response.ok ? data.message || '' : '');
+        return;
+      }
+
+      if (!response.ok) {
+        setError(data.message || 'Google login failed.');
+        return;
+      }
+
+      setSuccessMessage('Google login successful!');
+      window.setTimeout(() => completeLogin(data, rememberMe), 300);
+    } catch (requestError) {
+      console.error('Google login error:', requestError);
+      setError('Unable to connect to the server.');
     } finally {
       setRegistrationSubmitting(false);
     }
@@ -540,7 +621,7 @@ const handleResetPasswordSubmit = async (
           <div className="auth-tabs flex border-b border-stone-100 pb-5 mb-6">
             <button
               type="button"
-              onClick={() => { setActiveTab('login'); setRegistrationVerificationStep(false); setError(''); setSuccessMessage(''); }}
+              onClick={() => switchAuthTab('login')}
               className={`auth-tab relative flex-1 pb-2 text-center text-xs font-extrabold uppercase tracking-wider transition-all ${
                 activeTab === 'login' ? 'auth-accent text-emerald-700' : 'text-stone-400 hover:text-stone-600'
               }`}
@@ -552,7 +633,7 @@ const handleResetPasswordSubmit = async (
             </button>
             <button
               type="button"
-              onClick={() => { setActiveTab('register'); setRegistrationVerificationStep(false); setError(''); setSuccessMessage(''); }}
+              onClick={() => switchAuthTab('register')}
               className={`auth-tab relative flex-1 pb-2 text-center text-xs font-extrabold uppercase tracking-wider transition-all ${
                 activeTab === 'register' ? 'auth-accent text-emerald-700' : 'text-stone-400 hover:text-stone-600'
               }`}
@@ -602,6 +683,8 @@ const handleResetPasswordSubmit = async (
                 setRegistrationVerificationStep(false);
                 setRegistrationVerificationEmail('');
                 setRegistrationToken('');
+                setPendingGoogleRegistration(null);
+                setAcceptedPolicies(false);
                 setActiveTab('login');
                 setLoginEmail(email);
                 setError('');
@@ -611,6 +694,8 @@ const handleResetPasswordSubmit = async (
                 setRegistrationVerificationStep(false);
                 setRegistrationVerificationEmail('');
                 setRegistrationToken('');
+                setPendingGoogleRegistration(null);
+                setAcceptedPolicies(false);
                 setActiveTab('login');
                 setError('');
                 setSuccessMessage('');
@@ -708,51 +793,12 @@ const handleResetPasswordSubmit = async (
 
   <div className="auth-google">
     <GoogleLogin
-      onSuccess={async (credentialResponse) => {
-        setError('');
-        setSuccessMessage('');
-
+      onSuccess={(credentialResponse) => {
         if (!credentialResponse.credential) {
           setError('Google did not return a valid credential.');
           return;
         }
-
-        try {
-          const response = await fetch('/api/auth/google', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              credential: credentialResponse.credential,
-            }),
-          });
-
-          const data = await response.json();
-
-          if (data.requiresEmailVerification && data.email) {
-            setRegistrationVerificationEmail(data.email);
-            setRegistrationToken(data.registrationToken || '');
-            setRegistrationResendCountdown(Number(data.resendAfter) || 0);
-            setRegistrationVerificationStep(true);
-            setSuccessMessage(response.ok ? data.message || '' : '');
-            return;
-          }
-
-          if (!response.ok) {
-            setError(data.message || 'Google login failed.');
-            return;
-          }
-
-          setSuccessMessage('Google login successful!');
-
-          window.setTimeout(() => {
-            completeLogin(data, rememberMe);
-          }, 300);
-        } catch (err) {
-          console.error(err);
-          setError('Unable to connect to the server.');
-        }
+        void handleGoogleLogin(credentialResponse.credential);
       }}
       onError={() => {
         setError('Google Sign-In failed.');
@@ -764,6 +810,22 @@ const handleResetPasswordSubmit = async (
           ) : (
             /* REGISTRATION SCREEN */
             <form onSubmit={handleRegisterSubmit} className="auth-form auth-form--register">
+              {pendingGoogleRegistration ? (
+                <section className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                  <h2 className="text-sm font-bold text-stone-800">Complete your Google registration</h2>
+                  <p className="mt-2 text-xs font-semibold text-stone-700">{pendingGoogleRegistration.fullName}</p>
+                  <p className="mt-1 break-all text-xs text-stone-500">{pendingGoogleRegistration.email}</p>
+                  <p className="mt-3 text-xs leading-relaxed text-stone-600">Review the policies below, then continue to email verification.</p>
+                  <button
+                    type="button"
+                    disabled={registrationSubmitting}
+                    onClick={() => switchAuthTab('register')}
+                    className="mt-3 text-xs font-bold text-emerald-700 underline underline-offset-2 disabled:opacity-60"
+                  >
+                    Use email and password instead
+                  </button>
+                </section>
+              ) : (
               <fieldset className="auth-form-section" disabled={registrationSubmitting}>
                 <legend className="auth-form-section-title">Create your account</legend>
                 <p className="auth-form-section-intro text-[11px] font-semibold leading-relaxed text-stone-400">
@@ -866,14 +928,36 @@ const handleResetPasswordSubmit = async (
                   </button>
                 </div>
               </fieldset>
+              )}
+
+              <div className="rounded-2xl border border-stone-200 bg-[#FAFBF9] p-3.5">
+                <div className="flex items-start gap-3">
+                  <input
+                    id="registration-policies"
+                    type="checkbox"
+                    required
+                    checked={acceptedPolicies}
+                    disabled={registrationSubmitting}
+                    onChange={(event) => setAcceptedPolicies(event.target.checked)}
+                    aria-labelledby="registration-policy-label"
+                    className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-stone-300 accent-emerald-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 disabled:cursor-not-allowed"
+                  />
+                  <p id="registration-policy-label" className="text-xs leading-relaxed text-stone-600">
+                    <label htmlFor="registration-policies" className="cursor-pointer">I agree to the </label>
+                    <button type="button" onClick={() => setLegalDocument('terms')} className="auth-accent font-bold text-emerald-700 underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">Terms and Conditions</button>
+                    <label htmlFor="registration-policies" className="cursor-pointer"> and acknowledge the </label>
+                    <button type="button" onClick={() => setLegalDocument('privacy')} className="auth-accent font-bold text-emerald-700 underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">Privacy Policy</button>.
+                  </p>
+                </div>
+              </div>
 
               <button
                 type="submit"
-                disabled={registrationSubmitting}
+                disabled={registrationSubmitting || !acceptedPolicies}
                 className="auth-primary-action mt-1 flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl border-none bg-emerald-700 py-3 text-[10px] font-extrabold uppercase tracking-widest text-white shadow-lg shadow-emerald-800/10 transition-all hover:bg-emerald-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {registrationSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                {registrationSubmitting ? 'Checking Email & Sending Code...' : 'Verify Email to Register'}
+                {registrationSubmitting ? 'Checking Email & Sending Code...' : pendingGoogleRegistration ? 'Continue with Google' : 'Verify Email to Register'}
               </button>
             </form>
           )}
@@ -885,7 +969,7 @@ const handleResetPasswordSubmit = async (
                 Don't have an account?{' '}
                 <button
                   type="button"
-                  onClick={() => { setActiveTab('register'); setRegistrationVerificationStep(false); setError(''); setSuccessMessage(''); }}
+                  onClick={() => switchAuthTab('register')}
                   className="auth-accent text-emerald-700 font-bold hover:underline"
                 >
                   Register here
@@ -896,7 +980,7 @@ const handleResetPasswordSubmit = async (
                 Already have an account?{' '}
                 <button
                   type="button"
-                  onClick={() => { setActiveTab('login'); setRegistrationVerificationStep(false); setError(''); setSuccessMessage(''); }}
+                  onClick={() => switchAuthTab('login')}
                   className="auth-accent text-emerald-700 font-bold hover:underline"
                 >
                   Sign In
@@ -909,6 +993,8 @@ const handleResetPasswordSubmit = async (
                 setRegistrationVerificationEmail('');
                 setRegistrationToken('');
                 setRegistrationResendCountdown(0);
+                setPendingGoogleRegistration(null);
+                setAcceptedPolicies(false);
                 setRegistrationVerificationStep(true);
                 setError('');
                 setSuccessMessage('');
@@ -927,6 +1013,8 @@ const handleResetPasswordSubmit = async (
           Barangay Environmental Sinks System • MMJ group • 2026 • All Rights Reserved
         </p>
       </div>
+
+      <RegistrationLegalDialog document={legalDocument} onClose={() => setLegalDocument(null)} />
 
       {/* FORGOT PASSWORD MODAL */}
       {showForgotModal && (
