@@ -16,6 +16,50 @@ const ALLOWED_RECIPIENT_ROLES = new Set([
   "super_admin",
 ]);
 
+// Manual broadcasts are limited per authenticated account. This database-backed
+// quota works across backend instances and survives redeploys. It checks
+// successfully stored manual broadcasts in the last 10 minutes / 24 hours.
+const BROADCAST_TEN_MINUTE_LIMIT = 15;
+const BROADCAST_DAILY_LIMIT = 100;
+
+// A small additional process-local throttle also counts attempts. It limits
+// rapid delete/recreate spam on a single instance. For strong cross-instance
+// attempt limiting, apply a shared Redis/edge limiter as well.
+const BROADCAST_ATTEMPT_WINDOW_MS = 10 * 60 * 1000;
+const broadcastAttemptTimes = new Map<number, number[]>();
+
+function reserveBroadcastAttempt(userId: number): number {
+  const now = Date.now();
+  const recent = (broadcastAttemptTimes.get(userId) || []).filter(
+    (timestamp) => now - timestamp < BROADCAST_ATTEMPT_WINDOW_MS,
+  );
+  if (recent.length >= BROADCAST_TEN_MINUTE_LIMIT) {
+    broadcastAttemptTimes.set(userId, recent);
+    return Math.max(1, Math.ceil(
+      (BROADCAST_ATTEMPT_WINDOW_MS - (now - recent[0])) / 1000,
+    ));
+  }
+  recent.push(now);
+  broadcastAttemptTimes.set(userId, recent);
+
+  // Opportunistically remove stale entries; no background timer is needed.
+  if (broadcastAttemptTimes.size > 1024) {
+    for (const [id, attempts] of broadcastAttemptTimes) {
+      if (attempts[attempts.length - 1] < now - BROADCAST_ATTEMPT_WINDOW_MS) {
+        broadcastAttemptTimes.delete(id);
+      }
+    }
+  }
+  return 0;
+}
+
+function broadcastTypeForPriority(priority: string): string | null {
+  if (priority === "emergency") return "emergency_broadcast";
+  if (priority === "schedule") return "schedule_update";
+  if (priority === "notice") return "official_notice";
+  return null;
+}
+
 let notificationReceiptsPreparation: Promise<void> | null = null;
 
 function positiveInteger(value: unknown): number | null {
@@ -327,10 +371,13 @@ router.post(
         .trim()
         .toLowerCase();
 
-      const notificationType = cleanText(
-        req.body.notificationType || "notice",
+      // Do not trust client-selected system notification types. A broadcaster
+      // may create only the three official announcement categories.
+      const requestedNotificationType = cleanText(
+        req.body.notificationType,
         60,
       ).toLowerCase();
+      const notificationType = broadcastTypeForPriority(priority);
 
       const recipientRoleRaw =
         req.body.recipientRole === undefined ||
@@ -367,13 +414,18 @@ router.post(
         });
       }
 
-      if (
-        !["emergency", "schedule", "notice"].includes(priority)
-      ) {
+      if (!notificationType) {
         return res.status(400).json({
           success: false,
           message:
             "Priority must be emergency, schedule, or notice.",
+        });
+      }
+
+      if (requestedNotificationType && requestedNotificationType !== notificationType) {
+        return res.status(400).json({
+          success: false,
+          message: "This notification type is not allowed for manual broadcasts.",
         });
       }
 
@@ -693,6 +745,51 @@ router.post(
         });
       }
 
+      // The sender row was locked with FOR UPDATE above. That makes this
+      // database quota atomic for concurrent broadcasts by the same account,
+      // including broadcasts handled by different Render instances.
+      const [broadcastCountRows] = await connection.query<any[]>(
+        `
+          SELECT
+            COUNT(*) AS daily_count,
+            COALESCE(SUM(
+              CASE WHEN created_at >= NOW() - INTERVAL 10 MINUTE
+                THEN 1 ELSE 0 END
+            ), 0) AS recent_count
+          FROM notifications
+          WHERE created_by = ?
+            AND created_at >= NOW() - INTERVAL 1 DAY
+            AND notification_type IN (
+              'official_notice', 'schedule_update', 'emergency_broadcast'
+            )
+        `,
+        [viewerId],
+      );
+
+      const recentCount = Number(broadcastCountRows[0]?.recent_count || 0);
+      const dailyCount = Number(broadcastCountRows[0]?.daily_count || 0);
+      if (recentCount >= BROADCAST_TEN_MINUTE_LIMIT ||
+          dailyCount >= BROADCAST_DAILY_LIMIT) {
+        await connection.rollback();
+        res.setHeader("Retry-After", recentCount >= BROADCAST_TEN_MINUTE_LIMIT ? "600" : "86400");
+        return res.status(429).json({
+          success: false,
+          message: "Broadcast limit reached. Please try again later.",
+        });
+      }
+
+      // Local attempt quota additionally discourages deleting and recreating
+      // messages repeatedly. It counts attempts even when a later SQL write fails.
+      const retryAfterSeconds = reserveBroadcastAttempt(viewerId);
+      if (retryAfterSeconds > 0) {
+        await connection.rollback();
+        res.setHeader("Retry-After", String(retryAfterSeconds));
+        return res.status(429).json({
+          success: false,
+          message: "Too many broadcast attempts. Please try again later.",
+        });
+      }
+
       const [result]: any = await connection.execute(
         `
         INSERT INTO notifications
@@ -716,7 +813,7 @@ router.post(
           recipientRole,
           barangayId,
           purokId,
-          notificationType || "notice",
+          notificationType,
           priority,
           title,
           message,
