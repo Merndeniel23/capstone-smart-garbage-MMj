@@ -71,6 +71,7 @@ type NotificationItem = {
 };
 
 const NOTIFICATIONS_PER_PAGE = 10;
+const NOTIFICATION_POLL_INTERVAL_MS = 30_000;
 
 // Use actual backend relationship fields where provided. An ordinary broadcast
 // without a linked record is intentionally not given a fictitious destination.
@@ -313,10 +314,11 @@ export default function NotificationsPanel({
   const [recipientRole, setRecipientRole] =
     useState("");
 
-  // Pending/inactive accounts must not repeatedly hit a protected API.
-  // A manual Refresh (or a new login/mount) can re-check after approval.
+  // One request at a time. Pending/inactive sessions stop polling after 401/403.
   const accessBlockedRef = useRef(false);
   const requestInFlightRef = useRef(false);
+  const requestControllerRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(false);
   const initialSeenSyncedRef = useRef(false);
   const [accessPaused, setAccessPaused] = useState(false);
 
@@ -324,19 +326,25 @@ export default function NotificationsPanel({
     if (!isAccessDenied(requestError)) return false;
 
     accessBlockedRef.current = true;
-    setAccessPaused(true);
-    setNotifications([]);
-    setError(
-      requestError instanceof Error && requestError.message
-        ? requestError.message
-        : "Notifications are unavailable until your account is approved.",
-    );
+    if (mountedRef.current) {
+      setAccessPaused(true);
+      setNotifications([]);
+      setError(
+        requestError instanceof Error && requestError.message
+          ? requestError.message
+          : "Notifications are unavailable until your account is approved.",
+      );
+    }
     return true;
   };
 
-  const loadNotifications = async (manualRetry = false): Promise<boolean> => {
-    // Suppress polling after 401/403, and avoid overlapping network requests.
-    if (requestInFlightRef.current || (accessBlockedRef.current && !manualRetry)) {
+  const loadNotifications = async (
+    manualRetry = false,
+    background = false,
+  ): Promise<boolean> => {
+    // Automatic polling never overlaps an existing request or retries denied access.
+    if (!mountedRef.current || requestInFlightRef.current ||
+        (accessBlockedRef.current && !manualRetry)) {
       return false;
     }
 
@@ -345,15 +353,32 @@ export default function NotificationsPanel({
       setAccessPaused(false);
     }
 
+    const sessionToken = getToken();
+    if (!sessionToken) {
+      pauseForAccessDenial(new NotificationRequestError("Login session is missing. Please log in again.", 401));
+      setLoading(false);
+      return false;
+    }
+
+    const controller = new AbortController();
+    requestControllerRef.current = controller;
     requestInFlightRef.current = true;
-    setLoading(true);
-    setError("");
+
+    // Initial/manual fetches show loading. Background refreshes stay silent so the
+    // empty-state view never flashes a spinner every 30 seconds.
+    if (!background) setLoading(true);
+    if (!background) setError("");
 
     try {
-      const data = await apiRequest("/api/notifications");
+      const data = await apiRequest("/api/notifications", { signal: controller.signal });
+      if (!mountedRef.current || controller.signal.aborted || getToken() !== sessionToken) {
+        return false;
+      }
       setNotifications(Array.isArray(data.notifications) ? data.notifications : []);
+      setError("");
       return true;
     } catch (requestError) {
+      if (!mountedRef.current || controller.signal.aborted) return false;
       if (!pauseForAccessDenial(requestError)) {
         setError(
           requestError instanceof Error
@@ -363,17 +388,20 @@ export default function NotificationsPanel({
       }
       return false;
     } finally {
-      requestInFlightRef.current = false;
-      setLoading(false);
+      if (requestControllerRef.current === controller) {
+        requestControllerRef.current = null;
+        requestInFlightRef.current = false;
+        if (mountedRef.current) setLoading(false);
+      }
     }
   };
 
   const markAllSeen = async () => {
-    if (accessBlockedRef.current) return;
+    if (accessBlockedRef.current || !mountedRef.current || !getToken()) return;
 
     try {
       await apiRequest("/api/notifications/seen-all", { method: "PATCH" });
-
+      if (!mountedRef.current || accessBlockedRef.current || !getToken()) return;
       setNotifications((current) =>
         current.map((item) => ({
           ...item,
@@ -381,34 +409,49 @@ export default function NotificationsPanel({
           seen_at: item.seen_at || new Date().toISOString(),
         })),
       );
-
       window.dispatchEvent(new Event("notifications-seen-all"));
     } catch (requestError) {
-      // In particular, don't retry every 10 seconds after an access denial.
       pauseForAccessDenial(requestError);
     }
   };
 
-  const refreshNotifications = async (manualRetry = false) => {
-    const loaded = await loadNotifications(manualRetry);
-    if (loaded && !accessBlockedRef.current && !initialSeenSyncedRef.current) {
-      // Mark seen once upon successfully opening the inbox, not every poll.
+  const refreshNotifications = async (manualRetry = false, background = false) => {
+    const loaded = await loadNotifications(manualRetry, background);
+    if (loaded && mountedRef.current && !accessBlockedRef.current &&
+        !initialSeenSyncedRef.current) {
+      // Mark seen only on first successful inbox opening, not on every poll.
       initialSeenSyncedRef.current = true;
       await markAllSeen();
     }
   };
 
   useEffect(() => {
+    mountedRef.current = true;
+    accessBlockedRef.current = false;
     void refreshNotifications();
 
     const timer = window.setInterval(() => {
-      if (!document.hidden && !accessBlockedRef.current) {
-        void refreshNotifications();
+      if (!document.hidden && !accessBlockedRef.current && getToken()) {
+        void refreshNotifications(false, true);
       }
-    }, 10000);
+    }, NOTIFICATION_POLL_INTERVAL_MS);
+
+    // Also stop the current request if the logout flow signals an immediate sign-out.
+    const onLogout = () => {
+      accessBlockedRef.current = true;
+      requestControllerRef.current?.abort();
+      setNotifications([]);
+      setLoading(false);
+    };
+    window.addEventListener("sg-auth-logout", onLogout);
 
     return () => {
+      mountedRef.current = false;
       window.clearInterval(timer);
+      window.removeEventListener("sg-auth-logout", onLogout);
+      requestControllerRef.current?.abort();
+      requestControllerRef.current = null;
+      requestInFlightRef.current = false;
     };
   }, []);
 
