@@ -4,24 +4,13 @@ import {
   Volume2,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-
-type EmergencyNotification = {
-  id: number;
-  priority: "emergency" | "schedule" | "notice";
-  title: string;
-  message: string;
-  created_by_name?: string | null;
-  barangay_name?: string | null;
-  purok_name?: string | null;
-  is_read: number | boolean;
-  created_at: string;
-};
+import { useNotifications } from "../context/NotificationsContext";
+import type { NotificationItem } from "../services/notificationFeed";
 
 // Keep the spoken warning to exactly one short sentence.
 const ALERT_SENTENCE =
   "Attention collector, an urgent garbage collection request needs your attention.";
 const VOICE_REPEAT_DELAY_MS = 10_000;
-const NOTIFICATION_POLL_MS = 5_000;
 
 function getToken(): string {
   return (
@@ -53,20 +42,21 @@ async function apiRequest(url: string, options: RequestInit = {}) {
 }
 
 export default function EmergencyAlertOverlay() {
+  const { notifications, enabled, accessPaused, update } = useNotifications();
+  const sessionToken = getToken();
   const [activeEmergency, setActiveEmergency] =
-    useState<EmergencyNotification | null>(null);
+    useState<NotificationItem | null>(null);
   const [visible, setVisible] = useState(false);
   const [acknowledging, setAcknowledging] = useState(false);
   const [ackError, setAckError] = useState("");
 
   const mountedRef = useRef(false);
-  const currentAlertRef = useRef<EmergencyNotification | null>(null);
-  const lastBrowserNotificationIdRef = useRef<number | null>(null);
+  const currentAlertRef = useRef<NotificationItem | null>(null);
+  const browserNotifiedIdsRef = useRef<Set<number>>(new Set());
   const acknowledgedIdsRef = useRef<Set<number>>(new Set());
   const acknowledgingRef = useRef(false);
-  const pollingRef = useRef(false);
-  const pollingDisabledRef = useRef(false);
-  const pollAbortRef = useRef<AbortController | null>(null);
+  const acknowledgeAbortRef = useRef<AbortController | null>(null);
+  const previousSessionTokenRef = useRef(sessionToken);
 
   const voiceAlertIdRef = useRef<number | null>(null);
   // Invalidates speech callbacks and queued timers when stopped/replaced.
@@ -91,7 +81,7 @@ export default function EmergencyAlertOverlay() {
   }, []);
 
   const startVoiceLoop = useCallback((alertId: number) => {
-    // Do not restart the same voice loop on every 5-second API refresh.
+    // A shared feed refresh must not restart the current voice loop.
     if (voiceAlertIdRef.current === alertId || !getToken()) return;
     stopVoice();
     if (!("speechSynthesis" in window) ||
@@ -152,101 +142,16 @@ export default function EmergencyAlertOverlay() {
     }
   }, [stopVoice]);
 
-  const loadEmergency = useCallback(async () => {
-    if (pollingDisabledRef.current || pollingRef.current || acknowledgingRef.current) return;
-    const token = getToken();
-    if (!token) {
-      clearAlert();
-      return;
-    }
-
-    pollingRef.current = true;
-    const controller = new AbortController();
-    pollAbortRef.current = controller;
-    try {
-      const response = await fetch("/api/notifications", {
-        signal: controller.signal,
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      // Pending/inactive users should not keep spamming protected endpoints.
-      if (response.status === 401 || response.status === 403) {
-        pollingDisabledRef.current = true;
-        clearAlert();
-        return;
-      }
-      if (!response.ok) return;
-      const data = await response.json().catch(() => ({}));
-
-      // A logout, account switch, unmount, or acknowledgement may have happened
-      // while this request was in flight. Ignore the old response.
-      if (
-        controller.signal.aborted ||
-        !mountedRef.current ||
-        acknowledgingRef.current ||
-        token !== getToken()
-      ) return;
-
-      const notifications: EmergencyNotification[] =
-        Array.isArray(data.notifications) ? data.notifications : [];
-      const emergency = notifications.find(
-        (item) =>
-          item.priority === "emergency" &&
-          !Boolean(Number(item.is_read)) &&
-          !acknowledgedIdsRef.current.has(item.id),
-      ) || null;
-
-      if (!emergency) {
-        clearAlert();
-        lastBrowserNotificationIdRef.current = null;
-        return;
-      }
-
-      const isNewAlert = currentAlertRef.current?.id !== emergency.id;
-      currentAlertRef.current = emergency;
-      setActiveEmergency(emergency);
-      setVisible(true);
-
-      if (isNewAlert) {
-        setAckError("");
-        startVoiceLoop(emergency.id);
-      }
-
-      if (lastBrowserNotificationIdRef.current !== emergency.id) {
-        lastBrowserNotificationIdRef.current = emergency.id;
-        if (
-          "Notification" in window &&
-          Notification.permission === "granted"
-        ) {
-          try {
-            new Notification(`Emergency: ${emergency.title}`, {
-              body: emergency.message,
-            });
-          } catch {
-            // Browser notifications are optional; retain the on-screen alert.
-          }
-        }
-      }
-    } catch {
-      // Keep the existing on-screen alert if a refresh fails transiently.
-    } finally {
-      if (pollAbortRef.current === controller) pollAbortRef.current = null;
-      pollingRef.current = false;
-    }
-  }, [clearAlert, startVoiceLoop]);
-
   useEffect(() => {
     mountedRef.current = true;
-    pollingDisabledRef.current = false;
-    void loadEmergency();
-    const timer = window.setInterval(() => {
-      void loadEmergency();
-    }, NOTIFICATION_POLL_MS);
 
     const onLogout = () => {
-      // Also supported for logout paths where this component stays mounted.
-      pollingDisabledRef.current = true;
-      pollAbortRef.current?.abort();
+      acknowledgeAbortRef.current?.abort();
+      acknowledgeAbortRef.current = null;
+      acknowledgingRef.current = false;
+      setAcknowledging(false);
+      acknowledgedIdsRef.current.clear();
+      browserNotifiedIdsRef.current.clear();
       clearAlert();
     };
     const onStorageChange = (event: StorageEvent) => {
@@ -263,36 +168,108 @@ export default function EmergencyAlertOverlay() {
 
     return () => {
       mountedRef.current = false;
-      window.clearInterval(timer);
       window.removeEventListener("sg-auth-logout", onLogout);
       window.removeEventListener("storage", onStorageChange);
       window.removeEventListener("pagehide", onPageHide);
-      pollAbortRef.current?.abort();
+      acknowledgeAbortRef.current?.abort();
+      acknowledgeAbortRef.current = null;
+      acknowledgingRef.current = false;
+      currentAlertRef.current = null;
       stopVoice();
     };
-  }, [clearAlert, loadEmergency, stopVoice]);
+  }, [clearAlert, stopVoice]);
+
+  useEffect(() => {
+    if (previousSessionTokenRef.current === sessionToken) return;
+    previousSessionTokenRef.current = sessionToken;
+    acknowledgeAbortRef.current?.abort();
+    acknowledgeAbortRef.current = null;
+    acknowledgingRef.current = false;
+    setAcknowledging(false);
+    acknowledgedIdsRef.current.clear();
+    browserNotifiedIdsRef.current.clear();
+    clearAlert();
+  }, [sessionToken, clearAlert]);
+
+  useEffect(() => {
+    if (!enabled || accessPaused || !sessionToken) {
+      acknowledgeAbortRef.current?.abort();
+      clearAlert();
+      return;
+    }
+    if (acknowledgingRef.current) return;
+
+    const emergency = notifications.find(
+      (item) =>
+        item.priority === "emergency" &&
+        !Boolean(Number(item.is_read)) &&
+        !acknowledgedIdsRef.current.has(item.id),
+    ) || null;
+
+    if (!emergency) {
+      clearAlert();
+      return;
+    }
+
+    const isNewAlert = currentAlertRef.current?.id !== emergency.id;
+    currentAlertRef.current = emergency;
+    setActiveEmergency(emergency);
+    setVisible(true);
+    if (isNewAlert) {
+      setAckError("");
+      startVoiceLoop(emergency.id);
+    }
+
+    if (!browserNotifiedIdsRef.current.has(emergency.id)) {
+      browserNotifiedIdsRef.current.add(emergency.id);
+      if ("Notification" in window && Notification.permission === "granted") {
+        try {
+          new Notification(`Emergency: ${emergency.title}`, {
+            body: emergency.message,
+          });
+        } catch {
+          // Browser notifications are optional; retain the on-screen alert.
+        }
+      }
+    }
+  }, [notifications, enabled, accessPaused, sessionToken, acknowledging, clearAlert, startVoiceLoop]);
 
   const acknowledge = async () => {
     const emergency = currentAlertRef.current;
-    if (!emergency || acknowledgingRef.current) return;
+    const token = getToken();
+    if (!emergency || acknowledgingRef.current || !enabled || !token) return;
 
     // Stop the current utterance IMMEDIATELY, before the network request.
     acknowledgingRef.current = true;
     setAcknowledging(true);
     setAckError("");
     stopVoice();
-    pollAbortRef.current?.abort();
+    const controller = new AbortController();
+    acknowledgeAbortRef.current = controller;
 
     try {
       await apiRequest(`/api/notifications/${emergency.id}/read`, {
         method: "PATCH",
+        signal: controller.signal,
       });
+      if (controller.signal.aborted || !mountedRef.current || token !== getToken()) return;
       acknowledgedIdsRef.current.add(emergency.id);
+      const acknowledgedAt = new Date().toISOString();
+      update((items) => items.map((item) => item.id === emergency.id
+        ? {
+            ...item,
+            is_read: 1,
+            is_seen: 1,
+            read_at: item.read_at || acknowledgedAt,
+            seen_at: item.seen_at || acknowledgedAt,
+          }
+        : item));
       if (mountedRef.current && currentAlertRef.current?.id === emergency.id) {
         clearAlert();
       }
+      window.dispatchEvent(new Event("notifications-changed"));
     } catch (error) {
-      if (mountedRef.current) {
+      if (mountedRef.current && !controller.signal.aborted && token === getToken()) {
         setAckError(
           error instanceof Error
             ? `Could not acknowledge alert: ${error.message}`
@@ -302,11 +279,10 @@ export default function EmergencyAlertOverlay() {
       // Do not automatically restart speech after the user chose Acknowledge.
       // They may retry or use Replay Voice if acknowledgement failed.
     } finally {
-      acknowledgingRef.current = false;
-      if (mountedRef.current) {
-        setAcknowledging(false);
-        // If another unread emergency is waiting, show it next.
-        void loadEmergency();
+      if (acknowledgeAbortRef.current === controller) {
+        acknowledgeAbortRef.current = null;
+        acknowledgingRef.current = false;
+        if (mountedRef.current) setAcknowledging(false);
       }
     }
   };

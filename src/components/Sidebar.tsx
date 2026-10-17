@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Award,
   Bell,
@@ -24,6 +24,7 @@ import {
   type AppRole,
 } from "../context/AppStateContext";
 import type { AdminActionCounts } from "../hooks/useAdminActionCounts";
+import { useNotifications } from "../context/NotificationsContext";
 
 interface SidebarProps {
   activeTab: string;
@@ -62,24 +63,11 @@ export default function Sidebar({
     activeUser?.name ||
     "System User";
 
-  const [unseenCount, setUnseenCount] =
-    useState(0);
-
-  // A resident awaiting profile completion or approval cannot access the
-  // protected notifications endpoint. These flags are only a UI optimization;
-  // the backend remains responsible for enforcing account authorization.
-  const accountStatus = String(
-    (activeUser as { status?: string } | null)?.status || "",
-  ).toLowerCase();
-  const residentAccessRestricted =
-    role === "household" &&
-    (
-      (accountStatus !== "" && accountStatus !== "active") ||
-      localStorage.getItem("sg_requires_location_setup") === "true" ||
-      sessionStorage.getItem("sg_requires_location_setup") === "true" ||
-      localStorage.getItem("sg_pending_approval") === "true" ||
-      sessionStorage.getItem("sg_pending_approval") === "true"
-    );
+  const { notifications, enabled } = useNotifications();
+  const unseenCount = notifications.filter(
+    (item) => !Boolean(Number(item.is_seen)),
+  ).length;
+  const residentAccessRestricted = role === "household" && !enabled;
 
   const {
     pendingPayments,
@@ -109,81 +97,6 @@ export default function Sidebar({
       return next;
     });
   };
-
-  useEffect(() => {
-    if (residentAccessRestricted) {
-      setUnseenCount(0);
-      return;
-    }
-
-    let disposed = false;
-    let blocked = false;
-    let inFlight = false;
-    let timer: number | undefined;
-    let requestController: AbortController | null = null;
-
-    const loadNotificationBadge = async () => {
-      if (disposed || blocked || inFlight) return;
-      const token =
-        localStorage.getItem("token") ||
-        sessionStorage.getItem("token") ||
-        localStorage.getItem("authToken") ||
-        sessionStorage.getItem("authToken") ||
-        "";
-
-      if (!token) {
-        setUnseenCount(0);
-        return;
-      }
-
-      inFlight = true;
-      const controller = new AbortController();
-      requestController = controller;
-      try {
-        const response = await fetch("/api/notifications", {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: controller.signal,
-        });
-
-        if (disposed) return;
-        if (response.status === 401 || response.status === 403) {
-          // Stop all automatic retries for this session. A fresh authorized
-          // session can restart polling when the component remounts.
-          blocked = true;
-          setUnseenCount(0);
-          if (timer !== undefined) window.clearInterval(timer);
-          return;
-        }
-        if (!response.ok) return;
-
-        const data = await response.json().catch(() => ({}));
-        if (disposed) return;
-        const items = Array.isArray(data.notifications) ? data.notifications : [];
-        setUnseenCount(items.filter((item: any) => !Boolean(Number(item.is_seen))).length);
-      } catch {
-        // Transient network failures don't alter the last known badge count.
-      } finally {
-        inFlight = false;
-        if (requestController === controller) requestController = null;
-      }
-    };
-
-    const clearSeenBadge = () => setUnseenCount(0);
-    const refreshBadge = () => void loadNotificationBadge();
-
-    window.addEventListener("notifications-seen-all", clearSeenBadge);
-    window.addEventListener("notifications-changed", refreshBadge);
-    void loadNotificationBadge();
-    timer = window.setInterval(() => void loadNotificationBadge(), 10000);
-
-    return () => {
-      disposed = true;
-      if (timer !== undefined) window.clearInterval(timer);
-      requestController?.abort();
-      window.removeEventListener("notifications-seen-all", clearSeenBadge);
-      window.removeEventListener("notifications-changed", refreshBadge);
-    };
-  }, [residentAccessRestricted, role]);
 
   const householdItems: MenuItem[] = [
     {

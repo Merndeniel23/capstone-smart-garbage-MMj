@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
 import { ClipboardCheck, LayoutDashboard, Calendar, User, Bell, Map, ClipboardList, Shield, Users, Award, CreditCard, MessageSquare, FileText, Truck, MapPinned } from 'lucide-react';
 import type { AdminActionCounts } from "../hooks/useAdminActionCounts";
+import { useNotifications } from "../context/NotificationsContext";
 
 interface BottomNavProps {
   activeTab: string;
@@ -12,8 +12,10 @@ interface BottomNavProps {
 }
 
 export default function BottomNav({ activeTab, onTabChange, role, adminActionCounts, onOpenDirectory }: BottomNavProps) {
-  const [unseenCount, setUnseenCount] =
-    useState(0);
+  const { notifications, enabled } = useNotifications();
+  const unseenCount = notifications.filter(
+    (item) => !Boolean(Number(item.is_seen)),
+  ).length;
 
   const {
     pendingPayments,
@@ -22,92 +24,6 @@ export default function BottomNav({ activeTab, onTabChange, role, adminActionCou
     unreadAccounts,
     unreadComplaints,
   } = adminActionCounts;
-
-  const loadNotificationBadge =
-    async () => {
-      const token =
-        localStorage.getItem("token") ||
-        sessionStorage.getItem("token") ||
-        localStorage.getItem("authToken") ||
-        sessionStorage.getItem("authToken") ||
-        "";
-
-      if (!token) {
-        setUnseenCount(0);
-        return;
-      }
-
-      try {
-        const response = await fetch(
-          "/api/notifications",
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          },
-        );
-
-        if (!response.ok) return;
-
-        const data = await response
-          .json()
-          .catch(() => ({}));
-
-        const items = Array.isArray(
-          data.notifications,
-        )
-          ? data.notifications
-          : [];
-
-        setUnseenCount(
-          items.filter(
-            (item: any) =>
-              !Boolean(
-                Number(item.is_seen),
-              ),
-          ).length,
-        );
-      } catch {
-        // Keep the last known count.
-      }
-    };
-
-  useEffect(() => {
-    void loadNotificationBadge();
-
-    const timer = window.setInterval(
-      () => void loadNotificationBadge(),
-      10000,
-    );
-
-    const clearSeenBadge = () =>
-      setUnseenCount(0);
-
-    const refreshBadge = () =>
-      void loadNotificationBadge();
-
-    window.addEventListener(
-      "notifications-seen-all",
-      clearSeenBadge,
-    );
-
-    window.addEventListener(
-      "notifications-changed",
-      refreshBadge,
-    );
-
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener(
-        "notifications-seen-all",
-        clearSeenBadge,
-      );
-      window.removeEventListener(
-        "notifications-changed",
-        refreshBadge,
-      );
-    };
-  }, []);
 
   const householdTabs = [
     { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -170,14 +86,7 @@ export default function BottomNav({ activeTab, onTabChange, role, adminActionCou
     { id: 'profile', icon: User, label: 'Profile' },
   ];
 
-  const residentAccessRestricted =
-    role === 'household' &&
-    (
-      localStorage.getItem('sg_requires_location_setup') === 'true' ||
-      sessionStorage.getItem('sg_requires_location_setup') === 'true' ||
-      localStorage.getItem('sg_pending_approval') === 'true' ||
-      sessionStorage.getItem('sg_pending_approval') === 'true'
-    );
+  const residentAccessRestricted = role === 'household' && !enabled;
 
   const restrictedHouseholdTabs =
     householdTabs.filter((tab) => tab.id === 'profile');

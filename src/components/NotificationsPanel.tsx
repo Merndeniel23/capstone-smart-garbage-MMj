@@ -21,6 +21,8 @@ import {
   X,
 } from "lucide-react";
 import ConfirmDialog from "./ConfirmDialog";
+import { useNotifications } from "../context/NotificationsContext";
+import type { NotificationItem } from "../services/notificationFeed";
 
 type NotificationPage =
   | "complaints"
@@ -47,31 +49,7 @@ type NotificationPriority =
   | "schedule"
   | "notice";
 
-type NotificationItem = {
-  id: number;
-  recipient_user_id?: number | null;
-  recipient_role?: string | null;
-  barangay_id?: number | null;
-  purok_id?: number | null;
-  notification_type: string;
-  priority: NotificationPriority;
-  title: string;
-  message: string;
-  related_entity_type?: string | null;
-  related_entity_id?: number | null;
-  created_by?: number | null;
-  created_by_name?: string | null;
-  barangay_name?: string | null;
-  purok_name?: string | null;
-  is_seen: number | boolean;
-  seen_at?: string | null;
-  is_read: number | boolean;
-  read_at?: string | null;
-  created_at: string;
-};
-
 const NOTIFICATIONS_PER_PAGE = 10;
-const NOTIFICATION_POLL_INTERVAL_MS = 30_000;
 
 // Use actual backend relationship fields where provided. An ordinary broadcast
 // without a linked record is intentionally not given a fictitious destination.
@@ -143,11 +121,6 @@ class NotificationRequestError extends Error {
     super(message);
     this.name = "NotificationRequestError";
   }
-}
-
-function isAccessDenied(error: unknown): boolean {
-  return error instanceof NotificationRequestError &&
-    (error.status === 401 || error.status === 403);
 }
 
 async function apiRequest(
@@ -239,17 +212,23 @@ export default function NotificationsPanel({
     normalizedRole === "admin" ||
     normalizedRole === "purok_leader";
 
-  const [notifications, setNotifications] =
-    useState<NotificationItem[]>([]);
-
-  const [loading, setLoading] =
-    useState(true);
+  const {
+    notifications,
+    update: setNotifications,
+    refresh: refreshFeed,
+    loading,
+    loaded,
+    error: feedError,
+    accessPaused,
+    enabled,
+  } = useNotifications();
 
   const [saving, setSaving] =
     useState(false);
 
   const [error, setError] =
     useState("");
+  const displayError = error || feedError?.message || "";
 
   const [successMessage, setSuccessMessage] =
     useState("");
@@ -314,146 +293,41 @@ export default function NotificationsPanel({
   const [recipientRole, setRecipientRole] =
     useState("");
 
-  // One request at a time. Pending/inactive sessions stop polling after 401/403.
-  const accessBlockedRef = useRef(false);
-  const requestInFlightRef = useRef(false);
-  const requestControllerRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(false);
   const initialSeenSyncedRef = useRef(false);
-  const [accessPaused, setAccessPaused] = useState(false);
-
-  const pauseForAccessDenial = (requestError: unknown) => {
-    if (!isAccessDenied(requestError)) return false;
-
-    accessBlockedRef.current = true;
-    if (mountedRef.current) {
-      setAccessPaused(true);
-      setNotifications([]);
-      setError(
-        requestError instanceof Error && requestError.message
-          ? requestError.message
-          : "Notifications are unavailable until your account is approved.",
-      );
-    }
-    return true;
-  };
-
-  const loadNotifications = async (
-    manualRetry = false,
-    background = false,
-  ): Promise<boolean> => {
-    // Automatic polling never overlaps an existing request or retries denied access.
-    if (!mountedRef.current || requestInFlightRef.current ||
-        (accessBlockedRef.current && !manualRetry)) {
-      return false;
-    }
-
-    if (manualRetry) {
-      accessBlockedRef.current = false;
-      setAccessPaused(false);
-    }
-
-    const sessionToken = getToken();
-    if (!sessionToken) {
-      pauseForAccessDenial(new NotificationRequestError("Login session is missing. Please log in again.", 401));
-      setLoading(false);
-      return false;
-    }
-
-    const controller = new AbortController();
-    requestControllerRef.current = controller;
-    requestInFlightRef.current = true;
-
-    // Initial/manual fetches show loading. Background refreshes stay silent so the
-    // empty-state view never flashes a spinner every 30 seconds.
-    if (!background) setLoading(true);
-    if (!background) setError("");
-
-    try {
-      const data = await apiRequest("/api/notifications", { signal: controller.signal });
-      if (!mountedRef.current || controller.signal.aborted || getToken() !== sessionToken) {
-        return false;
-      }
-      setNotifications(Array.isArray(data.notifications) ? data.notifications : []);
-      setError("");
-      return true;
-    } catch (requestError) {
-      if (!mountedRef.current || controller.signal.aborted) return false;
-      if (!pauseForAccessDenial(requestError)) {
-        setError(
-          requestError instanceof Error
-            ? requestError.message
-            : "Unable to load notifications.",
-        );
-      }
-      return false;
-    } finally {
-      if (requestControllerRef.current === controller) {
-        requestControllerRef.current = null;
-        requestInFlightRef.current = false;
-        if (mountedRef.current) setLoading(false);
-      }
-    }
-  };
-
-  const markAllSeen = async () => {
-    if (accessBlockedRef.current || !mountedRef.current || !getToken()) return;
-
-    try {
-      await apiRequest("/api/notifications/seen-all", { method: "PATCH" });
-      if (!mountedRef.current || accessBlockedRef.current || !getToken()) return;
-      setNotifications((current) =>
-        current.map((item) => ({
-          ...item,
-          is_seen: 1,
-          seen_at: item.seen_at || new Date().toISOString(),
-        })),
-      );
-      window.dispatchEvent(new Event("notifications-seen-all"));
-    } catch (requestError) {
-      pauseForAccessDenial(requestError);
-    }
-  };
-
-  const refreshNotifications = async (manualRetry = false, background = false) => {
-    const loaded = await loadNotifications(manualRetry, background);
-    if (loaded && mountedRef.current && !accessBlockedRef.current &&
-        !initialSeenSyncedRef.current) {
-      // Mark seen only on first successful inbox opening, not on every poll.
-      initialSeenSyncedRef.current = true;
-      await markAllSeen();
-    }
-  };
 
   useEffect(() => {
     mountedRef.current = true;
-    accessBlockedRef.current = false;
-    void refreshNotifications();
-
-    const timer = window.setInterval(() => {
-      if (!document.hidden && !accessBlockedRef.current && getToken()) {
-        void refreshNotifications(false, true);
-      }
-    }, NOTIFICATION_POLL_INTERVAL_MS);
-
-    // Also stop the current request if the logout flow signals an immediate sign-out.
-    const onLogout = () => {
-      accessBlockedRef.current = true;
-      requestControllerRef.current?.abort();
-      setNotifications([]);
-      setLoading(false);
-    };
-    window.addEventListener("sg-auth-logout", onLogout);
-
-    return () => {
-      mountedRef.current = false;
-      window.clearInterval(timer);
-      window.removeEventListener("sg-auth-logout", onLogout);
-      requestControllerRef.current?.abort();
-      requestControllerRef.current = null;
-      requestInFlightRef.current = false;
-    };
+    return () => { mountedRef.current = false; };
   }, []);
+
+  // Opening the inbox marks notifications seen once. Shared background refreshes
+  // update the inbox, both badges, and emergency alerts without extra requests.
+  useEffect(() => {
+    if (!enabled || !loaded || accessPaused || initialSeenSyncedRef.current) return;
+    initialSeenSyncedRef.current = true;
+    const sessionToken = getToken();
+    void apiRequest("/api/notifications/seen-all", { method: "PATCH" })
+      .then(() => {
+        if (getToken() !== sessionToken) return;
+        setNotifications((current) => current.map((item) => ({
+          ...item,
+          is_seen: 1,
+          seen_at: item.seen_at || new Date().toISOString(),
+        })));
+        window.dispatchEvent(new Event("notifications-seen-all"));
+      })
+      .catch((requestError) => {
+        if (mountedRef.current && getToken() === sessionToken) {
+          setError(requestError instanceof Error ? requestError.message : "Unable to mark notifications as seen.");
+        }
+      });
+  }, [enabled, loaded, accessPaused, setNotifications]);
+
+  const refreshNotifications = async (manual = false) => {
+    setError("");
+    await refreshFeed({ manual });
+  };
 
   const filterCounts = useMemo(
     () => ({
@@ -599,8 +473,6 @@ export default function NotificationsPanel({
       setPriority("notice");
       setRecipientRole("");
       setShowCompose(false);
-
-      await loadNotifications();
 
       window.dispatchEvent(
         new Event("notifications-changed"),
@@ -884,13 +756,13 @@ export default function NotificationsPanel({
         </div>
       )}
 
-      {error && (
+      {displayError && (
         <div
           role="alert"
           className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-700"
         >
           <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" />
-          {error}
+          {displayError}
         </div>
       )}
 

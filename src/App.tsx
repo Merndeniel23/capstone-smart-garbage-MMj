@@ -38,6 +38,7 @@ import {
   useAppState,
 } from "./context/AppStateContext";
 import { useAdminActionCounts } from "./hooks/useAdminActionCounts";
+import { NotificationsProvider } from "./context/NotificationsContext";
 
 export type Role =
   | "household"
@@ -388,7 +389,9 @@ function PersistentCollectorLocationTracker() {
 export default function App() {
   return (
     <AppStateProvider>
-      <AppContent />
+      <NotificationsProvider>
+        <AppContent />
+      </NotificationsProvider>
     </AppStateProvider>
   );
 }
