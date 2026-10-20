@@ -5,6 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { portalOverlays } from './PortalOverlays';
 import {
   AlertTriangle,
   Bell,
@@ -66,6 +67,8 @@ function linkedNotificationPage(
   const isLeader = normalizedRole === "purok_leader";
   const isResident = normalizedRole === "resident";
   const isCollector = normalizedRole === "collector";
+  if(entity==="household_collection"||type==="collection_result")return normalizedRole==="super_admin"?null:"collection-records";
+  if(entity==="household_violation"||type==="violation")return isCollector?null:"violations";
 
   if (entity === "complaint" || ["new_complaint", "complaint_update", "complaint_message"].includes(type)) {
     return "complaints";
@@ -618,7 +621,7 @@ export default function NotificationsPanel({
     }
   };
 
-  return (
+  return portalOverlays(
     <>
       <style>{`
         html.sg-dark .sg-notification-card {

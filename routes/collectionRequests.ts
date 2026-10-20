@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { db } from "../config/db.js";
+import { revisionsEnabled } from "../services/sgms.js";
 import {
   requireAuth,
   type AuthRequest,
@@ -395,6 +396,10 @@ router.patch(
           message:
             "Only collectors and administrators can update request status.",
         });
+      }
+
+      if (revisionsEnabled() && nextStatus === "completed") {
+        return res.status(409).json({message: "Record the household bin QR and segregation result to complete collection."});
       }
 
       await connection.beginTransaction();

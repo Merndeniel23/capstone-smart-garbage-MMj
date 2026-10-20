@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   Award,
   Bell,
@@ -68,6 +68,8 @@ export default function Sidebar({
     (item) => !Boolean(Number(item.is_seen)),
   ).length;
   const residentAccessRestricted = role === "household" && !enabled;
+  const [revisions, setRevisions] = useState(false);
+  useEffect(()=>{let active=true;void fetch("/api/sgms/config").then(res=>res.json()).then(data=>{if(active)setRevisions(data.enabled===true);}).catch(()=>undefined);return()=>{active=false;};},[]);
 
   const {
     pendingPayments,
@@ -356,7 +358,7 @@ export default function Sidebar({
       (item) => item.id === "profile",
     );
 
-  const menuItems =
+  const baseMenuItems =
     role === "super_admin"
       ? superAdminItems
       : role === "admin"
@@ -368,6 +370,20 @@ export default function Sidebar({
             : residentAccessRestricted
               ? restrictedHouseholdItems
               : householdItems;
+
+  const additional: MenuItem[] = !revisions || residentAccessRestricted ? [] : [
+    ...(["admin","leader","household"].includes(role) ? [{id:"households",icon:Users,label:role==="household"?"My Household":"Households"}] : []),
+    ...(role==="admin" ? [{id:"puroks",icon:Building2,label:"Puroks"},{id:"endorsements",icon:Award,label:"Endorsements"},{id:"barangay-policies",icon:Shield,label:"Approved Policies & Templates"}] : []),
+    ...(role!=="super_admin" ? [{id:"collection-records",icon:ClipboardList,label:role==="collector"?"QR Collection & Records":"Collection Records"}] : []),
+    ...(["admin","leader","household"].includes(role) ? [{id:"violations",icon:Shield,label:"Violations"}] : []),
+    {id:"activity-logs",icon:FileText,label:"Activity Logs"},
+    ...(role!=="collector" ? [{id:"payment-history",icon:CreditCard,label:"Payment History"}] : []),
+    ...(["admin","leader","super_admin"].includes(role) ? [{id:"archives",icon:Building2,label:"Archives"}] : []),
+    ...(role==="household" ? [{id:"online-payments",icon:CreditCard,label:"Pay Online"}] : []),
+  ];
+  const section = (id:string) => id.endsWith("dashboard")||id==="collector-tasks" ? "Overview" : ["user-management","puroks","households","members-list","garbage-bins","schedule","truck-crew-management"].includes(id) ? "Management" : ["collection-records","violations","complaints","payments","route-map","bin-inspections","online-payments"].includes(id) ? "Monitoring & Services" : ["endorsements","activity-logs","archives","reports","payment-history","collector-pickup-log"].includes(id) ? "Records" : "Settings";
+  const sectionOrder=["Overview","Management","Monitoring & Services","Records","Settings"];
+  const menuItems=[...baseMenuItems,...additional].sort((a,b)=>sectionOrder.indexOf(section(a.id))-sectionOrder.indexOf(section(b.id)));
 
   const roleLabel = (() => {
     switch (role) {
@@ -472,11 +488,12 @@ export default function Sidebar({
             : "px-4"
         }`}
       >
-        {menuItems.map((item) => {
+        {menuItems.map((item, index) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
 
-          return (
+          return (<Fragment key={item.id}>
+            {(index===0||section(menuItems[index-1].id)!==section(item.id))&&(!collapsed?<p className="px-4 pb-1 pt-4 text-[10px] font-black uppercase tracking-widest text-white/50">{section(item.id)}</p>:<hr className="my-3 border-white/15"/>)}
             <button
               key={item.id}
               type="button"
@@ -529,7 +546,7 @@ export default function Sidebar({
                   </span>
                 )
               )}
-            </button>
+            </button></Fragment>
           );
         })}
       </nav>

@@ -14,17 +14,23 @@ export const db = mysql.createPool({
 
   waitForConnections: true,
   connectionLimit: 10,
+  ...(process.env.SGMS_REVISIONS_ENABLED === "true" ? {timezone: "+08:00", dateStrings: ["DATE"] as Array<"DATE">} : {}),
 
   // Required by Aiven.
   // Local XAMPP remains non-SSL unless DB_SSL=true.
   ...(useSSL
     ? {
         ssl: {
-          rejectUnauthorized: false,
+          rejectUnauthorized: true,
+          ...(process.env.DB_CA_CERT ? {ca: process.env.DB_CA_CERT.replace(/\\n/g, "\n")} : {}),
         },
       }
     : {}),
 });
+
+if (process.env.SGMS_REVISIONS_ENABLED === "true") {
+  db.on("connection", connection => { connection.query("SET time_zone = '+08:00'"); });
+}
 
 export async function testDatabaseConnection() {
   const connection = await db.getConnection();

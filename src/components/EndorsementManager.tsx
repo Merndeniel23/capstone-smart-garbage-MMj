@@ -22,6 +22,9 @@ import { useAppState } from '../context/AppStateContext';
 import { notifyAdminActionCountsChanged } from '../hooks/useAdminActionCounts';
 import cordovaSeal from '../assets/images/Municipality_of_Cordova_Official_Seal.png';
 import ConfirmDialog from './ConfirmDialog';
+import { portalOverlays } from './PortalOverlays';
+import RecordActions from './RecordActions';
+import { downloadEndorsement } from '../services/endorsementDownload';
 import FeedbackToast from './FeedbackToast';
 import Pagination, { DEFAULT_PAGE_SIZE } from './Pagination';
 
@@ -651,7 +654,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
      );
    }
 
-  return (
+  return portalOverlays(
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500 pb-20 md:pb-0">
       <style>{`
         /* Official certificate should always look like real paper,
@@ -804,19 +807,19 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
       <ConfirmDialog
         open={Boolean(pendingPermanentDelete)}
-        title="Delete endorsement request?"
+        title="Archive endorsement request?"
         description={
           pendingPermanentDelete
             ? <>
                 Request <strong>{pendingPermanentDelete.id}</strong> is already final
                 ({' '}
                 <strong>{pendingPermanentDelete.status}</strong>
-                {' '}) and will be permanently deleted from the database together with its endorsement history.
-                This action cannot be undone.
+                {' '}) and will be archived while its endorsement history is preserved.
+                Authorized personnel can restore the record from Archives.
               </>
             : ''
         }
-        confirmLabel="Delete permanently"
+        confirmLabel="Archive"
         busy={actionLoading}
         destructive
         onConfirm={() => void handlePermanentDelete()}
@@ -1016,15 +1019,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       selectedRequest.status === 'Rejected by Purok Leader' ||
                       selectedRequest.status === 'Rejected by Barangay Captain'
                     ) && (
-                      <button
-                        type="button"
-                        disabled={actionLoading}
-                        onClick={() => requestPermanentDelete(selectedRequest)}
-                        className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-black uppercase tracking-wide text-rose-700 transition hover:bg-rose-100 disabled:opacity-50"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        Delete Final Request
-                      </button>
+                      <RecordActions label={selectedRequest.id} disabled={actionLoading} onArchive={()=>requestPermanentDelete(selectedRequest)} />
                     )}
 
                   </div>
@@ -1298,6 +1293,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                         {item.rawStatus === 'approved' ? 'View Approved Endorsement' : 'Preview Endorsement'}
                       </button>
                     )}
+                    {item.rawStatus === 'approved' && <button type="button" onClick={event=>{event.stopPropagation();void downloadEndorsement(item.databaseId).catch(error=>setErrorMessage(error.message));}} className="rounded-lg border border-emerald-300 px-3 py-1 text-xs font-bold text-emerald-700">Download approved PDF</button>}
 
                     {role === 'household' && item.status === 'Pending Leader Review' && (
                       <button
@@ -1315,16 +1311,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       item.status === 'Rejected by Purok Leader' ||
                       item.status === 'Rejected by Barangay Captain'
                     ) && (
-                      <button
-                        type="button"
-                        disabled={actionLoading}
-                        onClick={(e) => requestPermanentDelete(item, e)}
-                        className="flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-rose-700 transition hover:bg-rose-100 disabled:opacity-50"
-                        title="Delete final endorsement request"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                        Delete
-                      </button>
+                      <RecordActions label={item.id} disabled={actionLoading} onArchive={()=>requestPermanentDelete(item)} />
                     )}
                   </div>
                 </div>

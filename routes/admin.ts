@@ -1,6 +1,8 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { randomBytes } from "node:crypto";
+import { sendAccountActivation } from "../services/accountActivation.js";
+import { activeRecord, archivedAccount, audit, DomainError, revisionsEnabled, transaction } from "../services/sgms.js";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../config/db.js";
 import {
@@ -19,6 +21,12 @@ import {
 } from "../services/emailVerification.js";
 
 const router = Router();
+router.use("/users/:id", requireAuth, async (req: AuthRequest,res,next)=>{
+  try {
+    if (["admin","super_admin"].includes(req.user!.role) && await archivedAccount(Number(req.params.id))) return res.status(409).json({message:"Restore this account from Archives before changing it."});
+    next();
+  } catch {res.status(500).json({message:"Unable to check account status."});}
+});
 
 type ManagedRole = "resident" | "purok_leader" | "collector";
 
@@ -1107,7 +1115,7 @@ router.get("/purok-members", requireAuth, async (req: AuthRequest, res) => {
       WHERE u.role = 'resident'
         AND u.purok_id = ?
         AND u.barangay_id = ?
-        AND u.email NOT LIKE ?
+        AND u.email NOT LIKE ? ${activeRecord("u")}
       ORDER BY u.full_name ASC
       `,
       [purokId, barangayId, ARCHIVED_EMAIL_LIKE],
@@ -1206,7 +1214,7 @@ router.get("/users", requireAuth, async (req: AuthRequest, res) => {
       FROM users u
       LEFT JOIN barangays b ON b.id = u.barangay_id
       LEFT JOIN puroks p ON p.id = u.purok_id
-      ${scopeWhere}
+      ${scopeWhere} ${activeRecord("u")}
       ORDER BY
         FIELD(u.role, 'admin', 'purok_leader', 'collector', 'resident'),
         u.full_name ASC
@@ -1278,6 +1286,7 @@ router.get("/locations", requireAuth, async (req: AuthRequest, res) => {
           SELECT p.id, p.barangay_id, p.name, b.name AS barangay_name
           FROM puroks p
           INNER JOIN barangays b ON b.id = p.barangay_id
+          WHERE 1=1 ${activeRecord("p")}
           ORDER BY b.name ASC, p.name ASC
         `)
       : await db.query(
@@ -1285,7 +1294,7 @@ router.get("/locations", requireAuth, async (req: AuthRequest, res) => {
           SELECT p.id, p.barangay_id, p.name, b.name AS barangay_name
           FROM puroks p
           INNER JOIN barangays b ON b.id = p.barangay_id
-          WHERE p.barangay_id = ?
+          WHERE p.barangay_id = ? ${activeRecord("p")}
           ORDER BY p.name ASC
           `,
           [barangayId],
@@ -1382,10 +1391,11 @@ router.post("/puroks", requireAuth, async (req: AuthRequest, res) => {
       });
     }
 
-    const [result]: any = await db.execute(
-      "INSERT INTO puroks (barangay_id, name, description) VALUES (?, ?, ?)",
-      [barangayId, name, description || null],
-    );
+    const result: any = await transaction(async connection=>{
+      const [created]: any = await connection.execute("INSERT INTO puroks (barangay_id, name, description) VALUES (?, ?, ?)",[barangayId,name,description||null]);
+      await audit(connection,req.user!,"purok_created","puroks",Number(created.insertId),{barangay_id:barangayId,purok_id:Number(created.insertId)});
+      return created;
+    });
     return res.status(201).json({
       success: true,
       message: `${name} was added to your barangay. You can now assign a Purok Leader or residents.`,
@@ -1505,6 +1515,7 @@ router.patch("/puroks/:id", requireAuth, async (req: AuthRequest, res) => {
       "UPDATE puroks SET name = ? WHERE id = ? AND barangay_id = ?",
       [name, purokId, barangayId],
     );
+    await audit(connection,req.user!,"purok_renamed","puroks",purokId,{barangay_id:barangayId,purok_id:purokId},{from:targetRows[0].name,to:name});
     await connection.commit();
     return res.json({
       success: true,
@@ -1792,6 +1803,10 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
       return res.status(404).json({ success: false, message: "User was not found." });
     }
 
+    if (user.status === "pending_activation") {
+      await connection.rollback();
+      return res.status(409).json({message: "The account owner must complete password setup before assignments can change."});
+    }
     if (isArchivedAccount(user)) {
       await connection.rollback();
       return res.status(410).json({
@@ -1877,7 +1892,7 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
       }
 
       const [purokRows]: any = await connection.query(
-        `SELECT id, barangay_id FROM puroks WHERE id = ? LIMIT 1 FOR UPDATE`,
+        `SELECT id, barangay_id FROM puroks WHERE id = ? ${activeRecord("puroks")} LIMIT 1 FOR UPDATE`,
         [purokId],
       );
 
@@ -1939,6 +1954,8 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
        WHERE id = ?`,
       [role, finalBarangayId, finalPurokId, userId],
     );
+
+    await audit(connection,req.user!,"account_assignment_changed","users",userId,{barangay_id:finalBarangayId,purok_id:finalPurokId,resident_id:role==="resident"?userId:null},{role});
 
     await connection.commit();
 
@@ -2038,6 +2055,9 @@ router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => 
       throw new VerificationError("User was not found in your barangay or cannot be updated.", 404);
     }
 
+    if (targetUser.status === "pending_activation") {
+      throw new VerificationError("The account owner must complete password setup before activation or reassignment.", 409);
+    }
     if (isArchivedAccount(targetUser)) {
       throw new VerificationError(
         "This account has already been removed from the system.",
@@ -2076,7 +2096,7 @@ router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => 
       }
       const [leaders]: any = await connection.query(
         `SELECT id FROM users WHERE role = 'purok_leader' AND purok_id = ?
-         AND status IN ('active', 'pending') AND id <> ? LIMIT 1 FOR UPDATE`,
+         AND status IN ('active', 'pending', 'pending_activation') ${activeRecord("users")} AND id <> ? LIMIT 1 FOR UPDATE`,
         [targetUser.purok_id, userId],
       );
       if (leaders.length) {
@@ -2101,6 +2121,7 @@ router.patch("/users/:id/status", requireAuth, async (req: AuthRequest, res) => 
       throw new VerificationError("User was not found in your barangay or cannot be updated.", 404);
     }
 
+    await audit(connection,req.user!,"account_status_changed","users",userId,{barangay_id:targetUser.barangay_id,purok_id:targetUser.purok_id,resident_id:targetUser.role==="resident"?userId:null},{status});
     await connection.commit();
 
     return res.json({
@@ -2152,19 +2173,19 @@ router.post("/staff", requireAuth, async (req: AuthRequest, res) => {
     if (!isSuperAdmin && barangayId !== parsePositiveInteger(req.user?.barangay_id)) {
       throw new VerificationError("Barangay Captains may create accounts only in their own barangay.", 403);
     }
-    if (temporaryPassword !== confirmTemporaryPassword) {
+    if (!revisionsEnabled() && temporaryPassword !== confirmTemporaryPassword) {
       throw new VerificationError("Temporary passwords do not match.");
     }
-    if (temporaryPassword.length < 12 || Buffer.byteLength(temporaryPassword, "utf8") > 72 ||
+    if (!revisionsEnabled() && (temporaryPassword.length < 12 || Buffer.byteLength(temporaryPassword, "utf8") > 72 ||
         !/[A-Z]/.test(temporaryPassword) || !/[a-z]/.test(temporaryPassword) ||
-        !/\d/.test(temporaryPassword) || !/[^A-Za-z0-9]/.test(temporaryPassword)) {
+        !/\d/.test(temporaryPassword) || !/[^A-Za-z0-9]/.test(temporaryPassword))) {
       throw new VerificationError("Temporary password must be 12–72 bytes and include uppercase, lowercase, number, and symbol.");
     }
     if (role === "purok_leader" && !purokId) {
       throw new VerificationError("Assign a valid purok to the Purok Leader.");
     }
 
-    const passwordHash = await bcrypt.hash(temporaryPassword, 12);
+    const passwordHash = await bcrypt.hash(revisionsEnabled() ? randomBytes(32).toString("hex") : temporaryPassword, 12);
     await connection.beginTransaction();
     const [barangays]: any = await connection.query(
       "SELECT id FROM barangays WHERE id = ? AND is_active = 1 LIMIT 1 FOR UPDATE",
@@ -2175,7 +2196,7 @@ router.post("/staff", requireAuth, async (req: AuthRequest, res) => {
     }
     if (role === "purok_leader") {
       const [puroks]: any = await connection.query(
-        "SELECT id, barangay_id FROM puroks WHERE id = ? LIMIT 1 FOR UPDATE",
+        `SELECT id, barangay_id FROM puroks WHERE id = ? ${activeRecord("puroks")} LIMIT 1 FOR UPDATE`,
         [purokId],
       );
       if (!puroks.length || Number(puroks[0].barangay_id) !== barangayId) {
@@ -2183,7 +2204,7 @@ router.post("/staff", requireAuth, async (req: AuthRequest, res) => {
       }
       const [leaders]: any = await connection.query(
         `SELECT id FROM users WHERE role = 'purok_leader' AND purok_id = ?
-         AND status IN ('active', 'pending') LIMIT 1 FOR UPDATE`,
+         AND status IN ('active', 'pending', 'pending_activation') ${activeRecord("users")} LIMIT 1 FOR UPDATE`,
         [purokId],
       );
       if (leaders.length) {
@@ -2200,10 +2221,16 @@ router.post("/staff", requireAuth, async (req: AuthRequest, res) => {
       `INSERT INTO users
        (full_name, email, phone, password_hash, role, barangay_id, purok_id,
         status, email_verified_at, must_change_password)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, 1)`,
-      [fullName, email, phone, passwordHash, role, barangayId, role === "purok_leader" ? purokId : null],
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 1)`,
+      [fullName, email, phone, passwordHash, role, barangayId, role === "purok_leader" ? purokId : null, revisionsEnabled() ? "pending_activation" : "pending"],
     );
     const userId = Number(created.insertId);
+    if (revisionsEnabled()) {
+      await sendAccountActivation(connection, {id: userId, email, full_name: fullName});
+      await audit(connection, req.user!, "staff_created", "users", userId, {barangay_id: barangayId, purok_id: role === "purok_leader" ? purokId : null});
+      await connection.commit();
+      return res.status(201).json({success: true, userId, message: "Account created as pending_activation. A password setup link was emailed to the account owner."});
+    }
     const verification = await createEmailVerification(connection, { id: userId, email, full_name: fullName });
     await connection.commit();
     return res.status(201).json({
@@ -2218,6 +2245,7 @@ router.post("/staff", requireAuth, async (req: AuthRequest, res) => {
     await connection?.rollback();
     if (respondVerificationError(error, res)) return;
     console.error("Create managed staff account error:", error);
+    if (error instanceof DomainError) return res.status(error.status).json({message: error.message});
     return res.status(error?.code === "ER_DUP_ENTRY" ? 409 : 500).json({
       success: false,
       message: error?.code === "ER_DUP_ENTRY"

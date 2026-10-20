@@ -29,6 +29,8 @@ import {
   notifyAdminActionCountsChanged,
 } from "../hooks/useAdminActionCounts";
 import ConfirmDialog from "./ConfirmDialog";
+import { portalOverlays } from './PortalOverlays';
+import RecordActions from './RecordActions';
 import FeedbackToast from "./FeedbackToast";
 import Pagination, { DEFAULT_PAGE_SIZE } from "./Pagination";
 
@@ -218,6 +220,8 @@ export default function ComplaintsPanel({
   initialComplaintId = null,
 }: ComplaintsPanelProps) {
   const isMunicipal = role === "super_admin";
+  const [directReview,setDirectReview]=useState(false);
+  useEffect(()=>{void fetch("/api/sgms/config").then(res=>res.json()).then(data=>setDirectReview(data.enabled===true)).catch(()=>undefined);},[]);
   const canManage = role === "admin" || isMunicipal;
   const [complaints, setComplaints] =
     useState<Complaint[]>([]);
@@ -504,8 +508,8 @@ export default function ComplaintsPanel({
     Boolean(selectedComplaint?.barangay_id) &&
     Number(collector.barangay_id) === Number(selectedComplaint?.barangay_id),
   );
-  const canAssign = canManage && Boolean(selectedComplaint && ["pending", "assigned"].includes(selectedComplaint.status));
-  const canResolve = canManage && selectedComplaint?.status === "completed";
+  const canAssign = canManage && !directReview && Boolean(selectedComplaint && ["pending", "assigned"].includes(selectedComplaint.status));
+  const canResolve = canManage && Boolean(selectedComplaint && (selectedComplaint.status === "completed" || (directReview && ["pending","assigned","in_progress"].includes(selectedComplaint.status))));
   const canCancel = Boolean(
     selectedComplaint &&
       role === "household" &&
@@ -1091,7 +1095,7 @@ export default function ComplaintsPanel({
     role === "household" ||
     role === "leader";
 
-  return (
+  return portalOverlays(
     <>
       <style>{`
         html.sg-dark .sg-complaint-assigned-card {
@@ -1427,9 +1431,7 @@ export default function ComplaintsPanel({
                   </button>
 
                   {canManage && ["completed", "resolved"].includes(item.status) && (
-                    <button
-                      type="button"
-                      onClick={() => {
+                    <RecordActions label={`complaint ${item.id}`} disabled={saving} onArchive={() => {
                         setSelectedId(item.id);
                         setError("");
                         setStatusNotice("");
@@ -1438,14 +1440,7 @@ export default function ComplaintsPanel({
                           complaintId: item.id,
                           status: item.status,
                         });
-                      }}
-                      disabled={saving}
-                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-rose-700 transition hover:bg-rose-100 disabled:opacity-50"
-                      title="Delete completed or resolved complaint"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      Delete complaint
-                    </button>
+                      }} />
                   )}
                 </div>
               ),
@@ -1496,6 +1491,7 @@ export default function ComplaintsPanel({
                   />
                 </div>
 
+                {directReview&&canManage&&["pending","assigned"].includes(selectedComplaint.status)&&<button type="button" disabled={saving} onClick={()=>{setSaving(true);void apiRequest(`/sgms/complaints/${selectedComplaint.id}/investigate`,{method:"POST",body:"{}"}).then(data=>{setSuccess(data.message);return loadData();}).catch(error=>setError(error.message)).finally(()=>setSaving(false));}} className="rounded-xl border border-emerald-300 px-3 py-2 text-xs font-bold text-emerald-700">Start investigation</button>}
                 {canCancel && (
                     <button
                       type="button"
@@ -1509,17 +1505,7 @@ export default function ComplaintsPanel({
                     </button>
                   )}
                 {canDelete && (
-                  <button
-                    type="button"
-                    onClick={() => openConfirmation("delete")}
-                    disabled={saving}
-                    title="Delete completed or resolved complaint"
-                    aria-label="Delete completed or resolved complaint"
-                    className="inline-flex items-center gap-1 rounded-xl border border-rose-200 px-3 py-2 text-xs font-black text-rose-600 hover:bg-rose-50 disabled:opacity-50"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    Delete
-                  </button>
+                  <RecordActions label={`complaint ${selectedComplaint.id}`} disabled={saving} onArchive={()=>openConfirmation("delete")} />
                 )}
               </div>
 
@@ -1873,7 +1859,7 @@ export default function ComplaintsPanel({
           confirmation?.action === "cancel"
             ? "Cancel this complaint?"
             : confirmation?.action === "delete"
-              ? "Delete this completed complaint?"
+              ? "Archive this completed complaint?"
               : "Resolve this complaint?"
         }
         description={
@@ -1882,8 +1868,8 @@ export default function ComplaintsPanel({
               {confirmation?.action === "cancel"
                 ? "The complaint will be marked cancelled. Its record and messages will remain in the log."
                 : confirmation?.action === "delete"
-                  ? "This completed/resolved complaint, its messages, related notifications, and stored complaint photo will be permanently deleted. This cannot be undone."
-                  : "Confirm that the collector's work has been verified. Your resolution note will be saved with the complaint."}
+                  ? "This complaint will be archived. Its messages, notifications, and stored photo remain preserved."
+                  : "Confirm that the complaint has been investigated. Your resolution note will be saved with the complaint."}
             </p>
             {confirmation?.action === "resolve" && (
               <p className="whitespace-pre-line rounded-xl bg-slate-100 p-3">
@@ -1897,7 +1883,7 @@ export default function ComplaintsPanel({
           confirmation?.action === "cancel"
             ? "Cancel Complaint"
             : confirmation?.action === "delete"
-              ? "Delete Complaint"
+              ? "Archive Complaint"
               : "Resolve Complaint"
         }
         cancelLabel="Go Back"

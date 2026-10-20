@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 import { db } from "../config/db.js";
 import { getJwtSecret } from "../config/security.js";
 import { requiresEmailVerification } from "../services/emailVerification.js";
+import { accountSuspended, archivedAccount } from "../services/sgms.js";
 
 export interface AuthUser {
   id: number;
@@ -86,7 +87,7 @@ async function authenticateRequest(
 
     const currentUser = rows[0];
 
-    if (!currentUser) {
+    if (!currentUser || await archivedAccount(userId)) {
       return res.status(401).json({
         success: false,
         message: "This login session no longer belongs to an account.",
@@ -94,6 +95,7 @@ async function authenticateRequest(
     }
 
     const currentStatus = String(currentUser.status).toLowerCase();
+    if (await accountSuspended(userId)) return res.status(403).json({message:"Account access is suspended under an approved barangay policy. Contact the Admin for review."});
     if (currentStatus !== "inactive" && requiresEmailVerification(currentUser)) {
       return res.status(403).json({
         success: false,

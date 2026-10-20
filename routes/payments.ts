@@ -2,6 +2,7 @@ import { Router } from "express";
 import crypto from "crypto";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../config/db.js";
+import { audit, revisionsEnabled } from "../services/sgms.js";
 import {
   requireAuth,
   type AuthRequest,
@@ -245,7 +246,7 @@ function feeForDate(
   return amount;
 }
 
-async function paymentFeeInfo(
+export async function paymentFeeInfo(
   purokId: number,
   executor: any = db,
 ) {
@@ -1587,6 +1588,14 @@ router.post(
       const transactionCode =
         createTransactionCode();
 
+      if (revisionsEnabled()) {
+        const [online] = await connection.query<any[]>("SELECT id FROM online_payment_attempts WHERE resident_id = ? AND category = ? AND billing_period = ? AND status IN ('creating','pending','paid')", [viewer.id,category,billingPeriod]);
+        if (online.length) {
+          await connection.rollback();
+          return res.status(409).json({message: "An online checkout or verified payment already exists for this billing period."});
+        }
+      }
+
       uploadedReceiptProof =
         await storeProof(
           receiptProof,
@@ -1783,6 +1792,8 @@ router.patch(
           SELECT
             id,
             purok_id,
+            barangay_id,
+            resident_id,
             status
           FROM payments
           WHERE id = ?
@@ -1859,6 +1870,7 @@ router.patch(
         });
       }
 
+      await audit(connection, req.user!, action === "approve" ? "manual_payment_verified" : "manual_payment_rejected", "payments", paymentId, payment, {remarks});
       await connection.commit();
 
       return res.json({
@@ -2580,9 +2592,6 @@ router.delete(
     let connection:
       PoolConnection | null = null;
 
-    let receiptProof: string | null = null;
-    let remittanceProof: string | null = null;
-
     try {
       const userId =
         positiveInteger(req.user?.id);
@@ -2618,8 +2627,8 @@ router.delete(
 
         return res.status(403).json({
           success: false,
-          message:
-            "Municipal Administrator access is required to delete payment records.",
+            message:
+            "Municipal Administrator access is required to archive payment records.",
         });
       }
 
@@ -2629,8 +2638,7 @@ router.delete(
           SELECT
             id,
             transaction_code,
-            receipt_proof,
-            remittance_proof
+            status
           FROM payments
           WHERE id = ?
           LIMIT 1
@@ -2651,59 +2659,38 @@ router.delete(
         });
       }
 
-      receiptProof =
-        typeof payment.receipt_proof === "string"
-          ? payment.receipt_proof
-          : null;
+      if (payment.status !== "completed") {
+        await connection.rollback();
+        return res.status(409).json({
+          success: false,
+          message: "Only completed payments can be archived.",
+        });
+      }
 
-      remittanceProof =
-        typeof payment.remittance_proof === "string"
-          ? payment.remittance_proof
-          : null;
+      const [result] = await connection.execute<any>(
+        `INSERT INTO payment_archives (payment_id, archived_by)
+         VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE payment_id = payment_id`,
+        [paymentId, userId],
+      );
 
-      const [result] =
-        await connection.execute<any>(
-          `
-          DELETE FROM payments
-          WHERE id = ?
-          `,
-          [paymentId],
-        );
-
-      if (result.affectedRows !== 1) {
+      if (result.affectedRows !== 0 && result.affectedRows !== 1) {
         await connection.rollback();
 
         return res.status(409).json({
           success: false,
           message:
-            "Payment record could not be deleted.",
+            "Payment record could not be archived.",
         });
       }
 
       await connection.commit();
 
-      for (const proof of [
-        receiptProof,
-        remittanceProof,
-      ]) {
-        if (
-          proof &&
-          isStorageReference(proof)
-        ) {
-          await deleteStoredProof(proof).catch(
-            (cleanupError) =>
-              console.error(
-                "Deleted payment proof cleanup error:",
-                cleanupError,
-              ),
-          );
-        }
-      }
-
       return res.json({
         success: true,
+        archived: true,
         message:
-          `Payment ${payment.transaction_code} was deleted successfully.`,
+          `Payment ${payment.transaction_code} was archived. Its proof and financial record were preserved.`,
       });
     } catch (error) {
       if (connection) {
@@ -2718,7 +2705,7 @@ router.delete(
       return res.status(500).json({
         success: false,
         message:
-          "Unable to delete the payment record.",
+          "Unable to archive the payment record.",
       });
     } finally {
       connection?.release();

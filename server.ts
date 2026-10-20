@@ -8,6 +8,9 @@ import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import cors from "cors";
 import authRoutes from "./routes/auth.js";
+import activationRoutes from "./routes/accountActivation.js";
+import sgmsRoutes, { archiveRouter } from "./routes/sgms.js";
+import onlinePaymentRoutes, {xenditWebhook} from "./routes/xendit.js";
 import { db, testDatabaseConnection } from "./config/db.js";
 import { ensureRegistrationSchema } from "./config/registrationSchema.js";
 import inspectionsRouter from "./routes/inspections";
@@ -185,6 +188,11 @@ app.use("/api/auth/verify-otp", recoveryLimiter);
 app.use("/api/auth/reset-password", recoveryLimiter);
 app.use("/api/super-admin/recovery", recoveryLimiter);
 app.use("/api/auth", authRoutes);
+app.use("/api/account-setup", (req,res,next)=>req.method === "POST" ? recoveryLimiter(req,res,next) : next(), activationRoutes);
+app.post("/api/xendit/webhook", xenditWebhook);
+app.use("/api/online-payments", protectWriteActions, onlinePaymentRoutes);
+app.use("/api/sgms", protectWriteActions, sgmsRoutes);
+app.use("/api", archiveRouter);
 
 // ================= SECURED WRITE ROUTES START =================
 // GET requests pass through normally. POST/PUT/PATCH/DELETE requests

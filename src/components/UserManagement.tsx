@@ -27,6 +27,8 @@ import {
   notifyAdminActionCountsChanged,
 } from "../hooks/useAdminActionCounts";
 import ConfirmDialog from "./ConfirmDialog";
+import { portalOverlays } from "./PortalOverlays";
+import RecordActions from "./RecordActions";
 import FeedbackToast from "./FeedbackToast";
 import EmailVerificationForm from "./EmailVerificationForm";
 import Pagination, {
@@ -194,11 +196,13 @@ function isPendingApproval(user: ManagedUser) {
 }
 
 function needsEmailVerification(user: ManagedUser) {
+  if (user.status === "pending_activation") return false;
   return Boolean(Number(user.email_verification_required)) ||
     (user.status === "pending" && !Boolean(Number(user.email_verified)));
 }
 
 function accountStatusLabel(user: ManagedUser) {
+  if (user.status === "pending_activation") return "Pending Password Setup";
   if (needsEmailVerification(user)) return "Pending Verification";
   if (user.status === "pending") return "Pending Approval";
   if (user.status === "inactive") return "Inactive / Suspended";
@@ -206,6 +210,7 @@ function accountStatusLabel(user: ManagedUser) {
 }
 
 function canAdminModifyAccount(user: ManagedUser) {
+  if (user.status === "pending_activation") return false;
   if (needsEmailVerification(user)) return false;
   if (user.role !== "resident" || user.status === "active") {
     return true;
@@ -266,6 +271,8 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
   const isBarangayCaptain = currentRole === "admin";
 
   const [staffRole, setStaffRole] = useState<StaffRole | null>(null);
+  const [secureSetup, setSecureSetup] = useState(false);
+  useEffect(()=>{void fetch("/api/account-setup/config").then(res=>res.json()).then(data=>setSecureSetup(data.enabled===true)).catch(()=>undefined);},[]);
   const [staffDraft, setStaffDraft] = useState<StaffDraft>(emptyStaffDraft);
   const [showStaffPassword, setShowStaffPassword] = useState(false);
   const [showPurokModal, setShowPurokModal] = useState(false);
@@ -952,11 +959,11 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
       return;
     }
     const password = staffDraft.temporaryPassword;
-    if (password.length < 12 || password.length > 72 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+    if (!secureSetup && (password.length < 12 || password.length > 72 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password))) {
       setError("Use a temporary password of 12 to 72 characters with uppercase, lowercase, a number, and a symbol.");
       return;
     }
-    if (password !== staffDraft.confirmTemporaryPassword) {
+    if (!secureSetup && password !== staffDraft.confirmTemporaryPassword) {
       setError("Temporary passwords do not match.");
       return;
     }
@@ -967,8 +974,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
         body: JSON.stringify({
           role: staffRole, fullName, email, phone,
           barangayId: Number(assignedBarangay.id), purokId,
-          temporaryPassword: password,
-          confirmTemporaryPassword: staffDraft.confirmTemporaryPassword,
+          ...(!secureSetup ? {temporaryPassword: password, confirmTemporaryPassword: staffDraft.confirmTemporaryPassword} : {}),
         }),
       });
       setSuccessMessage(data.message || "Account created. Email verification is required before signing in.");
@@ -992,7 +998,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
     return "bg-amber-500";
   };
 
-  return (
+  return portalOverlays(
     <>
       <style>{`
         html.sg-dark .user-management-page [class~="bg-white"],
@@ -1371,7 +1377,9 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
 
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap items-center gap-2">
-                      {needsEmailVerification(user) ? (
+                      {user.status === "pending_activation" ? (
+                        <button type="button" disabled={saving} onClick={()=>{setSaving(true);void apiRequest(`/account-setup/${user.id}/resend`,{method:"POST"}).then(data=>setSuccessMessage(data.message)).catch(error=>setError(error.message)).finally(()=>setSaving(false));}} className="rounded-xl border px-3 py-2 text-xs font-bold text-emerald-700">Resend setup link</button>
+                      ) : needsEmailVerification(user) ? (
                         <button type="button" onClick={() => { setError(""); setVerification({ email: user.email, resendAfter: 0 }); }} className="inline-flex items-center gap-1.5 rounded-xl px-2 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50">
                           <Mail className="h-4 w-4" />Verify Email
                         </button>
@@ -1433,16 +1441,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                         </div>
                       )}
                       {Boolean(user.can_delete) && (
-                        <button
-                          type="button"
-                          onClick={() => requestDeleteUser(user)}
-                          disabled={saving}
-                          aria-label={`Delete Account: ${user.full_name}`}
-                          className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          Delete
-                        </button>
+                        <RecordActions label={user.full_name} disabled={saving} onArchive={()=>requestDeleteUser(user)} />
                       )}
                       </div>
                     </td>
@@ -1539,7 +1538,9 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
               </div>
 
               <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-                {needsEmailVerification(user) ? (
+                {user.status === "pending_activation" ? (
+                  <button type="button" disabled={saving} onClick={()=>{setSaving(true);void apiRequest(`/account-setup/${user.id}/resend`,{method:"POST"}).then(data=>setSuccessMessage(data.message)).catch(error=>setError(error.message)).finally(()=>setSaving(false));}} className="rounded-xl border px-3 py-2 text-xs font-bold text-emerald-700">Resend setup link</button>
+                ) : needsEmailVerification(user) ? (
                   <button type="button" onClick={() => { setError(""); setVerification({ email: user.email, resendAfter: 0 }); }} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-bold text-emerald-700 hover:bg-emerald-50">
                     <Mail className="h-4 w-4" />Verify Email
                   </button>
@@ -1600,16 +1601,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                   </>
                 )}
                 {Boolean(user.can_delete) && (
-                  <button
-                    type="button"
-                    onClick={() => requestDeleteUser(user)}
-                    disabled={saving}
-                    aria-label={`Delete Account: ${user.full_name}`}
-                    className="flex min-h-9 items-center gap-1.5 rounded-lg border border-rose-200 px-3 text-[10px] font-black uppercase text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    Delete
-                  </button>
+                  <RecordActions label={user.full_name} disabled={saving} onArchive={()=>requestDeleteUser(user)} />
                 )}
               </div>
             </article>
@@ -1767,7 +1759,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                 </div>
               </fieldset>
 
-              <fieldset disabled={saving} className="sg-form-section">
+              {!secureSetup && <fieldset disabled={saving} className="sg-form-section">
                 <legend className="sg-form-section-title">Temporary password</legend>
                 <div className="sg-form-grid sg-form-grid--two">
                   <label className="block text-xs font-bold text-slate-600">Temporary Password *
@@ -1781,9 +1773,9 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                   <p className="text-[11px] text-slate-500">12–72 characters with uppercase, lowercase, a number, and a symbol.</p>
                   <button type="button" aria-pressed={showStaffPassword} onClick={() => setShowStaffPassword((show) => !show)} className="text-xs font-bold text-emerald-700 hover:underline">{showStaffPassword ? "Hide passwords" : "Show passwords"}</button>
                 </div>
-              </fieldset>
+              </fieldset>}
 
-              <p className="rounded-xl bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">A 6-digit OTP will be sent to the account email. The account stays pending until verification. Share the temporary password securely; the account owner must change it after the first login.</p>
+              <p className="rounded-xl bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">{secureSetup ? "The account starts as pending_activation. Its owner receives a single-use password setup link that expires in one hour. No password is emailed or shared by the Admin." : "A verification code will be sent to the account owner. The temporary password must be changed on first login."}</p>
               {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-700">{error}</p>}
               <div className="flex flex-wrap gap-3">
                 <button type="button" onClick={closeStaffModal} disabled={saving} className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-bold text-slate-600 disabled:opacity-50">Cancel</button>
@@ -2288,11 +2280,11 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
       />
       <ConfirmDialog
         open={Boolean(deleteConfirmation)}
-        title="Remove account?"
+        title="Archive account?"
         description={deleteConfirmation ? (
           <>
             <p>
-              Remove {deleteConfirmation.full_name} ({deleteConfirmation.email}) from the system?
+              Archive {deleteConfirmation.full_name} ({deleteConfirmation.email})?
               The account will disappear from normal user lists and can no longer sign in.
             </p>
             <p className="mt-2 text-xs font-semibold text-slate-500">
@@ -2301,7 +2293,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
             {error && <p role="alert" className="mt-3 rounded-xl bg-rose-50 p-3 font-bold text-rose-700">{error}</p>}
           </>
         ) : ""}
-        confirmLabel="Remove account"
+        confirmLabel="Archive account"
         destructive
         busy={saving}
         onCancel={() => { if (!saving) setDeleteConfirmation(null); }}

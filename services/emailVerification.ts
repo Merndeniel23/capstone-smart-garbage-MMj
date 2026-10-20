@@ -43,7 +43,7 @@ export function requiresEmailVerification(user: {
   has_email_verification?: unknown;
 }) {
   return user.role !== "super_admin" && !user.email_verified_at &&
-    (user.status === "pending" || Boolean(Number(user.has_email_verification)));
+    (user.status === "pending" || user.status === "pending_activation" || Boolean(Number(user.has_email_verification)));
 }
 
 interface VerificationUser {

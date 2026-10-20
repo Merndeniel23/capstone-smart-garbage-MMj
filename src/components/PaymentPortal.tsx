@@ -29,6 +29,8 @@ import {
 import { notifyAdminActionCountsChanged } from "../hooks/useAdminActionCounts";
 import FeedbackToast from "./FeedbackToast";
 import ConfirmDialog from "./ConfirmDialog";
+import { portalOverlays } from "./PortalOverlays";
+import RecordActions from "./RecordActions";
 
 interface PaymentPortalProps {
   role?:
@@ -63,6 +65,7 @@ interface PaymentRecord {
   payment_method:
     | "gcash"
     | "maya"
+    | "xendit"
     | "over_the_counter";
   payment_reference: string;
   receipt_proof: string;
@@ -240,6 +243,7 @@ function categoryLabel(
 function methodLabel(
   method: PaymentRecord["payment_method"],
 ) {
+  if (method === "xendit") return "Xendit (verified online)";
   if (method === "gcash") {
     return "GCash";
   }
@@ -1171,7 +1175,7 @@ export default function PaymentPortal({
         type: "success",
         text:
           data.message ||
-          "Payment record deleted successfully.",
+          "Payment record archived successfully.",
       });
 
       if (selectedPayment === paymentToDelete.id) {
@@ -1187,7 +1191,7 @@ export default function PaymentPortal({
         text:
           error instanceof Error
             ? error.message
-            : "Unable to delete the payment record.",
+            : "Unable to archive the payment record.",
       });
       setPaymentToDelete(null);
     } finally {
@@ -2211,26 +2215,10 @@ export default function PaymentPortal({
                   <div className="flex items-center justify-center gap-1">
                     <button type="button" aria-label={`View payment ${payment.transaction_code}`} onClick={() => {resetForm(); setSelectedPayment(payment.id);}} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-200 px-2.5 py-1.5 text-[10px] text-slate-600 transition hover:border-emerald-500 hover:text-emerald-600 xl:px-3 xl:py-2 xl:text-xs"><Eye className="h-3.5 w-3.5" />View</button>
                     {isLeader && payment.status === "completed" && (
-                      <button
-                        type="button"
-                        aria-label={`Archive completed payment ${payment.transaction_code}`}
-                        title="Archive completed payment (keep financial records)"
-                        onClick={() => setPaymentToArchive(payment)}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50"
-                      >
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                      </button>
+                      <RecordActions label={payment.transaction_code} disabled={archivingPayment} onArchive={()=>setPaymentToArchive(payment)} />
                     )}
-                    {isSuperAdmin && (
-                      <button
-                        type="button"
-                        aria-label={`Delete payment ${payment.transaction_code}`}
-                        title="Delete payment record"
-                        onClick={() => setPaymentToDelete(payment)}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                    {isSuperAdmin && payment.status === "completed" && (
+                      <RecordActions label={payment.transaction_code} disabled={deletingPayment} onArchive={()=>setPaymentToDelete(payment)} />
                     )}
                   </div>
                 </td>
@@ -2253,22 +2241,10 @@ export default function PaymentPortal({
                   <div className="flex items-center gap-2">
                     <button type="button" aria-label={`View payment ${payment.transaction_code}`} onClick={() => { resetForm(); setSelectedPayment(payment.id); }} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700">View details</button>
                     {isLeader && payment.status === "completed" && (
-                      <button
-                        type="button"
-                        onClick={() => setPaymentToArchive(payment)}
-                        aria-label={`Archive completed payment ${payment.transaction_code}`}
-                        className="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-bold text-emerald-700"
-                      >Archive</button>
+                      <RecordActions label={payment.transaction_code} disabled={archivingPayment} onArchive={()=>setPaymentToArchive(payment)} />
                     )}
-                    {isSuperAdmin && (
-                      <button
-                        type="button"
-                        onClick={() => setPaymentToDelete(payment)}
-                        aria-label={`Delete payment ${payment.transaction_code}`}
-                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-rose-200 text-rose-600"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                    {isSuperAdmin && payment.status === "completed" && (
+                      <RecordActions label={payment.transaction_code} disabled={deletingPayment} onArchive={()=>setPaymentToDelete(payment)} />
                     )}
                   </div>
                 </div>
@@ -2438,15 +2414,7 @@ export default function PaymentPortal({
                 </div>
 
                 {isLeader && payment.status === "completed" && (
-                  <button
-                    type="button"
-                    disabled={archivingPayment}
-                    onClick={() => setPaymentToArchive(payment)}
-                    className="mt-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-bold text-emerald-700 disabled:opacity-50"
-                  >
-                    <CheckCircle2 className="h-4 w-4" />
-                    Archive completed payment
-                  </button>
+                  <RecordActions label={payment.transaction_code} disabled={archivingPayment} onArchive={()=>setPaymentToArchive(payment)} />
                 )}
 
                 {isLeader &&
@@ -2854,13 +2822,13 @@ export default function PaymentPortal({
 
       <ConfirmDialog
         open={Boolean(paymentToDelete)}
-        title="Delete payment record?"
+        title="Archive payment record?"
         description={
           paymentToDelete
-            ? `Delete ${paymentToDelete.transaction_code} for ${paymentToDelete.resident_name}? This permanently removes the payment record and its stored proof images.`
+            ? `Archive ${paymentToDelete.transaction_code} for ${paymentToDelete.resident_name}? The payment record and stored proof images will be preserved.`
             : ""
         }
-        confirmLabel="Delete Payment"
+        confirmLabel="Archive Payment"
         destructive
         busy={deletingPayment}
         onCancel={() => {
@@ -3005,8 +2973,7 @@ function Modal({
   const modalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    // Viewport portals own scroll locking and focus restoration.
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") {
@@ -3032,11 +2999,10 @@ function Modal({
 
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = previousOverflow;
     };
   }, [onClose]);
 
-  return (
+  return portalOverlays(
     <div
       ref={modalRef}
       data-sg-modal="true"

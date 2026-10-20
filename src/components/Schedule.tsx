@@ -21,6 +21,8 @@ import {
   useState,
 } from "react";
 import { apiRequest } from "../services/api";
+import { portalOverlays } from './PortalOverlays';
+import RecordActions from './RecordActions';
 import Pagination, { DEFAULT_PAGE_SIZE } from "./Pagination";
 
 const DAYS = [
@@ -718,7 +720,7 @@ export default function Schedule() {
     );
   }
 
-  return (
+  return portalOverlays(
     <div className="sg-page space-y-5 pb-20">
       <style>{`
         html.sg-dark .sg-schedule-mode-chip {
@@ -1149,17 +1151,7 @@ export default function Schedule() {
                   {Number(item.is_active) === 1 ? "Active" : "Inactive"}
                 </span>
                 {canManageSchedule(item) && (
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        openDeleteDialog(item);
-                      }}
-                      className="rounded-full p-2 text-slate-300 transition hover:bg-rose-50 hover:text-rose-600"
-                      aria-label={`Delete ${item.day_of_week} schedule`}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    <RecordActions label={`${item.day_of_week} schedule`} disabled={deleting} onArchive={()=>openDeleteDialog(item)} />
                   )}
                 <ChevronRight className="h-5 w-5 text-slate-300 transition-colors group-hover:text-emerald-500" />
               </div>
@@ -1664,15 +1656,7 @@ export default function Schedule() {
                   </button>
                 )}
                 {canManageSchedule(selectedSchedule) && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      openDeleteDialog(selectedSchedule)
-                    }
-                    className="rounded-3xl border border-rose-200 py-3 text-xs font-black uppercase tracking-[0.16em] text-rose-600 transition hover:bg-rose-50"
-                  >
-                    Delete
-                  </button>
+                  <RecordActions label={`${selectedSchedule.day_of_week} schedule`} disabled={deleting} onArchive={()=>openDeleteDialog(selectedSchedule)} />
                 )}
                 <button
                   type="button"
@@ -1731,7 +1715,7 @@ export default function Schedule() {
               id="delete-schedule-title"
               className="mt-4 text-xl font-black text-slate-900"
             >
-              Delete {deleteTarget.day_of_week} schedule?
+              Archive {deleteTarget.day_of_week} schedule?
             </h3>
             <p className="mt-2 text-sm leading-relaxed text-slate-500">
               Residents, leaders, and collectors will no longer see this
@@ -1760,7 +1744,7 @@ export default function Schedule() {
                 {deleting && (
                   <Loader2 className="h-4 w-4 animate-spin [animation-duration:2s]" />
                 )}
-                {deleting ? "Deleting" : "Delete"}
+                {deleting ? "Archiving" : "Archive"}
               </button>
             </div>
           </div>

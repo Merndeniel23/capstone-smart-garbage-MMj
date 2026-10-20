@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { db } from "../config/db.js";
+import { audit, revisionsEnabled } from "../services/sgms.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
@@ -483,6 +484,11 @@ router.patch(
         });
       }
 
+      if (revisionsEnabled()) {
+        await audit(connection, req.user!, "collection_run_completed", "collection_runs", runId, {barangay_id: currentBarangayId});
+        await connection.commit();
+        return res.json({success: true, message: "Collection run completed. Individual bin results remain as recorded by QR submission.", status: "completed"});
+      }
       const [requestResult]: any = await connection.execute(
         `
           UPDATE collection_requests cr

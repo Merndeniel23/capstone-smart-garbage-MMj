@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { db } from "../config/db.js";
+import { activeRecord } from "../services/sgms.js";
 import {
   requireAuth,
   type AuthRequest,
@@ -202,9 +203,7 @@ router.get(
         });
       }
 
-      query += `
-        ORDER BY gb.id DESC
-      `;
+      query += `${role === "super_admin" ? " WHERE 1=1" : ""}${activeRecord("gb")}${activeRecord("p")} ORDER BY gb.id DESC`;
 
       const [rows] =
         await db.query(

@@ -34,7 +34,7 @@ export interface UserAccount {
   householdId: string;
   barangay?: string;
   purok?: string;
-  status?: "active" | "pending" | "inactive";
+  status?: "active" | "pending" | "pending_activation" | "inactive";
   createdAt?: string;
   mustChangePassword?: boolean;
   profilePhoto?: string | null;

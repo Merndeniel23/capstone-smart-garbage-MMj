@@ -1,6 +1,7 @@
 import express from "express";
 import crypto from "crypto";
 import { db } from "../config/db.js";
+import { revisionsEnabled } from "../services/sgms.js";
 import {
   deleteStoredProof,
   imageExtensionForDataUrl,
@@ -50,7 +51,7 @@ router.get(
         });
       }
 
-      const conditions: string[] = [];
+      const conditions: string[] = revisionsEnabled() ? ["bi.archived_at IS NULL"] : [];
       const values: Array<number> = [];
 
       if (role === "purok_leader" || role === "leader") {

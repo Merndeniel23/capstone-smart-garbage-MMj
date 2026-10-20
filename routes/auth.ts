@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { OAuth2Client } from "google-auth-library";
 import { db } from "../config/db.js";
+import { accountSuspended, activeRecord, archivedAccount } from "../services/sgms.js";
 import { getResendClient, getResendFromAddress } from "../services/email.js";
 import {
   isValidEmail,
@@ -359,7 +360,7 @@ router.get(
           FROM puroks p
           INNER JOIN barangays b
             ON b.id = p.barangay_id
-          WHERE b.is_active = 1
+          WHERE b.is_active = 1 ${activeRecord("p")}
             AND EXISTS (
               SELECT 1
               FROM users admin_user
@@ -449,6 +450,11 @@ router.post(
           [email],
         );
 
+
+        // "We use parameterized queries. The question mark acts as a placeholder, and the email is passed separately as a parameter. This prevents the input from being interpreted as part of the SQL command."
+// Lines 446–449
+
+
       const user = rows[0];
 
       if (
@@ -464,7 +470,7 @@ router.post(
         });
       }
 
-      if (user.status !== "active" && user.status !== "pending") {
+      if (await archivedAccount(Number(user.id)) || await accountSuspended(Number(user.id)) || (user.status !== "active" && user.status !== "pending")) {
         return res.status(403).json({
           message:
             "This account is inactive. Please contact the Barangay Captain.",
@@ -580,6 +586,16 @@ router.post(
           message: "Enter a valid email address.",
         });
       }
+
+
+
+
+      //  pass word hashing with bcryptjs
+
+
+
+
+
 
       const passwordHash =
         await bcrypt.hash(
@@ -868,7 +884,7 @@ router.post(
         });
       }
 
-      if (user.status !== "active" && user.status !== "pending") {
+      if (await archivedAccount(Number(user.id)) || await accountSuspended(Number(user.id)) || (user.status !== "active" && user.status !== "pending")) {
         return res.status(403).json({
           message: "This account is inactive. Please contact the Barangay Captain.",
         });

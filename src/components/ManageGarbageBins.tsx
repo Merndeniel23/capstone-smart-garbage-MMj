@@ -10,6 +10,8 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useAppState } from "../context/AppStateContext";
 import ConfirmDialog from "./ConfirmDialog";
+import { portalOverlays } from './PortalOverlays';
+import RecordActions from './RecordActions';
 import MapView from "./MapView";
 import Pagination, { DEFAULT_PAGE_SIZE } from "./Pagination";
 import { isBinPhoto, MAX_BIN_PHOTO_BYTES } from "../../shared/binPhotos";
@@ -969,7 +971,7 @@ export default function ManageGarbageBins() {
     }
   };
 
-  return (
+  return portalOverlays(
     <div className="space-y-5 text-slate-800 dark:text-slate-100">
       {canViewCollectorMonitoring && (
         <div className="flex flex-wrap gap-2 rounded-2xl border bg-white p-2 shadow-sm">
@@ -1483,14 +1485,7 @@ export default function ManageGarbageBins() {
                         {Number(
                           bin.is_active,
                         ) === 1 && (
-                          <button
-                            type="button"
-                            onClick={() => setPendingDeactivateId(bin.id)}
-                            className="rounded-lg border p-2 text-rose-600"
-                            title="Deactivate garbage bin"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          <RecordActions label={bin.bin_code} onArchive={()=>setPendingDeactivateId(bin.id)} />
                         )}
                       </div>
                     </td>
@@ -1555,7 +1550,7 @@ export default function ManageGarbageBins() {
                 <div className="flex items-center gap-1">
                   {isSuperAdmin && <button type="button" onClick={() => focusBin(bin)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 font-bold text-emerald-700" title={`View details for ${bin.bin_code}`}>Details</button>}
                   {canEditBins && <button type="button" onClick={() => openEditForm(bin)} className="rounded-lg border border-slate-200 p-1.5 text-slate-700" title="Edit garbage bin" aria-label={`Edit ${bin.bin_code}`}><Pencil className="h-4 w-4" /></button>}
-                  {canEditBins && Number(bin.is_active) === 1 && <button type="button" onClick={() => setPendingDeactivateId(bin.id)} className="rounded-lg border border-rose-100 p-1.5 text-rose-600" title="Deactivate garbage bin" aria-label={`Deactivate ${bin.bin_code}`}><Trash2 className="h-4 w-4" /></button>}
+                  {canEditBins && Number(bin.is_active) === 1 && <RecordActions label={bin.bin_code} onArchive={()=>setPendingDeactivateId(bin.id)} />}
                 </div>
               </div>
             </article>
@@ -1582,7 +1577,7 @@ export default function ManageGarbageBins() {
       </div>
       <ConfirmDialog
         open={pendingDeactivateId !== null}
-        title="Deactivate this garbage bin?"
+        title="Archive this garbage bin?"
         description="The bin will no longer be active for collection. Its recorded location and history will remain available."
         confirmLabel="Deactivate Bin"
         cancelLabel="Keep Active"

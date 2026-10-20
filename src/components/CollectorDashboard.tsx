@@ -235,6 +235,8 @@ function priorityForBin(
 export default function CollectorDashboard({
   setCurrentScreen,
 }: CollectorDashboardProps) {
+  const [revisions,setRevisions]=useState(false);
+  useEffect(()=>{void fetch("/api/sgms/config").then(res=>res.json()).then(data=>setRevisions(data.enabled===true)).catch(()=>undefined);},[]);
   const [bins, setBins] =
     useState<GarbageBin[]>([]);
 
@@ -1417,15 +1419,12 @@ export default function CollectorDashboard({
                           busy
                         }
                         onClick={() =>
-                          updateStatus(
-                            bin,
-                            "completed",
-                          )
+                          revisions ? setCurrentScreen("collection-records") : updateStatus(bin,"completed")
                         }
                         className="flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-xs font-black uppercase text-white disabled:opacity-50"
                       >
                         <CheckCircle2 className="h-4 w-4" />
-                        Mark Collected
+                        {revisions ? "Scan Household QR" : "Mark Collected"}
                       </button>
                     )}
                   </div>

@@ -30,6 +30,8 @@ import BinInspections from "./components/BinInspections";
 import ManageGarbageBins from "./components/ManageGarbageBins";
 import ChangeInitialPassword from "./components/ChangeInitialPassword";
 import Reports from "./components/Reports";
+import SgmsRecords, {type RecordView} from "./components/SgmsRecords";
+import OnlinePayments from "./components/OnlinePayments";
 import TruckCrewManagement from "./components/TruckCrewManagement";
 import EmergencyAlertOverlay from "./components/EmergencyAlertOverlay";
 
@@ -48,6 +50,8 @@ export type Role =
   | "super_admin";
 
 export type Screen =
+  | RecordView
+  | "online-payments"
   | "registration"
   | "dashboard"
   | "collector-tasks"
@@ -80,6 +84,7 @@ const ROLE_HOME_SCREEN: Record<Role, Screen> = {
 
 const ROLE_SCREENS: Record<Role, Screen[]> = {
   household: [
+    "households", "collection-records", "violations", "activity-logs", "online-payments", "payment-history",
     "dashboard",
     "schedule",
     "complaints",
@@ -89,6 +94,7 @@ const ROLE_SCREENS: Record<Role, Screen[]> = {
     "endorsements",
   ],
   collector: [
+    "collection-records", "activity-logs",
     "collector-tasks",
     "collector-pickup-log",
     "complaints",
@@ -98,6 +104,7 @@ const ROLE_SCREENS: Record<Role, Screen[]> = {
     "profile",
   ],
   leader: [
+    "households", "collection-records", "violations", "activity-logs", "archives", "payment-history",
     "leader-dashboard",
     "garbage-bins",
     "bin-inspections",
@@ -110,6 +117,7 @@ const ROLE_SCREENS: Record<Role, Screen[]> = {
     "profile",
   ],
   admin: [
+    "households", "puroks", "collection-records", "violations", "activity-logs", "archives", "barangay-policies", "members-list", "payment-history",
     "admin-dashboard",
     "garbage-bins",
     "bin-inspections",
@@ -124,6 +132,7 @@ const ROLE_SCREENS: Record<Role, Screen[]> = {
     "profile",
   ],
   super_admin: [
+    "activity-logs", "archives", "payment-history",
     "super-admin-dashboard",
     "user-management",
     "members-list",
@@ -703,6 +712,8 @@ function AppContent() {
                 onRoleFilterChange={userRole === "super_admin" ? (role) => setDirectoryNavigation((previous) => ({ ...previous, role })) : undefined}
               />}
               {currentScreen === "members-list" && <MembersList />}
+              {(["households","puroks","collection-records","violations","activity-logs","archives","barangay-policies","payment-history"] as string[]).includes(currentScreen) && <SgmsRecords key={currentScreen} view={currentScreen as RecordView} />}
+              {currentScreen === "online-payments" && userRole === "household" && <OnlinePayments />}
               {currentScreen === "bin-inspections" && <BinInspections />}
               {currentScreen === "garbage-bins" && <ManageGarbageBins />}
               {currentScreen === "truck-crew-management" && <TruckCrewManagement />}
@@ -720,9 +731,9 @@ function AppContent() {
   <PaymentPortal role={userRole as any} />
 )}
 
+              {currentScreen === "endorsements" && userRole === "admin" && <SgmsRecords view="endorsement-records" />}
               {(userRole === "household" ||
-                userRole === "leader" ||
-                userRole === "admin") &&
+                userRole === "leader") &&
                 currentScreen === "endorsements" && (
                   <EndorsementManager role={userRole as any} />
                 )}

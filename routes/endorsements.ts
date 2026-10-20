@@ -1,5 +1,7 @@
 import crypto from "crypto";
 import { Router } from "express";
+import { activeRecord, audit, DomainError } from "../services/sgms.js";
+import { snapshotEndorsement } from "../services/endorsementSnapshot.js";
 import { db } from "../config/db.js";
 import {
   requireAuth,
@@ -517,7 +519,7 @@ router.get("/", async (req: AuthRequest, res) => {
     const [rows] = await db.query<any[]>(
       `
       ${endorsementSelect}
-      ${whereClause}
+      ${whereClause} ${activeRecord("er")}
       ORDER BY er.created_at DESC, er.id DESC
       LIMIT 250
       `,
@@ -935,6 +937,8 @@ router.patch(
          certificateNumber, verificationCode, nextStatus, requestId],
       );
 
+      if (approving) await snapshotEndorsement(connection, request, viewer.full_name, certificateNumber!);
+      await audit(connection, req.user!, approving ? "endorsement_approved" : "endorsement_rejected", "endorsement_requests", requestId, {...request, resident_id: request.requester_id});
       await appendHistory(connection, {
         requestId,
         actor: viewer,
@@ -961,6 +965,7 @@ router.patch(
       });
     } catch (error) {
       await connection.rollback();
+      if (error instanceof DomainError) return res.status(error.status).json({message: error.message});
       console.error("Leader endorsement review error:", error);
 
       return res.status(500).json({
@@ -1075,8 +1080,8 @@ router.delete("/:id", async (req: AuthRequest, res) => {
       });
     }
 
-    // Purok Leaders may permanently remove only FINAL requests in their
-    // own assigned purok. In-progress requests remain protected.
+    // Final requests are archived by withdrawing them. Keep the request and
+    // its history linked so the resident and staff audit trail is preserved.
     if (role === "purok_leader") {
       if (
         !viewer.purok_id ||
@@ -1091,14 +1096,14 @@ router.delete("/:id", async (req: AuthRequest, res) => {
         });
       }
 
-      const deletableStatuses: EndorsementStatus[] = [
+      const archivableStatuses: EndorsementStatus[] = [
         "approved",
         "leader_rejected",
         "admin_rejected",
       ];
 
       if (
-        !deletableStatuses.includes(
+        !archivableStatuses.includes(
           request.status as EndorsementStatus,
         )
       ) {
@@ -1107,20 +1112,15 @@ router.delete("/:id", async (req: AuthRequest, res) => {
         return res.status(409).json({
           success: false,
           message:
-            "Only approved or rejected endorsement requests can be permanently deleted.",
+            "Only approved or rejected endorsement requests can be archived.",
         });
       }
 
       const [result] = await connection.execute<any>(
-        `
-        DELETE FROM endorsement_requests
-        WHERE id = ?
-          AND status IN (
-            'approved',
-            'leader_rejected',
-            'admin_rejected'
-          )
-        `,
+        `UPDATE endorsement_requests
+         SET status = 'withdrawn'
+         WHERE id = ?
+           AND status IN ('approved', 'leader_rejected', 'admin_rejected')`,
         [requestId],
       );
 
@@ -1130,19 +1130,24 @@ router.delete("/:id", async (req: AuthRequest, res) => {
         return res.status(409).json({
           success: false,
           message:
-            "The endorsement status changed before deletion. Refresh and try again.",
+            "The endorsement status changed before archiving. Refresh and try again.",
         });
       }
 
-      // endorsement_request_history is removed automatically by its
-      // ON DELETE CASCADE foreign key.
+      await appendHistory(connection, {
+        requestId,
+        actor: viewer,
+        action: "archived",
+        fromStatus: request.status as EndorsementStatus,
+        toStatus: "withdrawn",
+      });
       await connection.commit();
 
       return res.json({
         success: true,
-        permanentlyDeleted: true,
+        archived: true,
         message:
-          "Final endorsement request deleted permanently.",
+          "Final endorsement request archived. Its history was preserved.",
       });
     }
 

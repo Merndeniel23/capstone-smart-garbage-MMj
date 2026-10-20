@@ -35,6 +35,21 @@
   }
 }
 
+/* Keep native modal dimming viewport-wide, including below tall dialogs. */
+dialog::backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(2 6 23 / 0.6);
+  backdrop-filter: blur(4px);
+}
+
+@media screen {
+  [data-sg-portal] > .fixed.inset-0 {
+    min-height: 100dvh;
+    backdrop-filter: blur(4px);
+  }
+}
+
 /* One theme contract for every role and screen. Components use the slate
    utilities in light mode; these mappings keep that semantic hierarchy when
    the shared Header switches the root into dark mode. */

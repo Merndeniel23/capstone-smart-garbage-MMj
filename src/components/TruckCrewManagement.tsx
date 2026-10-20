@@ -1,3 +1,4 @@
+import { portalOverlays } from './PortalOverlays';
 import {
   AlertTriangle,
   Building2,
@@ -461,7 +462,7 @@ export default function TruckCrewManagement() {
     );
   }
 
-  return (
+  return portalOverlays(
     <div className="space-y-7 pb-20 md:pb-0">
       <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>

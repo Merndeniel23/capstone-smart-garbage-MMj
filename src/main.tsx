@@ -7,6 +7,7 @@ import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 
 import App from './App';
+import PasswordSetup from './components/PasswordSetup';
 import './index.css';
 import 'leaflet/dist/leaflet.css';
 
@@ -23,7 +24,7 @@ const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {googleClientId ? (
+    {new URLSearchParams(window.location.hash.slice(1)).has('setup-password') ? <PasswordSetup /> : googleClientId ? (
       <GoogleOAuthProvider clientId={googleClientId}>
         <App />
       </GoogleOAuthProvider>

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../config/db.js";
+import { activeRecord, audit, revisionsEnabled } from "../services/sgms.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 import { signedProofUrl } from "../config/storage.js";
 
@@ -190,6 +191,7 @@ router.get(
           ON barangay.id = schedule.barangay_id
 
         WHERE schedule.is_active = 1
+          ${activeRecord("schedule")}
           ${isSuperAdmin ? "" : "AND schedule.barangay_id = ?"}
 
         ORDER BY
@@ -340,6 +342,10 @@ router.post(
         });
       }
 
+      if(revisionsEnabled()) {
+        const [existing]=await connection.query<any[]>("SELECT id,archived_at FROM barangay_collection_schedules WHERE barangay_id = ? AND day_of_week = ? FOR UPDATE",[manager.barangay_id,day_of_week]);
+        if(existing[0]?.archived_at){await connection.rollback();return res.status(409).json({message:"Restore the archived schedule from Archives before editing or republishing it."});}
+      }
       await connection.query(
         `
         INSERT INTO barangay_collection_schedules
@@ -371,6 +377,10 @@ router.post(
         ],
       );
 
+      if(revisionsEnabled()) {
+        const [saved]=await connection.query<any[]>("SELECT id FROM barangay_collection_schedules WHERE barangay_id = ? AND day_of_week = ?",[manager.barangay_id,day_of_week]);
+        await audit(connection,req.user!,"collection_schedule_saved","barangay_collection_schedules",Number(saved[0].id),{barangay_id:manager.barangay_id});
+      }
       await connection.commit();
 
       return res.status(201).json({
@@ -502,7 +512,7 @@ router.put(
             notes = ?,
             is_active = 1,
             created_by = ?
-          WHERE id = ? AND barangay_id = ?
+          WHERE id = ? AND barangay_id = ? ${activeRecord("barangay_collection_schedules")}
         `,
         [
           dayOfWeek,
@@ -523,6 +533,7 @@ router.put(
         });
       }
 
+      await audit(connection,req.user!,"collection_schedule_updated","barangay_collection_schedules",scheduleId,{barangay_id:manager.barangay_id});
       await connection.commit();
 
       return res.json({

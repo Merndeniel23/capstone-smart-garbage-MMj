@@ -1,6 +1,7 @@
 import { PAYMENT_CATEGORY_LABELS, type PaymentCategoryOption } from "../../shared/paymentCategories";
 import React, { useCallback, useEffect, useState } from 'react';
-import { 
+import { portalOverlays } from './PortalOverlays';
+import {
   AlertTriangle, 
   CreditCard, 
   History, 
@@ -328,7 +329,7 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
     setActiveModal('tracker');
   };
 
-  return (
+  return portalOverlays(
     <div className="sg-page space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500 pb-16">
       
       {/* Title */}

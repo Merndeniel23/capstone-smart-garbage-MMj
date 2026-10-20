@@ -20,6 +20,8 @@ import {
   ZoomIn,
 } from 'lucide-react';
 import { useAppState } from '../context/AppStateContext';
+import { portalOverlays } from './PortalOverlays';
+import RecordActions from './RecordActions';
 import Pagination, { DEFAULT_PAGE_SIZE } from './Pagination';
 
 type DatabaseStatus =
@@ -542,7 +544,7 @@ export default function BinInspections() {
     return date.toLocaleString();
   };
 
-  return (
+  return portalOverlays(
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -951,15 +953,7 @@ export default function BinInspections() {
                   View Details
                 </button>
                 {canDeleteInspection && (
-                  <button
-                    type="button"
-                    onClick={() => requestDeleteInspection(item)}
-                    className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-bold text-rose-700 transition hover:bg-rose-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500"
-                    aria-label={`Delete inspection ${item.id}`}
-                  >
-                    <Trash2 className="h-4 w-4" aria-hidden="true" />
-                    Delete
-                  </button>
+                  <RecordActions label={`inspection ${item.id}`} disabled={deleting} onArchive={()=>requestDeleteInspection(item)} />
                 )}
                 </div>
               </div>
@@ -1023,14 +1017,7 @@ export default function BinInspections() {
 
             {canDeleteInspection && !expandedPhoto && (
               <div className="mt-4 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => requestDeleteInspection(selectedInspection)}
-                  className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100"
-                >
-                  <Trash2 className="h-4 w-4" aria-hidden="true" />
-                  Delete inspection
-                </button>
+                <RecordActions label={`inspection ${selectedInspection.id}`} disabled={deleting} onArchive={()=>requestDeleteInspection(selectedInspection)} />
               </div>
             )}
 
@@ -1127,12 +1114,12 @@ export default function BinInspections() {
               <Trash2 className="h-6 w-6" aria-hidden="true" />
             </div>
             <h2 id="delete-inspection-title" className="text-xl font-black text-slate-900">
-              Delete inspection #{deleteTarget.id}?
+              Archive inspection #{deleteTarget.id}?
             </h2>
             <p id="delete-inspection-description" className="mt-2 text-sm leading-relaxed text-slate-600">
-              This will request deletion of the inspection for{' '}
+              Archive the inspection for{' '}
               <strong>{deleteTarget.bin_code || `Bin ID ${deleteTarget.bin_id || 'Unknown'}`}</strong>.
-              This action may be permanent and cannot be undone.
+              Its history and relationships remain preserved. Authorized personnel can restore it from Archives.
             </p>
             {deleteError && (
               <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">
@@ -1156,7 +1143,7 @@ export default function BinInspections() {
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-bold text-white hover:bg-rose-700 disabled:cursor-wait disabled:opacity-60"
               >
                 <Trash2 className="h-4 w-4" aria-hidden="true" />
-                {deleting ? 'Deleting...' : 'Yes, delete'}
+                {deleting ? 'Archiving...' : 'Archive'}
               </button>
             </div>
           </section>

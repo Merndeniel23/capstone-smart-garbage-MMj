@@ -1,3 +1,4 @@
+import { portalOverlays } from './PortalOverlays';
 import {
   AlertTriangle,
   Check,
@@ -289,7 +290,7 @@ export default function EmergencyAlertOverlay() {
 
   if (!activeEmergency || !visible) return null;
 
-  return (
+  return portalOverlays(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
       <section className="w-full max-w-2xl overflow-hidden rounded-[2rem] border-4 border-rose-500 bg-white shadow-2xl">
         <div className="bg-gradient-to-r from-rose-700 to-red-600 px-6 py-5 text-white">

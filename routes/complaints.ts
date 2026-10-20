@@ -1,6 +1,7 @@
 import { Router } from "express";
 import crypto from "crypto";
 import { db } from "../config/db.js";
+import { activeRecord, audit, revisionsEnabled } from "../services/sgms.js";
 import {
   deleteStoredProof,
   imageExtensionForDataUrl,
@@ -14,6 +15,21 @@ import {
 } from "../middleware/auth.js";
 
 const router = Router();
+
+router.use("/:id", requireAuth, async (req: AuthRequest, res, next) => {
+  if (!revisionsEnabled() || !/^\d+$/.test(String(req.params.id))) return next();
+  try {
+    const [rows] = await db.query<any[]>("SELECT c.admin_only,c.reported_by,c.archived_at,p.barangay_id FROM complaints c LEFT JOIN puroks p ON p.id = c.purok_id WHERE c.id = ?", [req.params.id]);
+    const complaint = rows[0];
+    if (complaint?.archived_at) return res.status(404).json({message: "Complaint not found."});
+    if (Number(complaint?.admin_only)) {
+      const user = req.user!;
+      if (!(user.role === "super_admin" || (user.role === "admin" && user.barangay_id && Number(user.barangay_id) === Number(complaint.barangay_id)) || (user.role === "resident" && user.id === Number(complaint.reported_by)))) return res.status(404).json({message: "Complaint not found."});
+      if (req.path === "/assign") return res.status(409).json({message: "Resident complaints are investigated directly by the Admin and cannot be assigned to a Collector."});
+    }
+    next();
+  } catch { res.status(500).json({message: "Unable to check complaint access."}); }
+});
 
 type ComplaintStatus =
   | "pending"
@@ -238,6 +254,10 @@ async function notifyComplaintParticipants(
   },
 ) {
   const recipients: ComplaintNotificationRecipient[] = [];
+  if(revisionsEnabled()) {
+    const [privacy]=await executor.query("SELECT admin_only FROM complaints WHERE id = ?",[input.complaintId]);
+    if(Number(privacy[0]?.admin_only))input.assignedCollectorId=null;
+  }
 
   if (input.sender.id !== input.reporterId) {
     recipients.push({ userId: input.reporterId });
@@ -355,6 +375,7 @@ router.get(
         });
       }
 
+      if (revisionsEnabled()) whereClause += `${whereClause ? "" : "WHERE 1=1"}${activeRecord("c")}${["purok_leader","collector"].includes(role) ? " AND c.admin_only = 0" : ""}`;
       const [complaintRows]: any =
         await db.query(
           `
@@ -769,6 +790,10 @@ router.post(
           ],
         );
 
+      if (revisionsEnabled()) {
+        if (viewer.role === "resident") await connection.execute("UPDATE complaints SET admin_only = 1 WHERE id = ?", [Number(result.insertId)]);
+        await audit(connection, req.user!, "complaint_submitted", "complaints", Number(result.insertId), {barangay_id: barangayId, purok_id: purokId, resident_id: viewer.role === "resident" ? viewer.id : null});
+      }
       await notifyComplaintParticipants(connection, {
         complaintId: Number(result.insertId),
         reporterId: viewer.id,
@@ -1382,7 +1407,7 @@ router.put(
         });
       }
 
-      if (complaint.status !== "completed") {
+      if (!(revisionsEnabled() ? ["pending","assigned","in_progress","completed"] : ["completed"]).includes(complaint.status)) {
         await connection.rollback();
 
         return res.status(409).json({
@@ -1400,11 +1425,12 @@ router.put(
             resolution_remark = ?,
             resolved_at = NOW()
           WHERE id = ?
-            AND status = 'completed'
+            AND status = ?
           `,
           [
             remarks,
             complaintId,
+            complaint.status,
           ],
         );
 
@@ -1420,6 +1446,7 @@ router.put(
         });
       }
 
+      await audit(connection,req.user!,"complaint_resolved","complaints",complaintId,{barangay_id:complaint.barangay_id,purok_id:complaint.purok_id,resident_id:complaint.reported_by},{remarks});
       await connection.execute(
         `
         INSERT INTO complaint_messages
