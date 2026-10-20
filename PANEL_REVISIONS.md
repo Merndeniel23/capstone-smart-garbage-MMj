@@ -5,7 +5,7 @@ typechecks, servers, database queries, migrations or deployments were run.
 
 ## Database prerequisite
 
-`migrations/20261021_sgms_panel.sql` is a proposed migration based on the
+`backend/migrations/20261021_sgms_panel.sql` is a proposed migration based on the
 repository's setup script and existing route queries, not a live schema dump.
 An authorized operator must compare it with a schema-only export, review
 column types/indexes/foreign keys, back up data and apply it once through the
@@ -97,6 +97,12 @@ release process before restricting schema-change permissions.
    records review; original identity/status is not guessed.
 
 ## Changed source areas
+
+The source is now separated into `backend/` and `frontend/` npm workspaces.
+Backend paths below are relative to `backend/`; UI paths are relative to
+`frontend/src/`. Shared constants remain in root `shared/`. See the README for
+separate run commands, Axios configuration and deployment settings. This
+separation requires no additional database migration.
 
 - New backend: `routes/{sgms,accountActivation,xendit}.ts`,
   `services/{sgms,accountActivation,endorsementSnapshot,endorsementPdf}.ts`.

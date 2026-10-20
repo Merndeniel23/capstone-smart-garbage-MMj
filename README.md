@@ -68,28 +68,39 @@ registration in a deployed environment.
    npm install
    ```
 
-2. Copy `.env.template` to `.env`, then set the MySQL connection and a long,
-   random `JWT_SECRET` (at least 32 characters), plus `RESEND_API_KEY` and a
-   verified `RESEND_FROM_EMAIL` for registration verification:
+2. For a new checkout, copy the environment templates below. Do not overwrite
+   existing `.env` files. Configure MySQL, `JWT_SECRET`, `RESEND_API_KEY` and
+   `RESEND_FROM_EMAIL` only in `backend/.env`. The separation preserves the
+   previous server `.env` there; public frontend settings live in `frontend/.env`.
 
    ```powershell
-   Copy-Item .env.template .env
+   Copy-Item backend/.env.template backend/.env
+   Copy-Item frontend/.env.template frontend/.env
    ```
 
-3. Create or migrate the database for local setup. This command is idempotent
-   and does not reset existing account passwords:
+3. Reuse the existing database. This folder separation needs no SQL migration.
+   Initial database provisioning and the separate panel migration require an
+   authorized operator; see `PANEL_REVISIONS.md`. Do not run `db:setup` against
+   an existing deployment solely for this change.
+
+4. Start the API and frontend in separate terminals, both from the repository root:
 
    ```bash
-   npm run db:setup
+   npm run dev:backend
    ```
-
-4. Start the application:
 
    ```bash
-   npm run dev
+   npm run dev:frontend
    ```
 
-5. Open `http://localhost:3001`.
+5. Open `http://localhost:5173`. Express listens on port `3001` by default;
+   Vite proxies `/api` to it. Set `VITE_API_PROXY_TARGET` when the local API port
+   changes. `npm run dev` is an alias for the frontend command only.
+
+Frontend requests use `frontend/src/services/http.ts`, the shared Axios client.
+The existing typed API helper uses Axios directly; older screens use its
+Response-compatible bridge to preserve JSON, error and PDF-download handling.
+The public map-routing service uses Axios without the backend authentication token.
 
 ## Registration and email verification
 
@@ -132,7 +143,7 @@ database.
 
 1. Create a Supabase project and a Storage bucket named `payment-proofs`.
 2. Keep the bucket private; payment proof must not be publicly accessible.
-3. Add the project URL and server-only service role key to `.env`:
+3. Add the project URL and server-only service role key to `backend/.env`:
 
    ```text
    SUPABASE_URL=https://your-project.supabase.co
@@ -184,45 +195,67 @@ The command refuses to overwrite an existing account and prints a one-time
 offline recovery code. Store that code securely. The Super Administrator must
 replace the temporary password after the first login.
 
-## Validation and production
+## Independent production deployments
 
 ```bash
-npm run lint
-npm run test:registration
-npm run test:accounts
-npm run build
-npm start
+npm ci
+npm run build:backend
+npm run start:backend
 ```
 
-`npm start` serves the built frontend and API from the configured `PORT`.
-Set `NODE_ENV=production`, configure the exact HTTPS application origin(s) in
-`CORS_ORIGINS`, use production MySQL credentials, and set `TRUST_PROXY=true`
-when the app is behind a reverse proxy. Production startup validates the
-required database, JWT, email, and optional Supabase settings and refuses to
-start with localhost/test placeholders.
+These are operator commands, not actions performed by this refactor. The
+backend now serves only the API, not React files. `npm start` aliases the
+backend start command. Use the repository root for workspace installation and
+builds so `shared/` remains available. For an API web service such as Render,
+use `npm ci && npm run build:backend` as the build command and
+`npm run start:backend` as the start command.
 
-For an existing deployment, deploy the updated source and rebuild using
-`npm run build`, then restart with `npm start`. Before listening for requests,
+Deploy the frontend separately as a static site: build with
+`npm ci && npm run build:frontend` and publish `frontend/dist`. Configure SPA
+fallback to `index.html` at the static host. Set the public build-time variable
+`VITE_API_BASE_URL=https://YOUR_API_HOST/api`; the development Vite proxy is
+not available on a static production host. A same-origin reverse proxy may
+instead route `/api` to Express and keep `VITE_API_BASE_URL=/api`.
+
+Set `NODE_ENV=production`, `CORS_ORIGINS` to the exact HTTPS **frontend**
+origin(s), and `APP_PUBLIC_URL` to the canonical frontend origin on the backend.
+Keep MySQL, JWT, Resend, Supabase and Xendit secrets exclusively in backend
+configuration, never in `VITE_` variables. Set `TRUST_PROXY=true` behind a
+trusted reverse proxy. Configure Google sign-in's authorized JavaScript origins
+for the frontend URL when using Google login.
+
+Production startup validates database, JWT, email and optional Supabase settings.
+Before listening for requests,
 the server creates `pending_registrations` if it does not exist, using the
 configured database connection and SSL settings. The database user needs
 permission to create that table. Startup fails if database initialization
 fails, allowing deployment health checks to reject an unready instance.
 This narrow startup migration leaves existing users and operational records
 unchanged; do not run the broad `db:setup` script solely for this update.
-Check `/api/health` after deployment and complete a registration using an
-inbox you control to verify OTP delivery and account creation.
+This refactor does not run the server, database initialization, builds, tests
+or deployments. Existing panel prerequisites and feature flags remain unchanged.
 
 ## Project layout
 
 ```text
-config/       MySQL connection
-middleware/   Authentication and request security
-routes/       Express API modules
-scripts/      Database setup and Super Administrator bootstrap
-src/          React application
-server.ts     Express and Vite/static server entry point
+frontend/
+  src/          React application and shared Axios API client
+  public/       Existing frontend assets
+  .env.template Public Vite configuration only
+backend/
+  server.ts     Express API entry point
+  config/       MySQL and server configuration
+  middleware/   Authentication and request security
+  routes/       Existing Express API modules
+  services/     Server business logic and integrations
+  scripts/      Database setup and administrator bootstrap
+  migrations/   Proposed SQL; never executed by this refactor
+  .env.template Server-only configuration
+shared/         Existing browser-safe shared constants and helpers
+package.json    npm workspace commands
+package-lock.json Shared dependency lockfile
 ```
 
-Important configuration defaults are documented in `.env.template`. Never
-commit the real `.env`, database credentials, JWT secret, API keys, recovery
+Configuration defaults are in `frontend/.env.template` and `backend/.env.template`.
+Never commit real `.env` files, database credentials, JWT secrets, API keys, recovery
 codes, or production passwords.
