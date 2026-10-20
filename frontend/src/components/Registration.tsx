@@ -19,6 +19,7 @@ import {
 
 
 export default function Registration() {
+  const googleSignInEnabled = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim());
   
   // Tab state: 'login' | 'register'
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
@@ -815,6 +816,8 @@ const handleResetPasswordSubmit = async (
     Authenticate & Enter Console
   </button>
 
+  {googleSignInEnabled && (
+    <>
   <div className="auth-divider flex items-center">
     <div className="flex-1 border-t border-gray-300"></div>
     <span className="px-3 text-xs text-gray-500 font-semibold">OR</span>
@@ -835,6 +838,8 @@ const handleResetPasswordSubmit = async (
       }}
     />
   </div>
+    </>
+  )}
 </>
             </form>
           ) : (
