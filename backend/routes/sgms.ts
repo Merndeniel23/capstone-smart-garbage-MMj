@@ -5,8 +5,9 @@ import { db } from "../config/db.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 import { createRateLimiter } from "../middleware/security.js";
 import { audit, canAccess, DomainError, positiveId, requiredText, revisionsEnabled, transaction } from "../services/sgms.js";
-import { createTextPdf } from "../services/endorsementPdf.js";
+import { createTextPdf, supportsTextPdf } from "../services/endorsementPdf.js";
 import { sendAccountActivation } from "../services/accountActivation.js";
+import { hasEndorsementDraftMarkers, unsupportedEndorsementPlaceholders } from "../../shared/endorsementTemplate.js";
 
 const router = Router();
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -88,7 +89,7 @@ router.get("/payment-history", endpoint(async(req,res)=>{
 router.get("/households", endpoint(async (req, res) => {
   role(req, ["admin","super_admin","purok_leader","resident"]);
   const area = scope(req, "u", "id");
-  const [rows] = await db.query<any[]>(`SELECT u.id, u.id AS resident_id, u.full_name, u.email, u.phone, u.address, u.barangay_id, u.purok_id, p.name AS purok_name, b.name AS barangay_name
+  const [rows] = await db.query<any[]>(`SELECT u.id, u.id AS resident_id, u.full_name, u.email, u.phone, u.address, u.status, u.barangay_id, u.purok_id, p.name AS purok_name, b.name AS barangay_name
     FROM users u LEFT JOIN puroks p ON p.id = u.purok_id LEFT JOIN barangays b ON b.id = u.barangay_id
     WHERE u.role = 'resident' AND u.archived_at IS NULL AND u.email NOT LIKE '%@deleted.sgms.local' AND ${area.sql} ORDER BY u.full_name`, area.values);
   const ids = rows.map(row => row.id);
@@ -129,8 +130,8 @@ router.post("/households/:id/bin", endpoint(async (req, res) => {
   role(req, ["admin","purok_leader"]);
   const residentId = positiveId(req.params.id), binId = positiveId(req.body.binId);
   const token = randomBytes(32).toString("hex");
-  await transaction(async connection => {
-    const [rows] = await connection.query<any[]>(`SELECT u.id AS resident_id, u.barangay_id, u.purok_id FROM users u JOIN garbage_bins gb ON gb.purok_id = u.purok_id JOIN puroks p ON p.id = gb.purok_id AND p.barangay_id = u.barangay_id
+  const registered = await transaction(async connection => {
+    const [rows] = await connection.query<any[]>(`SELECT u.id AS resident_id, u.barangay_id, u.purok_id, gb.bin_code FROM users u JOIN garbage_bins gb ON gb.purok_id = u.purok_id JOIN puroks p ON p.id = gb.purok_id AND p.barangay_id = u.barangay_id
       WHERE u.id = ? AND gb.id = ? AND u.role = 'resident' AND u.status = 'active' AND u.archived_at IS NULL AND gb.is_active = 1 AND gb.archived_at IS NULL AND p.archived_at IS NULL FOR UPDATE`, [residentId, binId]);
     if (!rows[0] || !canAccess(req.user!, rows[0])) throw new DomainError("The active bin and household must belong to your assigned area and the same purok.", 404);
     // Refuse silent reassignment of a bin with historical household evidence.
@@ -138,8 +139,9 @@ router.post("/households/:id/bin", endpoint(async (req, res) => {
     if (links[0] && Number(links[0].resident_id) !== residentId) throw new DomainError("This bin is registered to another household.", 409);
     await connection.execute("INSERT INTO household_bins (bin_id, resident_id, qr_hash, registered_by) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE qr_hash = VALUES(qr_hash), registered_by = VALUES(registered_by)", [binId, residentId, digest(token), req.user!.id]);
     await audit(connection, req.user!, "bin_qr_registered", "garbage_bins", binId, rows[0]);
+    return { householdId: residentId, binId, binCode: String(rows[0].bin_code) };
   });
-  res.status(201).json({message: "QR payload registered. Any previous QR for this bin is invalid.", qrPayload: `SGMS:1:${token}`});
+  res.status(201).json({message: "QR payload registered. Any previous QR for this bin is invalid.", ...registered, qrPayload: `SGMS:1:${token}`});
 }));
 
 router.post("/collections/identify", endpoint(async (req, res) => {
@@ -254,23 +256,34 @@ router.get("/activity", endpoint(async (req, res) => {
 router.post("/endorsement-templates", endpoint(async (req, res) => {
   role(req, ["admin"]);
   const body = requiredText(req.body.body, 20000), reference = requiredText(req.body.officialReference, 255);
-  const placeholders = ["resident_name","address","barangay","purok","purpose","leader_name","certificate_number","issue_date"];
-  if (req.body.confirmApproved !== true || [...body.matchAll(/\{\{([^}]+)\}\}/g)].some(match => !placeholders.includes(match[1].trim()))) throw new DomainError("Confirm that the template is officially approved and use supported placeholders.");
+  if (req.body.confirmApproved !== true || unsupportedEndorsementPlaceholders(body).length) throw new DomainError("Confirm that the template is officially approved and use supported placeholders.");
+  if (hasEndorsementDraftMarkers(body)) throw new DomainError("Draft outlines are not official templates. Obtain barangay approval and replace all draft markers and missing official wording first.");
   await transaction(async connection => {
     const [created]: any = await connection.execute("INSERT INTO barangay_endorsement_templates (barangay_id,official_reference,body,approved_by) VALUES (?,?,?,?)", [req.user!.barangay_id,reference,body,req.user!.id]);
     await audit(connection, req.user!, "approved_template_recorded", "barangay_endorsement_templates", Number(created.insertId));
   });
   res.status(201).json({message: "Approved template version recorded."});
 }));
-router.get("/endorsements/:id/pdf", endpoint(async (req, res) => {
+async function approvedEndorsement(req: AuthRequest, requireSnapshot = true) {
+  role(req, ["admin","purok_leader","resident"]);
   const id = positiveId(req.params.id);
   const [rows] = await db.query<any[]>("SELECT *, requester_id AS resident_id FROM endorsement_requests WHERE id = ? AND status = 'approved'", [id]);
   const request = rows[0];
-  role(req, ["admin","purok_leader","resident"]);
   if (!request || !canAccess(req.user!, request)) throw new DomainError("Approved endorsement not found.", 404);
-  if (!request.issued_document_text) throw new DomainError("This legacy endorsement has no approved document snapshot. Its existing print copy remains available.", 409);
-  await transaction(connection => audit(connection, req.user!, "endorsement_downloaded", "endorsement_requests", id, request));
-  res.setHeader("Content-Type", "application/pdf"); res.setHeader("Content-Disposition", `attachment; filename="endorsement-${id}.pdf"`);
+  if (requireSnapshot && !request.issued_document_text) throw new DomainError("This legacy endorsement has no approved document snapshot. Its existing print copy remains available.", 409);
+  return request;
+}
+router.get("/endorsements/:id/document", endpoint(async (req, res) => {
+  const request = await approvedEndorsement(req, false);
+  await transaction(connection => audit(connection, req.user!, "endorsement_document_viewed", "endorsement_requests", Number(request.id), request));
+  if (!request.issued_document_text) { res.json({document: null, legacy: true}); return; }
+  res.json({document: {text: request.issued_document_text, certificateNumber: request.certificate_number, directPdfAvailable: supportsTextPdf(request.issued_document_text)}});
+}));
+router.get("/endorsements/:id/pdf", endpoint(async (req, res) => {
+  const request = await approvedEndorsement(req);
+  if (!supportsTextPdf(request.issued_document_text)) throw new DomainError("This approved document contains Unicode text. Use View approved document, then Print / Save as PDF; no names or wording will be replaced.", 409);
+  await transaction(connection => audit(connection, req.user!, "endorsement_downloaded", "endorsement_requests", Number(request.id), request));
+  res.setHeader("Content-Type", "application/pdf"); res.setHeader("Content-Disposition", `attachment; filename="endorsement-${request.id}.pdf"`);
   res.send(createTextPdf(request.issued_document_text));
 }));
 

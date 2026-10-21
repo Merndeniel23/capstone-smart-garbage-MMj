@@ -1,7 +1,9 @@
 # SGMS panel revision setup
 
-The code is prepared in the existing application. No tests, builds, lint,
-typechecks, servers, database queries, migrations or deployments were run.
+The code is prepared in the existing application. The latest panel-completion
+batch was not tested, built, typechecked or deployed. Earlier dependency-only
+validation does not validate the QR, document or TLS changes in this batch.
+No production database queries or migrations were run for this batch.
 
 ## Database prerequisite
 
@@ -40,7 +42,10 @@ release process before restricting schema-change permissions.
   Existing SuperAdmin/captain creation workflows remain in place.
 - For Aiven, enable `DB_SSL` and supply `DB_CA_CERT` when its CA is not trusted
   by the platform. Escaped PEM newlines are supported. Certificate validation
-  is enabled; configure the CA before deploying that connection change.
+  and hostname verification (`verifyIdentity: true`) are enabled. Use the exact
+  Aiven service DNS hostname for `DB_HOST`, not a substituted IP address or
+  alias. Configure the verified CA before deploying that connection change;
+  never disable verification to make a failed handshake pass.
 - With revisions enabled, MySQL sessions/date conversion use UTC+08:00;
   history screens explicitly display Asia/Manila. Existing DATETIME values are
   not rewritten or assumed to have a known historical timezone.
@@ -56,9 +61,14 @@ release process before restricting schema-change permissions.
 ## Operational setup and limits
 
 1. Admin registers household account holders/members and associates existing
-   bins in the same purok. Registration returns a one-time QR payload for the
-   physical label. Provision/print QR labels from these payloads through the
-   barangay's labeling process; an on-screen QR image generator is not included.
+   bins in the same purok. Account holders finish activation first. Admin may
+   resend the existing password setup email from the household view.
+   Registration returns a one-time QR payload and its matching household/bin IDs.
+   The UI renders a local SVG QR label with Download and Print actions. Encoding
+   is limited to the existing fixed-format SGMS household payload (QR version 4,
+   error correction L); it is not a general URL/QR service. No token is sent to
+   an external image service. The local encoder still requires scanner validation
+   before use for physical labels; no QR validation was run in this batch.
    Rotation invalidates the previous label. Existing communal bins must not be
    silently assigned to an arbitrary household.
 2. Collector starts the existing scheduled run and scans each registered bin.
@@ -75,11 +85,16 @@ release process before restricting schema-change permissions.
 4. Admin records officially approved endorsement text and its approval reference.
    Supported placeholders appear in Settings. Leader remains final approver;
    approval snapshots verified resident data and template text for PDF downloads.
-   The dependency-free text PDF supports WinAnsi/Latin names, not arbitrary
-   Unicode, custom letterhead or signature layouts. Unsupported text blocks
-   issuance instead of silently changing names. Legacy approved records without
-   document snapshots retain the earlier print workflow. No official document
-   is retroactively fabricated.
+   Direct PDFs retain WinAnsi/Latin text and punctuation without replacing
+   names with question marks. An authenticated approved-document view displays
+   the saved snapshot, with isolated Print / Save as PDF for Unicode text using
+   the browser's available fonts. Unicode has no automatic server-generated PDF
+   without an appropriate font/PDF implementation; users must check the print
+   preview for missing glyphs. No official letterhead, seal or signature is added.
+   The UI offers an editable, deliberately incomplete DRAFT outline; the backend
+   rejects its draft/missing-official-content markers for approved templates.
+   Existing issued snapshots are not rewritten. Legacy approved records without
+   snapshots retain their existing print workflow and are explicitly labeled.
 5. Xendit charges reuse existing collection-fee categories/configuration.
    Violation fines are recorded under approved policies; automatic fine billing
    is not added to fee categories without an approved billing rule. A checkout
@@ -95,6 +110,28 @@ release process before restricting schema-change permissions.
    includes archived entries. Previously anonymized `@deleted.sgms.local` accounts
    and endorsements previously changed to `withdrawn` require authorized manual
    records review; original identity/status is not guessed.
+
+## Inputs and approvals still required
+
+- Review/apply the existing proposed migration through the authorized release
+  process before enabling `SGMS_REVISIONS_ENABLED`. No new migration was added
+  for the QR/document/TLS completion changes.
+- Obtain official policy amounts, durations, scope, payment eligibility rules
+  and approval references. `docs/SGMS_APPROVAL_WORKSHEET.md` is a blank review
+  worksheet, not an ordinance or a pre-approved financial policy. Automatic
+  fine billing remains blocked on those rules; existing fees are unchanged.
+- Obtain an approved endorsement statement and authorized signatory details.
+  A draft supplied by software is not legal/barangay approval. The UI does not
+  auto-confirm approval, create policies, apply penalties or seed templates.
+- Configure the existing Resend sender, `APP_PUBLIC_URL`, Xendit credentials and
+  backend webhook in the service dashboards. Do not put those secrets in Vite
+  variables. The implementation has not verified actual delivery or payments.
+- Confirm a release validation plan: new account setup/expiry, household QR
+  encoding and camera/scanner recognition, duplicate collection rejection,
+  same-purok authorization, Leader-only violations/manual payment checks,
+  approved-document snapshots/Unicode print fallback, archive dependencies and
+  restoration logs, complaint privacy, and Xendit webhook verification/retries.
+  Do this only with explicit validation approval and non-production data.
 
 ## Changed source areas
 

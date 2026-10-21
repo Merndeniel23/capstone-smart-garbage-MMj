@@ -25,7 +25,7 @@ import cordovaSeal from '../assets/images/Municipality_of_Cordova_Official_Seal.
 import ConfirmDialog from './ConfirmDialog';
 import { portalOverlays } from './PortalOverlays';
 import RecordActions from './RecordActions';
-import { downloadEndorsement } from '../services/endorsementDownload';
+import ApprovedEndorsementDocument from './ApprovedEndorsementDocument';
 import FeedbackToast from './FeedbackToast';
 import Pagination, { DEFAULT_PAGE_SIZE } from './Pagination';
 
@@ -294,6 +294,13 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
   const [desc, setDesc] = useState('');
   const [notification, setNotification] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [approvedDocument, setApprovedDocument] = useState<EndorsementRequest | null>(null);
+  const [panelRevisionsEnabled, setPanelRevisionsEnabled] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void apiFetch('/api/sgms/config').then(response => response.json()).then(data => { if (active) setPanelRevisionsEnabled(data.enabled === true); }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
   const [recordsLoading, setRecordsLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   
@@ -1061,7 +1068,8 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
               </div>
               <button 
                 onClick={() => {
-                  setActiveCertificate(approvedDocs[0]);
+                  if (panelRevisionsEnabled) setApprovedDocument(approvedDocs[0]);
+                  else setActiveCertificate(approvedDocs[0]);
                 }}
                 className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 active:scale-95 transition-all text-white font-extrabold text-xs uppercase tracking-wider rounded-xl cursor-pointer shadow-md shadow-emerald-500/15 flex items-center gap-1.5 self-start sm:self-auto shrink-0 font-sans"
               >
@@ -1284,7 +1292,8 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          setActiveCertificate(item);
+                          if (item.rawStatus === 'approved' && panelRevisionsEnabled) setApprovedDocument(item);
+                          else setActiveCertificate(item);
                         }}
                         className={`px-2.5 py-1 text-white rounded-lg text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer ${
                           item.rawStatus === 'approved' ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-indigo-500 hover:bg-indigo-600'
@@ -1294,7 +1303,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                         {item.rawStatus === 'approved' ? 'View Approved Endorsement' : 'Preview Endorsement'}
                       </button>
                     )}
-                    {item.rawStatus === 'approved' && <button type="button" onClick={event=>{event.stopPropagation();void downloadEndorsement(item.databaseId).catch(error=>setErrorMessage(error.message));}} className="rounded-lg border border-emerald-300 px-3 py-1 text-xs font-bold text-emerald-700">Download approved PDF</button>}
+                    {item.rawStatus === 'approved' && panelRevisionsEnabled && <button type="button" onClick={event=>{event.stopPropagation();setApprovedDocument(item);}} className="rounded-lg border border-emerald-300 px-3 py-1 text-xs font-bold text-emerald-700">PDF / approved document</button>}
 
                     {role === 'household' && item.status === 'Pending Leader Review' && (
                       <button
@@ -1769,6 +1778,11 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
         )}
       </AnimatePresence>
 
+      {approvedDocument && <ApprovedEndorsementDocument
+        id={approvedDocument.databaseId}
+        onClose={() => setApprovedDocument(null)}
+        onLegacyCopy={() => { setActiveCertificate(approvedDocument); setApprovedDocument(null); }}
+      />}
     </div>
   );
 }

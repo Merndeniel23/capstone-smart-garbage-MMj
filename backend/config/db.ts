@@ -22,6 +22,8 @@ export const db = mysql.createPool({
     ? {
         ssl: {
           rejectUnauthorized: true,
+          // Validate the certificate against DB_HOST as well as the trusted CA.
+          verifyIdentity: true,
           ...(process.env.DB_CA_CERT ? {ca: process.env.DB_CA_CERT.replace(/\\n/g, "\n")} : {}),
         },
       }
