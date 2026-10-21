@@ -17,16 +17,15 @@
     "create-super-admin": "tsx scripts/bootstrapSuperAdmin.ts"
   },
   "dependencies": {
-    "@google/genai": "^1.29.0",
+    "@google/genai": "1.52.0",
     "@supabase/supabase-js": "^2.112.4",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
-    "express": "^4.21.2",
+    "express": "4.22.3",
     "google-auth-library": "^10.9.0",
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.23.1",
-    "nodemailer": "^9.0.3",
     "resend": "^6.18.0"
   },
   "devDependencies": {
