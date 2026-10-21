@@ -16,6 +16,7 @@ import garbageBinsRouter from "./routes/garbageBins.js";
 import collectionSchedulesRouter from "./routes/collectionSchedules.js";
 import collectionRequestsRouter from "./routes/collectionRequests.js";
 import collectionRunsRouter from "./routes/collectionRuns.js";
+import { collectorPurokScope, phase1Ready } from "./services/collectorAssignments.js";
 import complaintsRouter from "./routes/complaints.js";
 import adminRouter from "./routes/admin.js";
 import collectorLocationsRouter from "./routes/collectorLocations.js";
@@ -501,6 +502,13 @@ function addScope(
 ) {
   if (role === "super_admin") return;
 
+  if (role === "collector") {
+    const assignment = collectorPurokScope({id: viewer.id, role, barangay_id: viewer.barangayId}, `${aliases.purok}.id`);
+    conditions.push(assignment.sql);
+    parameters.push(...assignment.values);
+    return;
+  }
+
   if (role === "purok_leader") {
     if (viewer.purokId) {
       conditions.push(`${aliases.purok}.id = ?`);
@@ -564,6 +572,7 @@ async function loadRoleScopedChatContext(user: AuthUser) {
   if (!viewer) return "No current account context is available.";
 
   const role = viewer.role;
+  if (role === "collector" && !await phase1Ready()) return "Phase 1 operational context is disabled or unavailable. No collection or complaint data is available.";
   const context: Record<string, unknown> = {
     account: {
       role,
@@ -577,6 +586,8 @@ async function loadRoleScopedChatContext(user: AuthUser) {
           ? "municipality-wide operational aggregates"
           : role === "purok_leader"
             ? "assigned purok only"
+            : role === "collector"
+              ? "assigned Puroks only"
             : role === "resident"
               ? "own records plus active bins and schedules in assigned barangay"
               : "assigned barangay only",
@@ -677,6 +688,8 @@ async function loadRoleScopedChatContext(user: AuthUser) {
     if (role === "collector") {
       complaintConditions.push("c.assigned_collector_id = ?");
       complaintParameters.push(viewer.id);
+      addScope(complaintConditions, complaintParameters, role, viewer, { barangay: "b", purok: "p" });
+      complaintConditions.push("c.admin_only = 0");
     } else {
       addScope(complaintConditions, complaintParameters, role, viewer, { barangay: "b", purok: "p" });
     }

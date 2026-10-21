@@ -1,7 +1,9 @@
 import { Router } from "express";
 import crypto from "crypto";
 import { db } from "../config/db.js";
-import { activeRecord, audit, revisionsEnabled } from "../services/sgms.js";
+import { activeRecord, audit, DomainError, revisionsEnabled } from "../services/sgms.js";
+import type { PoolConnection } from "mysql2/promise";
+import { collectorHasPurok, collectorPurokScope, requireCollectionSetup } from "../services/collectorAssignments.js";
 import {
   deleteStoredProof,
   imageExtensionForDataUrl,
@@ -148,10 +150,11 @@ function getCurrentDatabaseUser(
   };
 }
 
-function canAccessComplaint(
+async function canAccessComplaint(
   viewer: DatabaseUser,
   complaint: ComplaintScopeRecord,
-): boolean {
+  connection?: PoolConnection,
+): Promise<boolean> {
   const role = normalizeRole(viewer.role);
 
   if (isSuperAdmin(role)) return true;
@@ -172,7 +175,8 @@ function canAccessComplaint(
   }
 
   if (isCollector(role)) {
-    return Number(complaint.assigned_collector_id) === viewer.id;
+    if (Number(complaint.assigned_collector_id) !== viewer.id || !viewer.barangay_id || Number(complaint.barangay_id) !== viewer.barangay_id) return false;
+    return collectorHasPurok(viewer, Number(complaint.purok_id), connection);
   }
 
   return (
@@ -326,9 +330,10 @@ router.get(
       const parameters: number[] = [];
 
       if (isCollector(role)) {
-        whereClause =
-          "WHERE c.assigned_collector_id = ?";
-        parameters.push(viewer.id);
+        await requireCollectionSetup();
+        const assignment = collectorPurokScope(viewer, "c.purok_id");
+        whereClause = `WHERE c.assigned_collector_id = ? AND p.barangay_id = ? AND ${assignment.sql}`;
+        parameters.push(viewer.id, Number(viewer.barangay_id), ...assignment.values);
       } else if (isPurokLeader(role)) {
         const purokId =
           parsePositiveInteger(
@@ -548,6 +553,7 @@ router.get(
         complaints,
       });
     } catch (error) {
+      if (error instanceof DomainError) return res.status(error.status).json({message: error.message});
       console.error(
         "Load complaints error:",
         error,
@@ -945,7 +951,7 @@ router.put(
         });
       }
 
-      if (!canAccessComplaint(viewer, complaint)) {
+      if (!(await canAccessComplaint(viewer, complaint, connection))) {
         await connection.rollback();
 
         return res.status(404).json({
@@ -1015,6 +1021,7 @@ router.put(
         });
       }
 
+      if (!await collectorHasPurok(collector, Number(complaint.purok_id), connection)) throw new DomainError("The Collector must currently be assigned to this complaint's Purok in the same barangay.", 403);
       /*
        * Prevent accidental assignment to a same-name collector
        * from another barangay.
@@ -1110,6 +1117,7 @@ router.put(
     } catch (error) {
       await connection.rollback();
 
+      if (error instanceof DomainError) return res.status(error.status).json({message: error.message});
       console.error(
         "Assign complaint error:",
         error,
@@ -1196,7 +1204,7 @@ router.put(
 
       const complaint = complaintRows[0];
 
-      if (!complaint || !canAccessComplaint(viewer, complaint)) {
+      if (!complaint || !(await canAccessComplaint(viewer, complaint, connection))) {
         await connection.rollback();
 
         return res.status(404).json({
@@ -1309,6 +1317,7 @@ router.put(
     } catch (error) {
       await connection.rollback();
 
+      if (error instanceof DomainError) return res.status(error.status).json({message: error.message});
       console.error(
         "Update complaint status error:",
         error,
@@ -1397,7 +1406,7 @@ router.put(
 
       const complaint = complaintRows[0];
 
-      if (!complaint || !canAccessComplaint(viewer, complaint)) {
+      if (!complaint || !(await canAccessComplaint(viewer, complaint, connection))) {
         await connection.rollback();
 
         return res.status(404).json({
@@ -1572,7 +1581,7 @@ router.post(
         });
       }
 
-      if (!canAccessComplaint(viewer, complaint)) {
+      if (!(await canAccessComplaint(viewer, complaint, connection))) {
         await connection.rollback();
 
         return res.status(404).json({
@@ -1623,6 +1632,7 @@ router.post(
     } catch (error) {
       await connection.rollback();
 
+      if (error instanceof DomainError) return res.status(error.status).json({message: error.message});
       console.error(
         "Send complaint message error:",
         error,
@@ -1701,7 +1711,7 @@ router.delete(
 
       const complaint = complaintRows[0];
 
-      if (!complaint || !canAccessComplaint(viewer, complaint)) {
+      if (!complaint || !(await canAccessComplaint(viewer, complaint, connection))) {
         await connection.rollback();
 
         return res.status(404).json({

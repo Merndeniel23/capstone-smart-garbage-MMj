@@ -20,6 +20,7 @@ import {
   Truck,
 } from "lucide-react";
 import Pagination, { DEFAULT_PAGE_SIZE } from "./Pagination";
+import { useAppState } from "../context/AppStateContext";
 
 type BinStatus =
   | "empty"
@@ -412,6 +413,7 @@ function makeCollectorMarkerIcon(
 export default function MapView({
   viewOnly = false,
 }: MapViewProps) {
+  const { setCurrentScreen } = useAppState();
   const canManageCollectionTasks =
     !viewOnly && getStoredRole() === "collector";
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1462,6 +1464,11 @@ export default function MapView({
   ) => {
     if (!canManageCollectionTasks || !bin.request) return;
 
+    if (status === "completed") {
+      setCurrentScreen("collection-records");
+      return;
+    }
+
     setUpdatingId(bin.id);
     setErrorMessage("");
     setSuccessMessage("");
@@ -2130,7 +2137,7 @@ function BinDetails({
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 text-sm font-black text-white disabled:opacity-50"
             >
               <CheckCircle2 className="h-4 w-4" />
-              Mark Collected
+              Scan QR / record result
             </button>
           )}
 

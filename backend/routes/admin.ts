@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { randomBytes } from "node:crypto";
 import { sendAccountActivation } from "../services/accountActivation.js";
 import { activeRecord, archivedAccount, audit, DomainError, revisionsEnabled, transaction } from "../services/sgms.js";
+import { phase1Configured, phase1Ready, requireCollectionSetup } from "../services/collectorAssignments.js";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../config/db.js";
 import {
@@ -1166,6 +1167,10 @@ router.get("/users", requireAuth, async (req: AuthRequest, res) => {
       });
     }
 
+    const [grants] = await phase1Ready() ? await db.query<any[]>(`SELECT a.collector_id, p.id, p.name
+      FROM collector_purok_assignments a JOIN puroks p ON p.id = a.purok_id JOIN users c ON c.id = a.collector_id
+      WHERE a.is_active = 1 AND p.archived_at IS NULL AND c.archived_at IS NULL AND c.role = 'collector'
+        AND c.barangay_id = p.barangay_id ${isSuperAdmin ? "" : "AND c.barangay_id = ?"}`, isSuperAdmin ? [] : [barangayId]) : [[]];
     const scopeWhere = isSuperAdmin
       ? "WHERE u.email NOT LIKE ?"
       : `WHERE u.email NOT LIKE ?
@@ -1226,6 +1231,7 @@ router.get("/users", requireAuth, async (req: AuthRequest, res) => {
       rows.map(async (row: any) => ({
         ...row,
         can_delete: canArchiveAccount(req.user, row),
+        assigned_puroks: grants.filter(grant => Number(grant.collector_id) === Number(row.id)).map(grant => ({id: Number(grant.id), name: String(grant.name)})),
         email_verification_required: requiresEmailVerification(row),
         profile_photo: await signedProofUrl(row.profile_photo),
       })),
@@ -1731,6 +1737,55 @@ router.get("/collectors", requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
+// Purok grants are a Barangay Admin action, separate from role/activation edits.
+router.get("/collectors/:id/puroks", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    if (req.user?.role !== "admin" || !req.user.barangay_id) throw new DomainError("Only the assigned Barangay Admin can manage Collector Puroks.", 403);
+    await requireCollectionSetup();
+    const id = parsePositiveInteger(req.params.id);
+    if (!id) throw new DomainError("A valid Collector is required.");
+    const [targets] = await db.query<any[]>("SELECT id FROM users WHERE id = ? AND role = 'collector' AND barangay_id = ? AND archived_at IS NULL", [id, req.user.barangay_id]);
+    if (!targets[0]) throw new DomainError("Collector not found in your barangay.", 404);
+    const [puroks] = await db.query<any[]>(`SELECT p.id, p.name, COALESCE(a.is_active, 0) AS assigned FROM puroks p
+      LEFT JOIN collector_purok_assignments a ON a.purok_id = p.id AND a.collector_id = ?
+      WHERE p.barangay_id = ? AND p.archived_at IS NULL ORDER BY p.name`, [id, req.user.barangay_id]);
+    res.json({success: true, puroks});
+  } catch (error) {
+    res.status(error instanceof DomainError ? error.status : 500).json({message: error instanceof DomainError ? error.message : "Unable to load Collector assignments."});
+  }
+});
+
+router.put("/collectors/:id/puroks", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    if (req.user?.role !== "admin" || !req.user.barangay_id) throw new DomainError("Only the assigned Barangay Admin can manage Collector Puroks.", 403);
+    await requireCollectionSetup();
+    const id = parsePositiveInteger(req.params.id), input = req.body.purokIds;
+    if (!id || !Array.isArray(input) || input.length > 1000 || input.some(value => !Number.isSafeInteger(value) || value <= 0)) throw new DomainError("Supply a Collector and a list of valid Purok IDs.");
+    const ids: number[] = [...new Set<number>(input)];
+    await transaction(async connection => {
+      const [admins] = await connection.query<any[]>("SELECT id FROM users WHERE id = ? AND role = 'admin' AND status = 'active' AND archived_at IS NULL AND barangay_id = ? FOR UPDATE", [req.user!.id, req.user!.barangay_id]);
+      if (!admins[0]) throw new DomainError("Your active Barangay Admin assignment is required.", 403);
+      const [targets] = await connection.query<any[]>("SELECT id FROM users WHERE id = ? AND role = 'collector' AND barangay_id = ? AND archived_at IS NULL FOR UPDATE", [id, req.user!.barangay_id]);
+      if (!targets[0]) throw new DomainError("Collector not found in your barangay.", 404);
+      const [runs] = await connection.query<any[]>("SELECT id FROM collection_runs WHERE collector_user_id = ? AND status = 'in_progress' LIMIT 1 FOR UPDATE", [id]);
+      if (runs[0]) throw new DomainError("Finish the Collector's active run before changing assigned Puroks.", 409);
+      if (ids.length) {
+        const [puroks] = await connection.query<any[]>(`SELECT id FROM puroks WHERE barangay_id = ? AND archived_at IS NULL AND id IN (${ids.map(() => "?").join(",")}) FOR UPDATE`, [req.user!.barangay_id, ...ids]);
+        if (puroks.length !== ids.length) throw new DomainError("Every assigned Purok must be active and within your barangay.", 403);
+      }
+      const [previous] = await connection.query<any[]>("SELECT purok_id FROM collector_purok_assignments WHERE collector_id = ? AND is_active = 1 FOR UPDATE", [id]);
+      // Retain revoked grants and their audit trail; no assignment is deleted.
+      await connection.execute("UPDATE collector_purok_assignments SET is_active = 0 WHERE collector_id = ?", [id]);
+      for (const purokId of ids) await connection.execute(`INSERT INTO collector_purok_assignments (collector_id,purok_id,assigned_by)
+        VALUES (?,?,?) ON DUPLICATE KEY UPDATE is_active = 1, assigned_by = VALUES(assigned_by), assigned_at = CURRENT_TIMESTAMP`, [id, purokId, req.user!.id]);
+      await audit(connection, req.user!, "collector_puroks_assigned", "users", id, {barangay_id: Number(req.user!.barangay_id)}, {previousPurokIds: previous.map(row => Number(row.purok_id)), purokIds: ids});
+    });
+    res.json({success: true, message: "Collector Puroks updated. No assigned Puroks means no collection access."});
+  } catch (error) {
+    res.status(error instanceof DomainError ? error.status : 500).json({message: error instanceof DomainError ? error.message : "Unable to update Collector assignments."});
+  }
+});
+
 router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
   let connection: PoolConnection | undefined;
 
@@ -1948,6 +2003,17 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
       }
     }
 
+    if (phase1Configured() && (user.role === "collector" || user.role === "resident")) {
+      await requireCollectionSetup(connection);
+      const [runs] = await connection.query<any[]>(`SELECT r.id FROM collection_runs r
+        LEFT JOIN collection_run_bins rb ON rb.run_id = r.id AND rb.resident_id = ?
+        WHERE r.status = 'in_progress' AND (r.collector_user_id = ? OR rb.bin_id IS NOT NULL) LIMIT 1 FOR UPDATE`, [userId, userId]);
+      if (runs[0]) throw new DomainError("Finish the active collection run before changing this account's role or household assignment.", 409);
+      if (user.role === "collector" && (role !== "collector" || Number(user.barangay_id) !== finalBarangayId)) {
+        await connection.execute("UPDATE collector_purok_assignments SET is_active = 0 WHERE collector_id = ?", [userId]);
+        await audit(connection, req.user!, "collector_puroks_revoked", "users", userId, {barangay_id: Number(user.barangay_id)});
+      }
+    }
     await connection.execute(
       `UPDATE users
        SET role = ?, barangay_id = ?, purok_id = ?, status = 'active'
@@ -1973,9 +2039,9 @@ router.patch("/users/:id/role", requireAuth, async (req: AuthRequest, res) => {
   } catch (error) {
     await connection?.rollback();
     console.error("Admin update role error:", error);
-    return res.status(500).json({
+    return res.status(error instanceof DomainError ? error.status : 500).json({
       success: false,
-      message: "Unable to update the user's role.",
+      message: error instanceof DomainError ? error.message : "Unable to update the user's role.",
     });
   } finally {
     connection?.release();

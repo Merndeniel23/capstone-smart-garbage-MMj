@@ -35,7 +35,7 @@ apiClient.interceptors.response.use(response => {
 
 // Compatibility bridge: existing screens keep their Response/json/blob handling,
 // while all transport, API URL configuration and authentication use Axios.
-export const apiFetch: typeof fetch = async (input, options = {}) => {
+export const apiFetch: typeof fetch = async (input, options: RequestInit = {}) => {
   const request = input instanceof Request ? input : null;
   const rawURL = request ? request.url : String(input);
   const url = new URL(rawURL, window.location.origin);

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { db } from "../config/db.js";
-import { audit, revisionsEnabled } from "../services/sgms.js";
+import { audit, DomainError, positiveId, requiredText, transaction } from "../services/sgms.js";
+import { collectionRunProgress, collectorPurokScope, lockCollector, requireCollectionSetup } from "../services/collectorAssignments.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
@@ -120,6 +121,7 @@ router.get(
         });
       }
 
+      await requireCollectionSetup();
       const collector = await loadCollectorContext(collectorUserId);
 
       if (!collector) {
@@ -141,17 +143,27 @@ router.get(
       const schedule = await loadTodaySchedule(barangayId);
       const run = await loadTodayRun(barangayId, collectorUserId);
 
+      const assignment = collectorPurokScope(req.user!, "gb.purok_id");
       const [binRows]: any = await db.query(
         `
           SELECT COUNT(*) AS total
           FROM garbage_bins gb
           INNER JOIN puroks p
             ON p.id = gb.purok_id
+          JOIN household_bins hb ON hb.bin_id = gb.id JOIN users u ON u.id = hb.resident_id
           WHERE p.barangay_id = ?
             AND gb.is_active = 1
+            AND ${assignment.sql}
+            AND gb.archived_at IS NULL AND u.archived_at IS NULL AND u.role = 'resident' AND u.status = 'active'
+            AND u.purok_id = gb.purok_id AND u.barangay_id = p.barangay_id
         `,
-        [barangayId],
+        [barangayId, ...assignment.values],
       );
+
+      const [assignedPuroks] = await db.query<any[]>(`SELECT p.id, p.name FROM puroks p
+        JOIN collector_purok_assignments a ON a.purok_id = p.id
+        WHERE a.collector_id = ? AND a.is_active = 1 AND p.barangay_id = ? AND p.archived_at IS NULL ORDER BY p.name`, [collectorUserId, barangayId]);
+      const progress = run ? await collectionRunProgress(Number(run.id), collectorUserId, barangayId) : null;
 
       return res.json({
         success: true,
@@ -175,14 +187,16 @@ router.get(
           : null,
         schedule,
         run,
-        collectionPointCount: Number(binRows[0]?.total || 0),
+        collectionPointCount: progress ? progress.required : Number(binRows[0]?.total || 0),
+        assignedPuroks,
+        progress,
       });
     } catch (error) {
       console.error("Load today's collection run error:", error);
 
-      return res.status(500).json({
+      return res.status(error instanceof DomainError ? error.status : 500).json({
         success: false,
-        message: "Unable to load today's collection operation.",
+        message: error instanceof DomainError ? error.message : "Unable to load today's collection operation.",
       });
     }
   },
@@ -207,6 +221,8 @@ router.post(
       }
 
       await connection.beginTransaction();
+
+      await lockCollector(connection, req.user!);
 
       const [collectorRows]: any = await connection.query(
         `
@@ -329,6 +345,22 @@ router.post(
 
       const notes = String(req.body?.notes || "").trim() || schedule.notes || null;
 
+      const [puroks] = await connection.query<any[]>(`SELECT p.id FROM puroks p
+        JOIN collector_purok_assignments a ON a.purok_id = p.id
+        WHERE a.collector_id = ? AND a.is_active = 1 AND p.barangay_id = ? AND p.archived_at IS NULL FOR UPDATE`, [collectorUserId, barangayId]);
+      if (!puroks.length) throw new DomainError("Ask your Barangay Admin to assign Puroks before starting collection.", 409);
+      const assignment = collectorPurokScope(req.user!, "gb.purok_id");
+      const [bins] = await connection.query<any[]>(`SELECT gb.id AS bin_id, hb.resident_id, gb.purok_id FROM household_bins hb
+        JOIN garbage_bins gb ON gb.id = hb.bin_id JOIN users u ON u.id = hb.resident_id JOIN puroks p ON p.id = gb.purok_id
+        WHERE gb.is_active = 1 AND gb.archived_at IS NULL AND u.status = 'active' AND u.role = 'resident' AND u.archived_at IS NULL
+          AND u.purok_id = gb.purok_id AND u.barangay_id = p.barangay_id AND p.barangay_id = ? AND p.archived_at IS NULL
+          AND ${assignment.sql} FOR UPDATE`, [barangayId, ...assignment.values]);
+      if (!bins.length) throw new DomainError("No active registered household bins are available in your assigned Puroks.", 409);
+      const [conflicts] = await connection.query<any[]>(`SELECT cr.id FROM collection_requests cr
+        WHERE cr.bin_id IN (${bins.map(() => "?").join(",")}) AND cr.status IN ('pending','approved','assigned','in_progress')
+          AND cr.assigned_collector_id IS NOT NULL AND cr.assigned_collector_id <> ? LIMIT 1 FOR UPDATE`, [...bins.map(bin => bin.bin_id), collectorUserId]);
+      if (conflicts[0]) throw new DomainError("A required bin has an unfinished task assigned to another Collector. Request an authorized task review before starting the run.", 409);
+
       const [result]: any = await connection.execute(
         `
           INSERT INTO collection_runs (
@@ -346,6 +378,12 @@ router.post(
         [Number(schedule.id), barangayId, truckId, collectorUserId, notes],
       );
 
+      const runId = Number(result.insertId);
+      for (const purok of puroks) await connection.execute("INSERT INTO collection_run_puroks (run_id,purok_id) VALUES (?,?)", [runId, purok.id]);
+      await connection.execute(`INSERT INTO collection_run_bins (run_id,bin_id,resident_id,purok_id) VALUES ${bins.map(() => "(?,?,?,?)").join(",")}`,
+        bins.flatMap(bin => [runId, bin.bin_id, bin.resident_id, bin.purok_id]));
+      await audit(connection, req.user!, "collection_run_started", "collection_runs", runId, {barangay_id: barangayId}, {purokIds: puroks.map(p => p.id), requiredBins: bins.length});
+
       await connection.commit();
 
       return res.status(201).json({
@@ -358,9 +396,9 @@ router.post(
       await connection.rollback();
       console.error("Start collection run error:", error);
 
-      return res.status(500).json({
+      return res.status(error instanceof DomainError ? error.status : 500).json({
         success: false,
-        message: "Unable to start today's collection operation.",
+        message: error instanceof DomainError ? error.message : "Unable to start today's collection operation.",
       });
     } finally {
       connection.release();
@@ -389,6 +427,8 @@ router.patch(
 
       await connection.beginTransaction();
 
+      await lockCollector(connection, req.user!);
+
       const [runRows]: any = await connection.query(
         `
           SELECT
@@ -396,6 +436,7 @@ router.patch(
             collector_user_id,
             barangay_id,
             collection_date,
+            collection_date = CURDATE() AS is_today,
             status
           FROM collection_runs
           WHERE id = ?
@@ -436,11 +477,7 @@ router.patch(
         });
       }
 
-      const [todayRows]: any = await connection.query(`SELECT CURDATE() AS today`);
-      const today = String(todayRows[0]?.today || "").slice(0, 10);
-      const runDate = String(run.collection_date || "").slice(0, 10);
-
-      if (runDate !== today) {
+      if (!Number(run.is_today)) {
         await connection.rollback();
         return res.status(409).json({
           success: false,
@@ -464,6 +501,17 @@ router.patch(
         });
       }
 
+      const [coverage] = await connection.query<any[]>(`SELECT rp.purok_id FROM collection_run_puroks rp
+        JOIN puroks p ON p.id = rp.purok_id
+        WHERE rp.run_id = ? AND p.barangay_id = ? FOR UPDATE`, [runId, currentBarangayId]);
+      if (!coverage.length) throw new DomainError("This run has no saved Purok coverage. Historical coverage will not be guessed; request an authorized records review.", 409);
+      const assignment = collectorPurokScope(req.user!, "rp.purok_id");
+      const [revoked] = await connection.query<any[]>(`SELECT rp.purok_id FROM collection_run_puroks rp
+        WHERE rp.run_id = ? AND NOT (${assignment.sql}) LIMIT 1`, [runId, ...assignment.values]);
+      if (revoked.length) throw new DomainError("The run's Purok authorization changed. Request an authorized review.", 409);
+      const progress = await collectionRunProgress(runId, collectorUserId, currentBarangayId, connection);
+      if (!progress.required || progress.remaining) throw new DomainError(`Collection is incomplete: ${progress.remaining} of ${progress.required} required bins still need a verified QR result. Not Collected requires a reason.`, 409);
+
       const [runResult]: any = await connection.execute(
         `
           UPDATE collection_runs
@@ -484,68 +532,84 @@ router.patch(
         });
       }
 
-      if (revisionsEnabled()) {
-        await audit(connection, req.user!, "collection_run_completed", "collection_runs", runId, {barangay_id: currentBarangayId});
-        await connection.commit();
-        return res.json({success: true, message: "Collection run completed. Individual bin results remain as recorded by QR submission.", status: "completed"});
-      }
-      const [requestResult]: any = await connection.execute(
-        `
-          UPDATE collection_requests cr
-          INNER JOIN garbage_bins gb ON gb.id = cr.bin_id
-          INNER JOIN puroks p ON p.id = gb.purok_id
-          SET
-            cr.status = 'completed',
-            cr.assigned_collector_id = COALESCE(
-              cr.assigned_collector_id,
-              ?
-            ),
-            cr.completed_at = NOW()
-          WHERE p.barangay_id = ?
-            AND cr.status IN ('pending', 'approved', 'assigned', 'in_progress')
-        `,
-        [collectorUserId, currentBarangayId],
-      );
-
-      const [binResult]: any = await connection.execute(
-        `
-          UPDATE garbage_bins gb
-          INNER JOIN puroks p ON p.id = gb.purok_id
-          SET
-            gb.current_status = 'empty',
-            gb.condition_status = CASE
-              WHEN gb.condition_status IN ('needs_repair', 'out_of_service')
-                THEN gb.condition_status
-              ELSE 'good'
-            END
-          WHERE p.barangay_id = ?
-            AND gb.is_active = 1
-        `,
-        [currentBarangayId],
-      );
-
+      await audit(connection, req.user!, "collection_run_completed", "collection_runs", runId, {barangay_id: currentBarangayId}, progress);
       await connection.commit();
 
       return res.json({
         success: true,
-        message: "Today's scheduled barangay collection was completed.",
+        message: "Run completed. Every required bin has a verified result; Not Collected bins and their requests remain unchanged.",
         status: "completed",
-        completedRequests: Number(requestResult.affectedRows || 0),
-        resetBins: Number(binResult.affectedRows || 0),
+        progress,
       });
     } catch (error) {
       await connection.rollback();
       console.error("Complete collection run error:", error);
 
-      return res.status(500).json({
+      return res.status(error instanceof DomainError ? error.status : 500).json({
         success: false,
-        message: "Unable to complete today's collection operation.",
+        message: error instanceof DomainError ? error.message : "Unable to complete today's collection operation.",
       });
     } finally {
       connection.release();
     }
   },
 );
+
+// Recovery closes an unusable active run, never completes or reopens it.
+router.get("/recovery", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    if (req.user?.role !== "admin" || !req.user.barangay_id) throw new DomainError("Only your assigned Barangay Admin can recover collection runs.", 403);
+    await requireCollectionSetup();
+    const [runs] = await db.query<any[]>(`SELECT r.id, r.collection_date, r.collector_user_id, u.full_name AS collector_name,
+      r.collection_date < CURDATE() AS overnight,
+      (NOT EXISTS(SELECT 1 FROM collection_run_puroks rp WHERE rp.run_id = r.id)
+        OR NOT EXISTS(SELECT 1 FROM collection_run_bins rb WHERE rb.run_id = r.id)) AS missing_coverage
+      FROM collection_runs r LEFT JOIN users u ON u.id = r.collector_user_id
+      WHERE r.barangay_id = ? AND r.status = 'in_progress' AND r.collection_date <= CURDATE()
+        AND (r.collection_date < CURDATE() OR NOT EXISTS(SELECT 1 FROM collection_run_puroks rp WHERE rp.run_id = r.id)
+          OR NOT EXISTS(SELECT 1 FROM collection_run_bins rb WHERE rb.run_id = r.id)) ORDER BY r.collection_date, r.id`, [req.user.barangay_id]);
+    res.json({runs});
+  } catch (error) {
+    res.status(error instanceof DomainError ? error.status : 500).json({message: error instanceof DomainError ? error.message : "Unable to list recoverable runs."});
+  }
+});
+
+router.post("/:id/recover", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    if (req.user?.role !== "admin" || !req.user.barangay_id) throw new DomainError("Only your assigned Barangay Admin can recover collection runs.", 403);
+    await requireCollectionSetup();
+    const id = positiveId(req.params.id), reason = requiredText(req.body.reason, 1000);
+    await transaction(async connection => {
+      const [admins] = await connection.query<any[]>("SELECT id FROM users WHERE id = ? AND role = 'admin' AND status = 'active' AND barangay_id = ? AND archived_at IS NULL FOR UPDATE", [req.user!.id, req.user!.barangay_id]);
+      if (!admins[0]) throw new DomainError("Your active Barangay Admin assignment is required.", 403);
+      const [owners] = await connection.query<any[]>("SELECT collector_user_id FROM collection_runs WHERE id = ? AND barangay_id = ?", [id, req.user!.barangay_id]);
+      if (!owners[0]) throw new DomainError("Collection run not found in your barangay.", 404);
+      // Same Collector -> run lock order as QR submission/completion. A former
+      // Collector may now be inactive/reassigned; this does not grant them access.
+      await connection.query("SELECT id FROM users WHERE id = ? FOR UPDATE", [owners[0].collector_user_id]);
+      const [runs] = await connection.query<any[]>(`SELECT id, collector_user_id, barangay_id, status, collection_date, started_at, completed_at,
+        collection_date < CURDATE() AS overnight, collection_date > CURDATE() AS future_run
+        FROM collection_runs WHERE id = ? AND barangay_id = ? FOR UPDATE`, [id, req.user!.barangay_id]);
+      const run = runs[0];
+      if (!run || Number(run.collector_user_id) !== Number(owners[0].collector_user_id) || run.status !== "in_progress" || Number(run.future_run)) throw new DomainError("Only an eligible active legacy/overnight run can be recovered.", 409);
+      const [puroks] = await connection.query<any[]>("SELECT purok_id FROM collection_run_puroks WHERE run_id = ? FOR UPDATE", [id]);
+      const [bins] = await connection.query<any[]>("SELECT bin_id FROM collection_run_bins WHERE run_id = ? FOR UPDATE", [id]);
+      const missingCoverage = !puroks.length || !bins.length;
+      if (!Number(run.overnight) && !missingCoverage) throw new DomainError("Today's run has saved coverage. Complete it through verified bin results; it is not eligible for administrative recovery.", 409);
+      const [results] = await connection.query<any[]>("SELECT id FROM household_collections WHERE run_id = ? FOR UPDATE", [id]);
+      const [changed]: any = await connection.execute("UPDATE collection_runs SET status = 'cancelled' WHERE id = ? AND status = 'in_progress'", [id]);
+      if (Number(changed.affectedRows) !== 1) throw new DomainError("The run changed. Refresh before recovery.", 409);
+      await audit(connection, req.user!, "collection_run_recovered", "collection_runs", id, {barangay_id: Number(run.barangay_id)}, {
+        reason, previousStatus: run.status, recoveryStatus: "cancelled", collectionDate: run.collection_date,
+        previousStartedAt: run.started_at, previousCompletedAt: run.completed_at,
+        overnight: Boolean(Number(run.overnight)), missingCoverage, requiredBins: bins.length, preservedResults: results.length,
+      });
+    });
+    res.json({status: "cancelled", message: "Run closed as cancelled, not completed. Evidence, bins and requests are unchanged. The same-day run slot remains reserved."});
+  } catch (error) {
+    res.status(error instanceof DomainError ? error.status : 500).json({message: error instanceof DomainError ? error.message : "Unable to recover the run."});
+  }
+});
 
 router.get(
   "/history",

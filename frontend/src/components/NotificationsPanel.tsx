@@ -28,6 +28,8 @@ import type { NotificationItem } from "../services/notificationFeed";
 
 type NotificationPage =
   | "complaints"
+  | "collection-records"
+  | "violations"
   | "payments"
   | "endorsements"
   | "user-management"

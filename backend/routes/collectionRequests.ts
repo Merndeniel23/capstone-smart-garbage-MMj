@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { db } from "../config/db.js";
-import { revisionsEnabled } from "../services/sgms.js";
+import { collectorPurokScope, lockCollector, requireCollectionSetup } from "../services/collectorAssignments.js";
+import { DomainError } from "../services/sgms.js";
 import {
   requireAuth,
   type AuthRequest,
@@ -95,6 +96,7 @@ router.get(
       const role = normalizeRole(req.user?.role);
 
       if (role === "collector") {
+        await requireCollectionSetup();
         if (!req.user!.barangay_id) {
           return res.status(400).json({
             success: false,
@@ -114,6 +116,9 @@ router.get(
           Number(req.user!.barangay_id),
           Number(req.user!.id),
         );
+        const assignment = collectorPurokScope(req.user!, "gb.purok_id");
+        sql += ` AND ${assignment.sql}`;
+        params.push(...assignment.values);
       } else if (role === "purok_leader") {
         if (!req.user!.purok_id) {
           return res.status(400).json({
@@ -155,9 +160,9 @@ router.get(
     } catch (error) {
       console.error("Load collection requests error:", error);
 
-      return res.status(500).json({
+      return res.status(error instanceof DomainError ? error.status : 500).json({
         success: false,
-        message: "Failed to load collection requests.",
+        message: error instanceof DomainError ? error.message : "Failed to load collection requests.",
       });
     }
   },
@@ -233,6 +238,8 @@ router.post(
 
       await connection.beginTransaction();
 
+      if (role === "collector") await lockCollector(connection, req.user!);
+      const assignment = collectorPurokScope(req.user!, "gb.purok_id");
       const [binRows] = await connection.query<any[]>(
         `
         SELECT
@@ -241,11 +248,11 @@ router.post(
           p.barangay_id
         FROM garbage_bins gb
         INNER JOIN puroks p ON p.id = gb.purok_id
-        WHERE gb.id = ? AND gb.is_active = 1
+        WHERE gb.id = ? AND gb.is_active = 1 AND ${assignment.sql}
         LIMIT 1
         FOR UPDATE
         `,
-        [binId],
+        [binId, ...assignment.values],
       );
 
       const bin = binRows[0];
@@ -351,9 +358,9 @@ router.post(
       await connection.rollback();
       console.error("Create collection request error:", error);
 
-      return res.status(500).json({
+      return res.status(error instanceof DomainError ? error.status : 500).json({
         success: false,
-        message: "Failed to create collection request.",
+        message: error instanceof DomainError ? error.message : "Failed to create collection request.",
       });
     } finally {
       connection.release();
@@ -398,12 +405,14 @@ router.patch(
         });
       }
 
-      if (revisionsEnabled() && nextStatus === "completed") {
+      if (nextStatus === "completed") {
         return res.status(409).json({message: "Record the household bin QR and segregation result to complete collection."});
       }
 
       await connection.beginTransaction();
 
+      if (role === "collector") await lockCollector(connection, req.user!);
+      const assignment = collectorPurokScope(req.user!, "gb.purok_id");
       const [requestRows] = await connection.query<any[]>(
         `
         SELECT
@@ -415,11 +424,11 @@ router.patch(
         FROM collection_requests cr
         INNER JOIN garbage_bins gb ON gb.id = cr.bin_id
         INNER JOIN puroks p ON p.id = gb.purok_id
-        WHERE cr.id = ?
+        WHERE cr.id = ? AND ${assignment.sql}
         LIMIT 1
         FOR UPDATE
         `,
-        [requestId],
+        [requestId, ...assignment.values],
       );
 
       const request = requestRows[0];
@@ -506,6 +515,11 @@ router.patch(
           ? req.user!.id
           : request.assigned_collector_id;
 
+      if (role === "collector") {
+        const [runs] = await connection.query<any[]>("SELECT collector_user_id FROM collection_runs WHERE barangay_id = ? AND collection_date = CURDATE() AND status = 'in_progress' LIMIT 1 FOR UPDATE", [req.user!.barangay_id]);
+        if (runs[0] && Number(runs[0].collector_user_id) !== req.user!.id) throw new DomainError("Today's active collection run belongs to another Collector.", 403);
+      }
+
       const [updateResult]: any = await connection.execute(
         `
         UPDATE collection_requests
@@ -536,31 +550,11 @@ router.patch(
         });
       }
 
-      if (nextStatus === "completed") {
-        await connection.execute(
-          `
-          UPDATE garbage_bins
-          SET
-            current_status = 'empty',
-            condition_status = CASE
-              WHEN condition_status IN ('needs_repair', 'out_of_service')
-                THEN condition_status
-              ELSE 'good'
-            END
-          WHERE id = ?
-          `,
-          [request.bin_id],
-        );
-      }
-
       await connection.commit();
 
       return res.json({
         success: true,
-        message:
-          nextStatus === "completed"
-            ? "Collection completed and the bin was reset to empty."
-            : "Collection request status updated.",
+        message: "Collection request status updated.",
       });
     } catch (error) {
       await connection.rollback();
@@ -569,10 +563,9 @@ router.patch(
         error,
       );
 
-      return res.status(500).json({
+      return res.status(error instanceof DomainError ? error.status : 500).json({
         success: false,
-        message:
-          "Failed to update collection request status.",
+        message: error instanceof DomainError ? error.message : "Failed to update collection request status.",
       });
     } finally {
       connection.release();

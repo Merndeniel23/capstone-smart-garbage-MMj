@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { db } from "../config/db.js";
-import { activeRecord } from "../services/sgms.js";
+import { activeRecord, DomainError } from "../services/sgms.js";
+import { collectorPurokScope, requireCollectionSetup } from "../services/collectorAssignments.js";
 import {
   requireAuth,
   type AuthRequest,
@@ -196,6 +197,12 @@ router.get(
         `;
 
         parameters.push(barangayId);
+        if (role === "collector") {
+          await requireCollectionSetup();
+          const assignment = collectorPurokScope(req.user!, "gb.purok_id");
+          query += ` AND ${assignment.sql}`;
+          parameters.push(...assignment.values);
+        }
       } else if (role !== "super_admin") {
         return res.status(403).json({
           success: false,
@@ -221,10 +228,9 @@ router.get(
         error,
       );
 
-      return res.status(500).json({
+      return res.status(error instanceof DomainError ? error.status : 500).json({
         success: false,
-        message:
-          "Failed to load garbage bins.",
+        message: error instanceof DomainError ? error.message : "Failed to load garbage bins.",
       });
     }
   },

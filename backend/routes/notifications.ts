@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../config/db.js";
+import { collectorPurokScope, phase1Enabled, phase1Ready } from "../services/collectorAssignments.js";
 import {
   requireAuth,
   type AuthRequest,
@@ -120,10 +121,29 @@ async function loadViewer(
     [userId],
   );
 
-  return rows[0] || null;
+  const viewer = rows[0] || null;
+  if (normalizeRole(viewer?.role) === "collector") await phase1Ready(executor === db ? undefined : executor);
+  return viewer;
 }
 
-function notificationVisibilitySql(alias = "n") {
+function collectorNotificationScope(viewer: any, alias = "n") {
+  return normalizeRole(viewer?.role) === "collector"
+    ? collectorPurokScope({id: Number(viewer.id), role: "collector", barangay_id: positiveInteger(viewer.barangay_id)}, `${alias}.purok_id`)
+    : {sql: "0=1", values: [] as number[]};
+}
+
+function collectorComplaintNoticeScope(viewer: any, alias = "n") {
+  if (normalizeRole(viewer?.role) !== "collector" || !phase1Enabled()) return {sql: "0=1", values: [] as number[]};
+  const assignment = collectorNotificationScope(viewer, "notice_complaint");
+  return {sql: `EXISTS (SELECT 1 FROM complaints notice_complaint JOIN puroks notice_p ON notice_p.id = notice_complaint.purok_id
+    WHERE notice_complaint.id = ${alias}.related_entity_id AND notice_complaint.assigned_collector_id = ?
+      AND notice_complaint.admin_only = 0 AND notice_complaint.archived_at IS NULL
+      AND notice_p.barangay_id = ? AND ${assignment.sql})`, values: [Number(viewer.id), Number(viewer.barangay_id), ...assignment.values]};
+}
+
+function notificationVisibilitySql(alias = "n", viewer?: any) {
+  const assignment = collectorNotificationScope(viewer, alias);
+  const complaint = collectorComplaintNoticeScope(viewer, alias);
   return `
     (
       ${alias}.recipient_user_id = ?
@@ -136,7 +156,7 @@ function notificationVisibilitySql(alias = "n") {
         AND (
           (
             ${alias}.purok_id IS NOT NULL
-            AND ${alias}.purok_id = ?
+            AND (${alias}.purok_id = ? OR ${assignment.sql})
           )
           OR (
             ${alias}.purok_id IS NULL
@@ -150,6 +170,8 @@ function notificationVisibilitySql(alias = "n") {
         )
       )
     )
+    ${normalizeRole(viewer?.role) === "collector" ? `AND (${alias}.purok_id IS NULL OR ${assignment.sql})` : ""}
+    ${normalizeRole(viewer?.role) === "collector" ? `AND (${alias}.related_entity_type IS NULL OR ${alias}.related_entity_type <> 'complaint' OR ${complaint.sql})` : ""}
   `;
 }
 
@@ -157,8 +179,11 @@ function notificationVisibilityParameters(viewer: any) {
   return [
     Number(viewer.id),
     normalizeRole(viewer.role),
-    positiveInteger(viewer.purok_id) || 0,
+    normalizeRole(viewer.role) === "collector" ? 0 : positiveInteger(viewer.purok_id) || 0,
+    ...collectorNotificationScope(viewer).values,
     positiveInteger(viewer.barangay_id) || 0,
+    ...collectorNotificationScope(viewer).values,
+    ...collectorComplaintNoticeScope(viewer).values,
   ];
 }
 
@@ -293,7 +318,7 @@ router.get(
         LEFT JOIN puroks purok
           ON purok.id = n.purok_id
 
-        WHERE ${notificationVisibilitySql("n")}
+        WHERE ${notificationVisibilitySql("n", viewer)}
           AND COALESCE(receipt.is_deleted, 0) = 0
 
         ORDER BY
@@ -903,7 +928,7 @@ router.patch(
           0,
           NULL
         FROM notifications n
-        WHERE ${notificationVisibilitySql("n")}
+        WHERE ${notificationVisibilitySql("n", viewer)}
 
         ON DUPLICATE KEY UPDATE
           is_seen = 1,
@@ -1019,7 +1044,7 @@ router.patch(
           NOW()
         FROM notifications n
         WHERE n.notification_type IN (${placeholders})
-          AND ${notificationVisibilitySql("n")}
+          AND ${notificationVisibilitySql("n", viewer)}
 
         ON DUPLICATE KEY UPDATE
           is_seen = 1,
@@ -1109,7 +1134,7 @@ router.patch(
           1,
           NOW()
         FROM notifications n
-        WHERE ${notificationVisibilitySql("n")}
+        WHERE ${notificationVisibilitySql("n", viewer)}
 
         ON DUPLICATE KEY UPDATE
           is_seen = 1,
@@ -1201,7 +1226,7 @@ router.patch(
           SELECT id
           FROM notifications n
           WHERE id = ?
-            AND ${notificationVisibilitySql("n")}
+            AND ${notificationVisibilitySql("n", viewer)}
           LIMIT 1
           FOR UPDATE
           `,
@@ -1360,7 +1385,7 @@ router.delete(
           SELECT n.id
           FROM notifications n
           WHERE n.id = ?
-            AND ${notificationVisibilitySql("n")}
+            AND ${notificationVisibilitySql("n", viewer)}
           LIMIT 1
           `,
           [notificationId, ...notificationVisibilityParameters(viewer)],

@@ -30,6 +30,7 @@ import {
 import ConfirmDialog from "./ConfirmDialog";
 import { portalOverlays } from "./PortalOverlays";
 import RecordActions from "./RecordActions";
+import CollectorPurokAssignment from "./CollectorPurokAssignment";
 import FeedbackToast from "./FeedbackToast";
 import EmailVerificationForm from "./EmailVerificationForm";
 import Pagination, {
@@ -57,6 +58,7 @@ interface ManagedUser {
   barangay_name: string | null;
   purok_id: number | null;
   purok_name: string | null;
+  assigned_puroks?: {id: number; name: string}[];
   profile_photo?: string | null;
   created_at: string;
 }
@@ -88,6 +90,12 @@ const emptyStaffDraft: StaffDraft = {
 };
 
 const API_BASE = "/api";
+
+function assignmentLabel(user: ManagedUser) {
+  return user.role === "collector"
+    ? user.assigned_puroks?.map(purok => purok.name).join(", ") || "No assigned Puroks"
+    : user.purok_name || "No purok assigned";
+}
 
 function generateTemporaryPassword() {
   const groups = [
@@ -264,6 +272,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
   const [selectedRole, setSelectedRole] = useState<ManagedRole>("resident");
   const [selectedBarangayId, setSelectedBarangayId] = useState("");
   const [selectedPurokId, setSelectedPurokId] = useState("");
+  const [purokCollector, setPurokCollector] = useState<ManagedUser | null>(null);
 
   const currentRole =
     localStorage.getItem("sg_user_role") ||
@@ -273,6 +282,8 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
 
   const [staffRole, setStaffRole] = useState<StaffRole | null>(null);
   const [secureSetup, setSecureSetup] = useState(false);
+  const [phase1, setPhase1] = useState(false);
+  useEffect(()=>{let active=true;void apiFetch("/api/sgms/config").then(res=>res.json()).then(data=>{if(active)setPhase1(data.phase1Enabled===true);}).catch(()=>undefined);return()=>{active=false;};},[]);
   useEffect(()=>{void apiFetch("/api/account-setup/config").then(res=>res.json()).then(data=>setSecureSetup(data.enabled===true)).catch(()=>undefined);},[]);
   const [staffDraft, setStaffDraft] = useState<StaffDraft>(emptyStaffDraft);
   const [showStaffPassword, setShowStaffPassword] = useState(false);
@@ -527,7 +538,9 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
       return matchesSearch && matchesTab &&
         (roleFilter === "all" || user.role === roleFilter) &&
         (isBarangayCaptain
-          ? purokFilter === "all" || (purokFilter === "unassigned" ? !user.purok_id : String(user.purok_id) === purokFilter)
+          ? purokFilter === "all" || (user.role === "collector"
+            ? purokFilter === "unassigned" ? !user.assigned_puroks?.length : Boolean(user.assigned_puroks?.some(purok => String(purok.id) === purokFilter))
+            : purokFilter === "unassigned" ? !user.purok_id : String(user.purok_id) === purokFilter)
           : barangayFilter === "all" || String(user.barangay_id) === barangayFilter) &&
         (statusFilter === "all" || user.status === statusFilter);
     }).sort((a, b) => {
@@ -535,7 +548,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
         const value = (user: ManagedUser) => sortBy === "name" ? user.full_name
           : sortBy === "role" ? roleLabel(user.role)
           : sortBy === "barangay" ? user.barangay_name || ""
-          : sortBy === "purok" ? user.purok_name || (user.role === "collector" ? "Barangay-wide assignment" : "No purok assigned")
+          : sortBy === "purok" ? assignmentLabel(user)
           : user.status;
         return value(a).localeCompare(value(b), undefined, { sensitivity: "base", numeric: true }) * (sortDirection === "asc" ? 1 : -1);
       }
@@ -1352,14 +1365,11 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                     <td className={isBarangayCaptain ? "px-4 py-3" : "hidden px-4 py-3 xl:table-cell"}>
                       <p className="text-xs font-bold text-slate-700">
                         {isBarangayCaptain
-                          ? user.purok_name || (user.role === "collector" ? "Barangay-wide assignment" : "No purok assigned")
+                          ? assignmentLabel(user)
                           : user.barangay_name || "No barangay"}
                       </p>
                       <p className="text-[10px] text-slate-400">
-                        {isBarangayCaptain ? user.barangay_name || "No barangay" : user.purok_name ||
-                          (user.role === "collector"
-                            ? "Barangay-wide assignment"
-                            : "No purok assigned")}
+                        {isBarangayCaptain ? user.barangay_name || "No barangay" : assignmentLabel(user)}
                       </p>
                     </td>
 
@@ -1441,6 +1451,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                           </button>
                         </div>
                       )}
+                      {isBarangayCaptain && phase1 && user.role === "collector" && <button type="button" disabled={saving} onClick={() => setPurokCollector(user)} className="rounded-xl border border-emerald-200 px-3 py-2 text-xs font-bold text-emerald-700">Assign Puroks</button>}
                       {Boolean(user.can_delete) && (
                         <RecordActions label={user.full_name} disabled={saving} onArchive={()=>requestDeleteUser(user)} />
                       )}
@@ -1511,14 +1522,11 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                   </p>
                   <p className="mt-1 truncate font-bold text-slate-700">
                     {isBarangayCaptain
-                      ? user.purok_name || (user.role === "collector" ? "Barangay-wide" : "No purok assigned")
+                      ? assignmentLabel(user)
                       : user.barangay_name || "No barangay"}
                   </p>
                   <p className="truncate text-[10px] text-slate-400">
-                    {isBarangayCaptain ? user.barangay_name || "No barangay" : user.purok_name ||
-                      (user.role === "collector"
-                        ? "Barangay-wide"
-                        : "No purok")}
+                    {isBarangayCaptain ? user.barangay_name || "No barangay" : assignmentLabel(user)}
                   </p>
                 </div>
                 <div>
@@ -1601,6 +1609,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                     </button>
                   </>
                 )}
+                {isBarangayCaptain && phase1 && user.role === "collector" && <button type="button" disabled={saving} onClick={() => setPurokCollector(user)} className="rounded-xl border border-emerald-200 px-3 py-2 text-xs font-bold text-emerald-700">Assign Puroks</button>}
                 {Boolean(user.can_delete) && (
                   <RecordActions label={user.full_name} disabled={saving} onArchive={()=>requestDeleteUser(user)} />
                 )}
@@ -2108,7 +2117,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                   <div className="rounded-xl border border-slate-200 p-3">
                     <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Purok</p>
                     <p className="mt-1 text-sm font-semibold text-slate-900">
-                      {viewedUser.purok_name || (viewedUser.role === "collector" ? "Barangay-wide assignment" : "Not assigned")}
+                      {assignmentLabel(viewedUser)}
                     </p>
                   </div>
                 </div>
@@ -2241,7 +2250,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                 {selectedRole === "purok_leader" &&
                   "The Purok Leader will manage the selected purok's bins, inspections, members, and complaints."}
                 {selectedRole === "collector" &&
-                  "The Collector will serve the selected barangay and receive assigned collection or complaint tasks."}
+                  "This selects the Collector's barangay only. An authorized Barangay Admin must separately assign collection Puroks; this edit does not grant barangay-wide collection access."}
                 {selectedRole === "resident" &&
                   "The account will return to Resident access and retain its selected residential purok."}
               </div>
@@ -2269,6 +2278,11 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
           </div>
         </div>
       )}
+      {purokCollector && <CollectorPurokAssignment
+        key={purokCollector.id} collector={purokCollector}
+        onClose={() => setPurokCollector(null)}
+        onSaved={message => { setSuccessMessage(message); setPurokCollector(null); void loadData(); }}
+      />}
       <ConfirmDialog
         open={!!statusConfirmation}
         title={statusConfirmation?.status === "active" ? "Suspend Account?" : "Activate Account?"}

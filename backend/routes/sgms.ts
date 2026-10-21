@@ -8,6 +8,7 @@ import { audit, canAccess, DomainError, positiveId, requiredText, revisionsEnabl
 import { createTextPdf, supportsTextPdf } from "../services/endorsementPdf.js";
 import { sendAccountActivation } from "../services/accountActivation.js";
 import { hasEndorsementDraftMarkers, unsupportedEndorsementPlaceholders } from "../../shared/endorsementTemplate.js";
+import { assertPurokNotCollecting, collectorPurokScope, lockCollector, phase1Configured, phase1Ready, requireCollectionSetup } from "../services/collectorAssignments.js";
 
 const router = Router();
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -33,7 +34,7 @@ function scope(req: AuthRequest, alias: string, residentColumn = "resident_id"):
   if (!["admin","collector"].includes(user.role)) throw new DomainError("Access denied.", 403);
   return {sql: `${alias}.barangay_id = ?`, values: [user.barangay_id]};
 }
-router.get("/config", (_req, res) => res.json({enabled: revisionsEnabled()}));
+router.get("/config", async (_req, res) => res.json({enabled: revisionsEnabled(), phase1Configured: phase1Configured(), phase1Enabled: await phase1Ready()}));
 router.use(enabled, requireAuth);
 
 router.get("/endorsement-records",endpoint(async(req,res)=>{
@@ -121,6 +122,10 @@ router.patch("/households/:id", endpoint(async (req, res) => {
     if (!puroks.length) throw new DomainError("Choose an active purok in your barangay.");
     const [links] = await connection.query<any[]>("SELECT hb.bin_id FROM household_bins hb JOIN garbage_bins gb ON gb.id = hb.bin_id WHERE hb.resident_id = ? AND gb.purok_id <> ?", [id, purokId]);
     if (links.length) throw new DomainError("Reconcile the household's registered bins before changing its purok.", 409);
+    if (Number(rows[0].purok_id) !== purokId) {
+      await assertPurokNotCollecting(connection, Number(rows[0].purok_id));
+      await assertPurokNotCollecting(connection, purokId);
+    }
     await connection.execute("UPDATE users SET address = ?, phone = ?, purok_id = ? WHERE id = ?", [address, phone, purokId, id]);
     await audit(connection, req.user!, "household_updated", "users", id, {...rows[0], purok_id: purokId});
   });
@@ -137,6 +142,7 @@ router.post("/households/:id/bin", endpoint(async (req, res) => {
     // Refuse silent reassignment of a bin with historical household evidence.
     const [links] = await connection.query<any[]>("SELECT resident_id FROM household_bins WHERE bin_id = ? FOR UPDATE", [binId]);
     if (links[0] && Number(links[0].resident_id) !== residentId) throw new DomainError("This bin is registered to another household.", 409);
+    if (!links[0]) await assertPurokNotCollecting(connection, Number(rows[0].purok_id));
     await connection.execute("INSERT INTO household_bins (bin_id, resident_id, qr_hash, registered_by) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE qr_hash = VALUES(qr_hash), registered_by = VALUES(registered_by)", [binId, residentId, digest(token), req.user!.id]);
     await audit(connection, req.user!, "bin_qr_registered", "garbage_bins", binId, rows[0]);
     return { householdId: residentId, binId, binCode: String(rows[0].bin_code) };
@@ -146,12 +152,15 @@ router.post("/households/:id/bin", endpoint(async (req, res) => {
 
 router.post("/collections/identify", endpoint(async (req, res) => {
   role(req, ["collector"]);
+  await requireCollectionSetup();
   const token = String(req.body.qrPayload || "").match(/^SGMS:1:([a-f0-9]{64})$/)?.[1];
   if (!token) throw new DomainError("Invalid household bin QR code.");
+  const assignment = collectorPurokScope(req.user!, "gb.purok_id");
   const [rows] = await db.query<any[]>(`SELECT gb.id AS bin_id, gb.bin_code, gb.location_name, u.id AS resident_id, u.full_name, u.barangay_id, u.purok_id, p.name AS purok_name
     FROM household_bins hb JOIN garbage_bins gb ON gb.id = hb.bin_id JOIN users u ON u.id = hb.resident_id JOIN puroks p ON p.id = gb.purok_id
-    WHERE hb.qr_hash = ? AND gb.is_active = 1 AND gb.archived_at IS NULL AND u.archived_at IS NULL AND u.status = 'active'
-      AND p.archived_at IS NULL AND u.purok_id = gb.purok_id AND u.barangay_id = p.barangay_id AND p.barangay_id = ?`, [digest(token), req.user!.barangay_id]);
+    WHERE hb.qr_hash = ? AND gb.is_active = 1 AND gb.archived_at IS NULL AND u.archived_at IS NULL AND u.status = 'active' AND u.role = 'resident'
+      AND p.archived_at IS NULL AND u.purok_id = gb.purok_id AND u.barangay_id = p.barangay_id AND p.barangay_id = ?
+      AND ${assignment.sql}`, [digest(token), req.user!.barangay_id, ...assignment.values]);
   if (!rows[0]) throw new DomainError("No authorized active household bin matches this QR.", 404);
   res.json({bin: rows[0]});
 }));
@@ -160,27 +169,35 @@ router.post("/collections", endpoint(async (req, res) => {
   const token = String(req.body.qrPayload || "").match(/^SGMS:1:([a-f0-9]{64})$/)?.[1];
   const key = requiredText(req.body.idempotencyKey, 80);
   if (!token || !["segregated","not_segregated"].includes(req.body.segregation) || !["collected","not_collected"].includes(req.body.collectionStatus)) throw new DomainError("Scan a registered QR and choose segregation and collection results.");
+  const reason = req.body.collectionStatus === "not_collected" ? requiredText(req.body.notCollectedReason, 1000) : null;
   const result = await transaction(async connection => {
+    await lockCollector(connection, req.user!);
+    const assignment = collectorPurokScope(req.user!, "gb.purok_id");
     const [rows] = await connection.query<any[]>(`SELECT hb.bin_id, hb.resident_id, u.barangay_id, u.purok_id FROM household_bins hb
       JOIN garbage_bins gb ON gb.id = hb.bin_id JOIN users u ON u.id = hb.resident_id JOIN puroks p ON p.id = gb.purok_id
-      WHERE hb.qr_hash = ? AND gb.is_active = 1 AND gb.archived_at IS NULL AND u.archived_at IS NULL AND u.status = 'active'
-        AND p.archived_at IS NULL AND gb.purok_id = u.purok_id AND p.barangay_id = u.barangay_id AND p.barangay_id = ? FOR UPDATE`, [digest(token), req.user!.barangay_id]);
+      WHERE hb.qr_hash = ? AND gb.is_active = 1 AND gb.archived_at IS NULL AND u.archived_at IS NULL AND u.status = 'active' AND u.role = 'resident'
+        AND p.archived_at IS NULL AND gb.purok_id = u.purok_id AND p.barangay_id = u.barangay_id AND p.barangay_id = ?
+        AND ${assignment.sql} FOR UPDATE`, [digest(token), req.user!.barangay_id, ...assignment.values]);
     const bin = rows[0];
     if (!bin) throw new DomainError("No authorized active household bin matches this QR.", 404);
     const [assignedElsewhere]=await connection.query<any[]>("SELECT id FROM collection_requests WHERE bin_id = ? AND assigned_collector_id IS NOT NULL AND assigned_collector_id <> ? AND status IN ('pending','approved','assigned','in_progress') FOR UPDATE",[bin.bin_id,req.user!.id]);
     if(assignedElsewhere.length)throw new DomainError("This bin has an active task assigned to another Collector.",403);
-    const [previous] = await connection.query<any[]>("SELECT * FROM household_collections WHERE collector_id = ? AND idempotency_key = ?", [req.user!.id, key]);
+    const [previous] = await connection.query<any[]>("SELECT * FROM household_collections WHERE collector_id = ? AND idempotency_key = ? FOR UPDATE", [req.user!.id, key]);
     if (previous[0]) {
-      if (Number(previous[0].bin_id) !== Number(bin.bin_id) || previous[0].segregation !== req.body.segregation || previous[0].collection_status !== req.body.collectionStatus) throw new DomainError("This submission key has different collection data.", 409);
+      if (Number(previous[0].bin_id) !== Number(bin.bin_id) || previous[0].segregation !== req.body.segregation || previous[0].collection_status !== req.body.collectionStatus || (previous[0].not_collected_reason ?? null) !== reason) throw new DomainError("This submission key has different collection data.", 409);
       return {id: previous[0].id, duplicate: true};
     }
     const [runs] = await connection.query<any[]>("SELECT id FROM collection_runs WHERE collector_user_id = ? AND barangay_id = ? AND collection_date = CURDATE() AND status = 'in_progress' LIMIT 1 FOR UPDATE", [req.user!.id, bin.barangay_id]);
     if (!runs[0]) throw new DomainError("Start today's assigned collection run before submitting a bin scan.", 409);
+    const [coverage] = await connection.query<any[]>(`SELECT rb.bin_id FROM collection_run_bins rb
+      JOIN collection_run_puroks rp ON rp.run_id = rb.run_id AND rp.purok_id = rb.purok_id
+      WHERE rb.run_id = ? AND rb.bin_id = ? AND rb.resident_id = ? AND rb.purok_id = ? FOR UPDATE`, [runs[0].id, bin.bin_id, bin.resident_id, bin.purok_id]);
+    if (!coverage[0]) throw new DomainError("This bin is not in the run's saved registered-bin coverage. No coverage will be inferred for legacy runs.", 409);
     if (req.body.collectionStatus === "collected") {
       const [suspensions]=await connection.query<any[]>("SELECT v.id FROM household_violations v JOIN barangay_violation_policies p ON p.id = v.policy_id WHERE v.resident_id = ? AND p.action = 'suspension' AND p.suspension_scope = 'collection' AND v.suspension_until > NOW() AND NOT EXISTS(SELECT 1 FROM household_violation_reviews r WHERE r.violation_id = v.id AND r.decision = 'voided')",[bin.resident_id]);
       if(suspensions.length)throw new DomainError("Collection service is suspended under an approved policy. Record the bin as not collected.",409);
     }
-    const [created]: any = await connection.execute("INSERT INTO household_collections (run_id, bin_id, resident_id, collector_id, purok_id, barangay_id, segregation, collection_status, idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [runs[0].id, bin.bin_id, bin.resident_id, req.user!.id, bin.purok_id, bin.barangay_id, req.body.segregation, req.body.collectionStatus, key]);
+    const [created]: any = await connection.execute("INSERT INTO household_collections (run_id, bin_id, resident_id, collector_id, purok_id, barangay_id, segregation, collection_status, idempotency_key, not_collected_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [runs[0].id, bin.bin_id, bin.resident_id, req.user!.id, bin.purok_id, bin.barangay_id, req.body.segregation, req.body.collectionStatus, key, reason]);
     const id = Number(created.insertId);
     if (req.body.collectionStatus === "collected") {
       await connection.execute("UPDATE garbage_bins SET current_status = 'empty' WHERE id = ?", [bin.bin_id]);
@@ -188,14 +205,16 @@ router.post("/collections", endpoint(async (req, res) => {
     }
     await connection.execute(`INSERT INTO notifications (recipient_role, barangay_id, purok_id, notification_type, title, message, related_entity_type, related_entity_id, created_by)
       VALUES ('purok_leader', ?, ?, 'collection_result', 'Household collection recorded', ?, 'household_collection', ?, ?)`, [bin.barangay_id, bin.purok_id, `Household HH-${bin.resident_id}: ${req.body.segregation === "segregated" ? "Segregated" : "Not Segregated"}; ${req.body.collectionStatus.replaceAll("_", " ")}.`, id, req.user!.id]);
-    await audit(connection, req.user!, "collection_recorded", "household_collections", id, bin, {segregation: req.body.segregation, collectionStatus: req.body.collectionStatus});
+    await audit(connection, req.user!, "collection_recorded", "household_collections", id, bin, {segregation: req.body.segregation, collectionStatus: req.body.collectionStatus, notCollectedReason: reason});
     return {id, duplicate: false};
   });
   res.status(result.duplicate ? 200 : 201).json({...result, message: result.duplicate ? "This submission was already recorded." : "Collection recorded and the assigned Purok Leader notified."});
 }));
 router.get("/collections", endpoint(async (req, res) => {
+  if (req.user!.role === "collector") await requireCollectionSetup();
   const area = scope(req, "c");
-  const [rows] = await db.query<any[]>(`SELECT c.*, u.full_name AS household_name, collector.full_name AS collector_name, gb.bin_code, p.name AS purok_name FROM household_collections c JOIN users u ON u.id = c.resident_id JOIN users collector ON collector.id = c.collector_id JOIN garbage_bins gb ON gb.id = c.bin_id JOIN puroks p ON p.id = c.purok_id WHERE ${area.sql} ${req.user!.role === "collector" ? "AND c.collector_id = ?" : ""} ORDER BY c.collected_at DESC, c.id DESC LIMIT 500`, [...area.values, ...(req.user!.role === "collector" ? [req.user!.id] : [])]);
+  const assignment = collectorPurokScope(req.user!, "c.purok_id");
+  const [rows] = await db.query<any[]>(`SELECT c.*, u.full_name AS household_name, collector.full_name AS collector_name, gb.bin_code, p.name AS purok_name FROM household_collections c JOIN users u ON u.id = c.resident_id JOIN users collector ON collector.id = c.collector_id JOIN garbage_bins gb ON gb.id = c.bin_id JOIN puroks p ON p.id = c.purok_id WHERE ${area.sql} AND ${assignment.sql} ${req.user!.role === "collector" ? "AND c.collector_id = ?" : ""} ORDER BY c.collected_at DESC, c.id DESC LIMIT 500`, [...area.values, ...assignment.values, ...(req.user!.role === "collector" ? [req.user!.id] : [])]);
   res.json({collections: rows});
 }));
 router.get("/policies", endpoint(async (req, res) => {
@@ -310,10 +329,14 @@ const archiveAction = (entity: string, restore = false) => endpoint(async (req, 
     const [rows] = await connection.query<any[]>(definition.query, [id]);
     const record = rows[0];
     if (!record || !canAccess(req.user!, record)) throw new DomainError("Record not found in your assigned area.", 404);
+    if (restore && (entity === "bins" || (entity === "users" && record.role === "resident"))) {
+      await assertPurokNotCollecting(connection, Number(record.purok_id));
+    }
     if (entity === "users") {
       if (id === req.user!.id || record.role === "super_admin" || (req.user!.role === "admin" && !["resident","collector","purok_leader"].includes(record.role))) throw new DomainError("This account is protected.", 403);
       if (String(record.email).endsWith("@deleted.sgms.local")) throw new DomainError("Legacy account archives require manual identity recovery; no credentials are fabricated.", 409);
       if (!restore) {
+        if (record.role === "resident") await assertPurokNotCollecting(connection, Number(record.purok_id));
         const [dependencies]=await connection.query<any[]>(`SELECT (EXISTS(SELECT 1 FROM garbage_trucks WHERE collector_user_id = ? AND status = 'active') OR EXISTS(SELECT 1 FROM collection_runs WHERE collector_user_id = ? AND status = 'in_progress') OR EXISTS(SELECT 1 FROM online_payment_attempts WHERE resident_id = ? AND status IN ('creating','pending'))) AS has_active`,[id,id,id]);
         if(Number(dependencies[0].has_active))throw new DomainError("Reassign active trucks and finish or reconcile ongoing collection/payment operations before archiving this account.",409);
       }
@@ -326,10 +349,12 @@ const archiveAction = (entity: string, restore = false) => endpoint(async (req, 
     if (entity === "complaints" && !["resolved","completed","cancelled"].includes(record.status)) throw new DomainError("Resolve the complaint before archiving it.", 409);
     if (entity === "payments" && record.status !== "completed") throw new DomainError("Only completed payments may be archived.", 409);
     if (entity === "puroks" && !restore) {
+      await assertPurokNotCollecting(connection, id);
       const [dependants] = await connection.query<any[]>("SELECT (EXISTS(SELECT 1 FROM users WHERE purok_id = ? AND archived_at IS NULL AND email NOT LIKE '%@deleted.sgms.local') OR EXISTS(SELECT 1 FROM garbage_bins WHERE purok_id = ? AND archived_at IS NULL)) AS has_records", [id,id]);
       if (Number(dependants[0].has_records)) throw new DomainError("Archive or reassign active purok accounts and bins first.", 409);
     }
     if (entity === "bins" && !restore) {
+      await assertPurokNotCollecting(connection, Number(record.purok_id));
       const [requests] = await connection.query<any[]>("SELECT id FROM collection_requests WHERE bin_id = ? AND status IN ('pending','approved','assigned','in_progress')", [id]);
       if (requests.length) throw new DomainError("Resolve active collection requests before archiving this bin.", 409);
     }

@@ -70,7 +70,8 @@ export default function Sidebar({
   ).length;
   const residentAccessRestricted = role === "household" && !enabled;
   const [revisions, setRevisions] = useState(false);
-  useEffect(()=>{let active=true;void apiFetch("/api/sgms/config").then(res=>res.json()).then(data=>{if(active)setRevisions(data.enabled===true);}).catch(()=>undefined);return()=>{active=false;};},[]);
+  const [phase1, setPhase1] = useState(false);
+  useEffect(()=>{let active=true;void apiFetch("/api/sgms/config").then(res=>res.json()).then(data=>{if(active){setRevisions(data.enabled===true);setPhase1(data.phase1Enabled===true);}}).catch(()=>undefined);return()=>{active=false;};},[]);
 
   const {
     pendingPayments,
@@ -375,7 +376,7 @@ export default function Sidebar({
   const additional: MenuItem[] = !revisions || residentAccessRestricted ? [] : [
     ...(["admin","leader","household"].includes(role) ? [{id:"households",icon:Users,label:role==="household"?"My Household":"Households"}] : []),
     ...(role==="admin" ? [{id:"puroks",icon:Building2,label:"Puroks"},{id:"endorsements",icon:Award,label:"Endorsements"},{id:"barangay-policies",icon:Shield,label:"Approved Policies & Templates"}] : []),
-    ...(role!=="super_admin" ? [{id:"collection-records",icon:ClipboardList,label:role==="collector"?"QR Collection & Records":"Collection Records"}] : []),
+    ...(role!=="super_admin"&&(role!=="collector"||phase1) ? [{id:"collection-records",icon:ClipboardList,label:role==="collector"?"QR Collection & Records":"Collection Records"}] : []),
     ...(["admin","leader","household"].includes(role) ? [{id:"violations",icon:Shield,label:"Violations"}] : []),
     {id:"activity-logs",icon:FileText,label:"Activity Logs"},
     ...(role!=="collector" ? [{id:"payment-history",icon:CreditCard,label:"Payment History"}] : []),

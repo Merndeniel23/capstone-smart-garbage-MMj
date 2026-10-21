@@ -101,6 +101,8 @@ type TodayCollectionOperation = {
   hasScheduleToday: boolean;
   run: CollectionRun | null;
   collectionPointCount: number;
+  assignedPuroks?: {id: number; name: string}[];
+  progress?: {required: number; verified: number; remaining: number; notCollected: number} | null;
   schedule: {
     schedule_id: number;
     barangay_id: number;
@@ -237,7 +239,7 @@ export default function CollectorDashboard({
   setCurrentScreen,
 }: CollectorDashboardProps) {
   const [revisions,setRevisions]=useState(false);
-  useEffect(()=>{void apiFetch("/api/sgms/config").then(res=>res.json()).then(data=>setRevisions(data.enabled===true)).catch(()=>undefined);},[]);
+  useEffect(()=>{void apiFetch("/api/sgms/config").then(res=>res.json()).then(data=>setRevisions(data.phase1Enabled===true)).catch(()=>undefined);},[]);
   const [bins, setBins] =
     useState<GarbageBin[]>([]);
 
@@ -819,6 +821,12 @@ export default function CollectorDashboard({
   ) => {
     if (!bin.request) return;
 
+    if (status === "completed") {
+      if (revisions) setCurrentScreen("collection-records");
+      else setErrorMessage("Collection requires the reviewed panel and Phase 1 setup. Direct completion is disabled.");
+      return;
+    }
+
     setUpdatingId(bin.id);
     setErrorMessage("");
     setSuccessMessage("");
@@ -1054,6 +1062,8 @@ export default function CollectorDashboard({
                 </div>
               </div>
 
+              <p className="text-sm font-bold text-slate-600">Assigned Puroks: {todayOperation.assignedPuroks?.map(purok => purok.name).join(", ") || "None; contact your Barangay Admin"}</p>
+              {todayOperation.progress && <p className="text-sm text-slate-600">Verified bin results: {todayOperation.progress.verified}/{todayOperation.progress.required}. Remaining: {todayOperation.progress.remaining}. Not Collected: {todayOperation.progress.notCollected}. Every Not Collected result requires a reason.</p>}
               {todayOperation.schedule?.notes && (
                 <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-900">
                   <span className="font-black">Schedule note:</span>{" "}
@@ -1093,7 +1103,7 @@ export default function CollectorDashboard({
                   !todayOperation.run && (
                     <button
                       type="button"
-                      disabled={runUpdating}
+                      disabled={runUpdating || !revisions || !todayOperation.assignedPuroks?.length || !todayOperation.collectionPointCount}
                       onClick={() => void startCollectionRun()}
                       className="flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-black uppercase tracking-wide text-white disabled:opacity-50"
                     >
@@ -1115,7 +1125,7 @@ export default function CollectorDashboard({
 
                     <button
                       type="button"
-                      disabled={runUpdating}
+                      disabled={runUpdating || !todayOperation.progress?.required || todayOperation.progress.remaining > 0}
                       onClick={() => void completeCollectionRun()}
                       className="flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-black uppercase tracking-wide text-white disabled:opacity-50"
                     >

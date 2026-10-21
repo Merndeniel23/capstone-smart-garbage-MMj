@@ -1,0 +1,45 @@
+warning: in the working copy of 'frontend/src/components/Registration.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/main.tsx', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/frontend/src/components/Registration.tsx b/frontend/src/components/Registration.tsx[m
+[1mindex 9e328a3..765fa4f 100644[m
+[1m--- a/frontend/src/components/Registration.tsx[m
+[1m+++ b/frontend/src/components/Registration.tsx[m
+[36m@@ -19,6 +19,7 @@[m [mimport {[m
+ [m
+ [m
+ export default function Registration() {[m
+[32m+[m[32m  const googleSignInEnabled = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim());[m
+   [m
+   // Tab state: 'login' | 'register'[m
+   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');[m
+[36m@@ -815,6 +816,8 @@[m [mconst handleResetPasswordSubmit = async ([m
+     Authenticate & Enter Console[m
+   </button>[m
+ [m
+[32m+[m[32m  {googleSignInEnabled && ([m
+[32m+[m[32m    <>[m
+   <div className="auth-divider flex items-center">[m
+     <div className="flex-1 border-t border-gray-300"></div>[m
+     <span className="px-3 text-xs text-gray-500 font-semibold">OR</span>[m
+[36m@@ -835,6 +838,8 @@[m [mconst handleResetPasswordSubmit = async ([m
+       }}[m
+     />[m
+   </div>[m
+[32m+[m[32m    </>[m
+[32m+[m[32m  )}[m
+ </>[m
+             </form>[m
+           ) : ([m
+[1mdiff --git a/frontend/src/main.tsx b/frontend/src/main.tsx[m
+[1mindex 234e851..8c8d5b4 100644[m
+[1m--- a/frontend/src/main.tsx[m
+[1m+++ b/frontend/src/main.tsx[m
+[36m@@ -20,7 +20,7 @@[m [mL.Icon.Default.mergeOptions({[m
+   shadowUrl: markerShadow,[m
+ });[m
+ [m
+[31m-const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;[m
+[32m+[m[32mconst googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim();[m
+ [m
+ createRoot(document.getElementById('root')!).render([m
+   <StrictMode>[m
