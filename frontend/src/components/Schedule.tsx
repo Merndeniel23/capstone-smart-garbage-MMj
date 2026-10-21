@@ -357,7 +357,7 @@ export default function Schedule() {
     setError("");
 
     try {
-      const [profileResult, scheduleResult, locationResult] =
+      const [profileResult, scheduleResult] =
         await Promise.all([
           apiRequest<{
             success: boolean;
@@ -367,11 +367,16 @@ export default function Schedule() {
             success: boolean;
             schedules: CollectionSchedule[];
           }>("/collection-schedules"),
-          apiRequest<{
+        ]);
+
+      const canLoadAdminLocations =
+        profileResult.user?.role === "admin" || profileResult.user?.role === "super_admin";
+      const locationResult = canLoadAdminLocations
+        ? await apiRequest<{
             success: boolean;
             barangays: BarangayOption[];
-          }>("/admin/locations").catch(() => ({ success: false, barangays: [] })),
-        ]);
+          }>("/admin/locations").catch(() => ({ success: false, barangays: [] }))
+        : { success: false, barangays: [] };
 
       setCurrentUser(profileResult.user || null);
       setSchedules(
