@@ -988,17 +988,53 @@ const apiErrorHandler: ErrorRequestHandler = (error: any, req, res, _next) => {
 
 app.use(apiErrorHandler);
 
+let startupStage: "database_connection" | "registration_initialization" | "http_listener" = "database_connection";
+
+function startupDiagnostic(error: unknown) {
+  // Emit only fixed, recognized codes. Never log messages, stacks or error objects.
+  const safeCodes = {
+    TLS: [
+      "HANDSHAKE_SSL_ERROR", "HANDSHAKE_NO_SSL_SUPPORT", "ER_SECURE_TRANSPORT_REQUIRED",
+      "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_GET_ISSUER_CERT",
+      "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "DEPTH_ZERO_SELF_SIGNED_CERT",
+      "SELF_SIGNED_CERT_IN_CHAIN", "CERT_HAS_EXPIRED", "CERT_NOT_YET_VALID",
+      "ERR_TLS_CERT_ALTNAME_INVALID", "ERR_SSL_WRONG_VERSION_NUMBER",
+      "ERR_SSL_CERTIFICATE_VERIFY_FAILED", "ERR_OSSL_PEM_NO_START_LINE",
+      "ERR_OSSL_PEM_BAD_BASE64_DECODE",
+    ],
+    authentication: ["ER_ACCESS_DENIED_ERROR", "ER_NOT_SUPPORTED_AUTH_MODE", "ER_MUST_CHANGE_PASSWORD_LOGIN", "ER_ACCOUNT_HAS_BEEN_LOCKED"],
+    connectivity: ["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH", "EPIPE", "PROTOCOL_CONNECTION_LOST", "ER_CON_COUNT_ERROR"],
+    permissions: ["ER_DBACCESS_DENIED_ERROR", "ER_TABLEACCESS_DENIED_ERROR", "ER_COLUMNACCESS_DENIED_ERROR", "ER_SPECIFIC_ACCESS_DENIED_ERROR", "ER_OPTION_PREVENTS_STATEMENT"],
+    unknown: ["ER_BAD_DB_ERROR", "ER_NO_SUCH_TABLE", "ER_PARSE_ERROR", "ERR_SOCKET_BAD_PORT"],
+  };
+
+  let current = error;
+  // A bounded cause traversal also handles wrapped TLS errors without logging them.
+  for (let depth = 0; depth < 3 && current && typeof current === "object"; depth++) {
+    const candidate = current as { code?: unknown; cause?: unknown };
+    for (const [category, codes] of Object.entries(safeCodes)) {
+      const code = codes.find(known => known === candidate.code);
+      if (code) return { stage: startupStage, code, category };
+    }
+    current = candidate.cause;
+  }
+  return { stage: startupStage, code: "UNAVAILABLE", category: "unknown" };
+}
+
 // API only; React runs and deploys independently from frontend/.
 async function startServer() {
   await testDatabaseConnection();
+  startupStage = "registration_initialization";
   await ensureRegistrationSchema(db);
 
+  startupStage = "http_listener";
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`API running on http://localhost:${PORT}/api`);
   });
 }
 
-startServer().catch(async () => {
+startServer().catch(async (error: unknown) => {
+  console.error("SGMS startup diagnostic:", startupDiagnostic(error));
   console.error(
     "Server startup failed. Check database connectivity, permission to create pending_registrations, and application configuration.",
   );
