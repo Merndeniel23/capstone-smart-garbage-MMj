@@ -13,7 +13,6 @@ import CollectorDashboard from "./components/CollectorDashboard";
 import CollectorPickupLog from "./components/CollectorPickupLog";
 import LeaderDashboard from "./components/LeaderDashboard";
 import AdminDashboard from "./components/AdminDashboard";
-import SuperAdminDashboard from "./components/SuperAdminDashboard";
 import UserManagement from "./components/UserManagement";
 import MembersList from "./components/MembersList";
 import Schedule from "./components/Schedule";
@@ -33,7 +32,6 @@ import ChangeInitialPassword from "./components/ChangeInitialPassword";
 import Reports from "./components/Reports";
 import SgmsRecords, {type RecordView} from "./components/SgmsRecords";
 import OnlinePayments from "./components/OnlinePayments";
-import TruckCrewManagement from "./components/TruckCrewManagement";
 import EmergencyAlertOverlay from "./components/EmergencyAlertOverlay";
 
 import {
@@ -75,12 +73,13 @@ export type Screen =
   | "reports"
   | "truck-crew-management";
 
+// Four roles only. A stored Municipal (super_admin) session is shown a notice.
 const ROLE_HOME_SCREEN: Record<Role, Screen> = {
   household: "dashboard",
   collector: "collector-tasks",
   leader: "leader-dashboard",
   admin: "admin-dashboard",
-  super_admin: "super-admin-dashboard",
+  super_admin: "profile",
 };
 
 const ROLE_SCREENS: Record<Role, Screen[]> = {
@@ -132,20 +131,7 @@ const ROLE_SCREENS: Record<Role, Screen[]> = {
     "reports",
     "profile",
   ],
-  super_admin: [
-    "activity-logs", "archives", "payment-history",
-    "super-admin-dashboard",
-    "user-management",
-    "members-list",
-    "garbage-bins",
-    "truck-crew-management",
-    "complaints",
-    "payments",
-    "schedule",
-    "notifications",
-    "reports",
-    "profile",
-  ],
+  super_admin: ["profile"],
 };
 
 
@@ -407,7 +393,6 @@ export default function App() {
 }
 
 function AppContent() {
-  const [directoryNavigation, setDirectoryNavigation] = useState({ role: "all", status: "all", createCaptain: false, visit: 0 });
   // Navigate to the exact complaint when opening a complaint notification.
   const [notificationComplaintId, setNotificationComplaintId] = useState<number | null>(null);
   const {
@@ -451,25 +436,6 @@ function AppContent() {
       setNotificationComplaintId(null);
     }
   }, [currentScreen]);
-
-  const openDirectory = (role = "all", status = "all", createCaptain = false) => {
-    setDirectoryNavigation((previous) => ({ role, status, createCaptain, visit: previous.visit + 1 }));
-    setCurrentScreen("user-management");
-  };
-
-  const municipalPageTitles: Record<string, string> = {
-    "super-admin-dashboard": "Municipal Dashboard",
-    "user-management": directoryNavigation.role === "admin" ? "Barangay Captains" : "User Directory",
-    "members-list": "Household Directory",
-    "garbage-bins": "Municipal Bins",
-    "truck-crew-management": "Truck & Crew",
-    complaints: "All Complaints",
-    payments: "Payment Verification",
-    schedule: "Collection Schedules",
-    notifications: "Notifications",
-    reports: "Reports",
-    profile: "Profile",
-  };
 
   useEffect(() => {
     if (!isLoggedIn) {
@@ -625,18 +591,29 @@ function AppContent() {
     );
   }
 
+  if (userRole === "super_admin") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
+        <div className="max-w-md space-y-4 rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+          <h1 className="text-lg font-black text-slate-900">Municipal access removed</h1>
+          <p className="text-sm text-slate-600">
+            The system now has four roles: Barangay Captain (Admin), Purok Leader, Collector and Resident.
+            Sign in with one of those accounts.
+          </p>
+          <button type="button" onClick={handleLogout} className="rounded-xl bg-emerald-700 px-4 py-3 text-sm font-bold text-white">
+            Sign out
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (currentScreen === "change-initial-password") {
     return <ChangeInitialPassword />;
   }
 
-  const canVerifyPayments =
-    userRole === "leader" ||
-    userRole === "admin" ||
-    userRole === "super_admin";
-
   return (
-    <div className={`sg-app-shell flex min-h-screen min-w-0 flex-col overflow-x-clip bg-[#F8FAFC] font-sans text-slate-900 md:flex-row ${userRole === "super_admin" ? "municipal-admin" : ""}`}>
-      {userRole === "super_admin" && <a href="#main-content" className="municipal-skip-link">Skip to page content</a>}
+    <div className="sg-app-shell flex min-h-screen min-w-0 flex-col overflow-x-clip bg-[#F8FAFC] font-sans text-slate-900 md:flex-row">
       <EmergencyAlertOverlay />
       {userRole === "collector" && (
         <PersistentCollectorLocationTracker />
@@ -647,8 +624,6 @@ function AppContent() {
         onLogout={handleLogout}
         role={userRole}
         adminActionCounts={adminActionCounts}
-        directoryRoleFilter={directoryNavigation.role}
-        onOpenDirectory={(role) => openDirectory(role)}
       />
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-clip bg-[#F1F5F9]/30">
@@ -657,10 +632,9 @@ function AppContent() {
           onLogout={handleLogout}
           userRole={userRole as any}
           profilePhoto={currentUser?.profilePhoto}
-          pageTitle={userRole === "super_admin" ? municipalPageTitles[currentScreen] : undefined}
         />
 
-        <main id="main-content" tabIndex={-1} className={`mx-auto min-w-0 w-full max-w-7xl flex-1 overflow-x-clip p-4 md:p-8 ${userRole === "super_admin" ? "pb-28" : ""}`}>
+        <main id="main-content" tabIndex={-1} className="mx-auto min-w-0 w-full max-w-7xl flex-1 overflow-x-clip p-4 md:p-8">
           <AnimatePresence mode="wait">
             <motion.div
               key={currentScreen}
@@ -697,27 +671,12 @@ function AppContent() {
                 />
               )}
 
-              {currentScreen === "super-admin-dashboard" && (
-                <SuperAdminDashboard
-                  setCurrentScreen={setCurrentScreen as any}
-                  onOpenDirectory={openDirectory}
-                />
-              )}
-
-              {currentScreen === "user-management" && <UserManagement
-                key={directoryNavigation.visit}
-                initialRoleFilter={userRole === "super_admin" ? directoryNavigation.role : undefined}
-                initialStatusFilter={userRole === "super_admin" ? directoryNavigation.status : undefined}
-                initialCreateCaptain={userRole === "super_admin" && directoryNavigation.createCaptain}
-                onViewHouseholds={userRole === "super_admin" ? () => setCurrentScreen("members-list") : undefined}
-                onRoleFilterChange={userRole === "super_admin" ? (role) => setDirectoryNavigation((previous) => ({ ...previous, role })) : undefined}
-              />}
+              {currentScreen === "user-management" && <UserManagement />}
               {currentScreen === "members-list" && <MembersList />}
               {(["households","puroks","collection-records","violations","activity-logs","archives","barangay-policies","payment-history"] as string[]).includes(currentScreen) && <SgmsRecords key={currentScreen} view={currentScreen as RecordView} />}
               {currentScreen === "online-payments" && userRole === "household" && <OnlinePayments />}
               {currentScreen === "bin-inspections" && <BinInspections />}
               {currentScreen === "garbage-bins" && <ManageGarbageBins />}
-              {currentScreen === "truck-crew-management" && <TruckCrewManagement />}
               {currentScreen === "route-map" && <MapView />}
               {currentScreen === "schedule" && <Schedule />}
 
@@ -753,14 +712,12 @@ function AppContent() {
         </main>
       </div>
 
-      <div className={userRole === "super_admin" ? "fixed inset-x-0 bottom-0 z-30 md:hidden" : "md:hidden"}>
+      <div className="md:hidden">
         <BottomNav
           activeTab={currentScreen as any}
           onTabChange={(tab: any) => setCurrentScreen(tab)}
-          role={userRole as any}
+          role={userRole}
           adminActionCounts={adminActionCounts}
-          directoryRoleFilter={directoryNavigation.role}
-          onOpenDirectory={(role) => openDirectory(role)}
         />
       </div>
 

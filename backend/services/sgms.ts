@@ -43,10 +43,14 @@ export async function archivedAccount(id: number) {
   const [rows] = await db.query<any[]>("SELECT archived_at FROM users WHERE id = ?", [id]);
   return Boolean(rows[0]?.archived_at);
 }
+// Direct Purok Leader decisions carry their own terms; older rows use their policy's.
+export async function activeSuspension(residentId: number, scope: "collection" | "account", connection?: PoolConnection) {
+  const [rows]=await (connection || db).query<any[]>(`SELECT v.id, v.suspension_until FROM household_violations v LEFT JOIN barangay_violation_policies p ON p.id = v.policy_id
+    WHERE v.resident_id = ? AND COALESCE(v.action, p.action) = 'suspension' AND COALESCE(v.suspension_scope, p.suspension_scope) = ? AND v.suspension_until > NOW()
+    AND NOT EXISTS(SELECT 1 FROM household_violation_reviews r WHERE r.violation_id = v.id AND r.decision = 'voided') ORDER BY v.suspension_until DESC LIMIT 1`,[residentId, scope]);
+  return rows[0] as {id: number; suspension_until: string} | undefined;
+}
 export async function accountSuspended(id: number) {
   if (!revisionsEnabled()) return false;
-  const [rows]=await db.query<any[]>(`SELECT v.id FROM household_violations v JOIN barangay_violation_policies p ON p.id = v.policy_id
-    WHERE v.resident_id = ? AND p.action = 'suspension' AND p.suspension_scope = 'account' AND v.suspension_until > NOW()
-    AND NOT EXISTS(SELECT 1 FROM household_violation_reviews r WHERE r.violation_id = v.id AND r.decision = 'voided') LIMIT 1`,[id]);
-  return rows.length>0;
+  return Boolean(await activeSuspension(id, "account"));
 }

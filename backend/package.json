@@ -14,7 +14,7 @@
     "test:notifications": "tsx --test routes/notifications.test.ts",
     "test:schedules": "tsx --test routes/collectionSchedules.test.ts",
     "db:setup": "tsx scripts/setupDatabase.ts",
-    "create-super-admin": "tsx scripts/bootstrapSuperAdmin.ts"
+    "create-barangay-captain": "tsx scripts/createBarangayCaptain.ts"
   },
   "dependencies": {
     "@google/genai": "1.52.0",

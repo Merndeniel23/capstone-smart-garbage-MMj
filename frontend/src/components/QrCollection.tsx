@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../services/api";
 
-type HouseholdBin = {bin_id: number; resident_id: number; full_name: string; bin_code: string; purok_name: string};
+type HouseholdBin = {bin_id: number; resident_id: number; full_name: string; bin_code: string; purok_name: string; collection_suspended_until: string | null; scanned_today: string | null};
 type IdentifiedBin = Readonly<{payload: string; bin: Readonly<HouseholdBin>; key: string}>;
+type Segregation = "segregated" | "not_segregated";
 
+// The Collector goes straight to the purok: scan each bin, then tap
+// Segregated or Not Segregated. The result goes to the Purok Leader.
 export default function QrCollection({onSaved}: {onSaved: () => void}) {
   const [qr, setQr] = useState("");
   const [identified, setIdentified] = useState<IdentifiedBin | null>(null);
-  const [segregation, setSegregation] = useState("");
-  const [collectionStatus, setCollectionStatus] = useState("collected");
-  const [notCollectedReason, setNotCollectedReason] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [camera, setCamera] = useState(false);
@@ -20,12 +20,13 @@ export default function QrCollection({onSaved}: {onSaved: () => void}) {
   const qrRef = useRef("");
   const lookupVersion = useRef(0);
   const lookup = useRef<AbortController | null>(null);
-  function changeQr(value: string) {
+  function changeQr(value: string, keepMessage = false) {
     if (submitting.current) return;
     lookupVersion.current++; lookup.current?.abort(); lookup.current = null;
     identifiedRef.current = null; setIdentified(null);
-    qrRef.current = value; setQr(value); setBusy(false); setMessage("");
-    setSegregation(""); setNotCollectedReason(""); setCamera(false);
+    qrRef.current = value; setQr(value); setBusy(false);
+    if (!keepMessage) setMessage("");
+    setCamera(false);
   }
   useEffect(() => () => { lookupVersion.current++; lookup.current?.abort(); identifiedRef.current = null; }, []);
   useEffect(()=>{
@@ -45,7 +46,7 @@ export default function QrCollection({onSaved}: {onSaved: () => void}) {
           try {
             if (video.current?.readyState === 4) {
               const results = await detector.detect(video.current);
-              if (results[0]?.rawValue) {changeQr(results[0].rawValue);return;}
+              if (results[0]?.rawValue) {changeQr(results[0].rawValue);void identify();return;}
             }
           } catch { /* Retry a frame without keeping a failed frame. */ }
           if (!cancelled) timer = window.setTimeout(()=>void scan(),300);
@@ -67,23 +68,48 @@ export default function QrCollection({onSaved}: {onSaved: () => void}) {
       if (!Number.isSafeInteger(data.bin?.bin_id) || !Number.isSafeInteger(data.bin?.resident_id)) throw new Error("The QR lookup returned an invalid household bin.");
       const record = Object.freeze({payload, bin:Object.freeze({...data.bin}), key:crypto.randomUUID()});
       identifiedRef.current = record; setIdentified(record);
-      setSegregation(""); setCollectionStatus("collected"); setNotCollectedReason("");
     } catch (error) {
       if (!controller.signal.aborted && version === lookupVersion.current) setMessage(error instanceof Error ? error.message : "QR lookup failed.");
     } finally { if (version === lookupVersion.current) { lookup.current = null; setBusy(false); } }
   }
-  async function save() {
+  async function save(segregation: Segregation) {
     const record = identifiedRef.current;
-    if (!record || record !== identified || record.payload !== qrRef.current.trim() || !segregation || submitting.current) return;
-    if (collectionStatus === "not_collected" && !notCollectedReason.trim()) {setMessage("Enter a reason for Not Collected.");return;}
+    if (!record || record !== identified || record.payload !== qrRef.current.trim() || submitting.current) return;
     submitting.current=true;setBusy(true);setMessage("");
     try {
-      const result=await apiRequest<{message:string}>("/sgms/collections",{method:"POST",body:JSON.stringify({qrPayload:record.payload,segregation,collectionStatus,notCollectedReason:collectionStatus === "not_collected" ? notCollectedReason.trim() : null,idempotencyKey:record.key})});
-      if (identifiedRef.current === record) { setMessage(result.message); identifiedRef.current=null; setIdentified(null); qrRef.current=""; setQr(""); onSaved(); }
+      const result=await apiRequest<{message:string}>("/sgms/collections",{method:"POST",body:JSON.stringify({qrPayload:record.payload,segregation,idempotencyKey:record.key})});
+      if (identifiedRef.current === record) {
+        submitting.current=false;
+        changeQr("", true);
+        setMessage(`${record.bin.bin_code} · ${record.bin.full_name}: ${segregation === "segregated" ? "Segregated" : "Not Segregated"}. ${result.message}`);
+        onSaved();
+      }
     }
-    catch (error) {setMessage(error instanceof Error ? error.message : "Unable to record collection.");}
+    catch (error) {setMessage(error instanceof Error ? error.message : "Unable to record the scan.");}
     finally {setBusy(false);submitting.current=false;}
   }
   const bin = identified?.bin;
-  return <section aria-label="Household QR collection" className="rounded-2xl border bg-white p-4 space-y-3"><h2 className="text-lg font-black">Scan household bin</h2><p className="text-sm text-slate-600">Start today's assigned run, scan the registered bin, then record its segregation result.</p><div className="flex flex-wrap gap-2"><input aria-label="Household bin QR payload" value={qr} disabled={submitting.current} onChange={e=>changeQr(e.target.value)} className="min-w-0 flex-1 rounded-xl border p-3" placeholder="Scan QR into this field" /><button type="button" disabled={busy || !qr.trim()} onClick={()=>void identify()} className="rounded-xl bg-emerald-700 p-3 text-white disabled:opacity-50">Identify bin</button><button type="button" disabled={busy} onClick={()=>{if(camera)setCamera(false);else{changeQr("");setCamera(true);}}} className="rounded-xl border p-3">{camera?"Stop camera":"Scan with camera"}</button></div>{camera&&<video ref={video} muted playsInline className="max-h-64 w-full rounded-xl bg-black" />}{bin&&<div className="space-y-3 rounded-xl bg-slate-50 p-3"><p className="font-bold">{bin.full_name} · {bin.bin_code} · {bin.purok_name}</p><fieldset className="flex gap-4"><legend className="text-sm font-bold">Segregation result</legend>{[["segregated","Segregated"],["not_segregated","Not Segregated"]].map(([value,label])=><label key={value} className="flex items-center gap-2"><input type="radio" name="segregation" value={value} checked={segregation===value} onChange={()=>setSegregation(value)} />{label}</label>)}</fieldset><label className="block text-sm">Collection status<select value={collectionStatus} onChange={e=>setCollectionStatus(e.target.value)} className="ml-2 rounded border p-2"><option value="collected">Collected</option><option value="not_collected">Not collected</option></select></label>{collectionStatus==="not_collected"&&<label className="block text-sm font-bold">Reason for Not Collected<textarea required maxLength={1000} value={notCollectedReason} onChange={event=>setNotCollectedReason(event.target.value)} className="mt-2 w-full rounded-xl border p-3" placeholder="Explain why this scanned bin was not collected"/></label>}<button type="button" disabled={busy||!segregation||(collectionStatus==="not_collected"&&!notCollectedReason.trim())} onClick={()=>void save()} className="rounded-xl bg-emerald-700 p-3 text-white disabled:opacity-50">Save collection result</button></div>}<p role="status" className="text-sm">{message}</p></section>;
+  return <section aria-label="Household QR collection" className="space-y-3 rounded-2xl border bg-white p-4">
+    <h2 className="text-lg font-black">Scan household bin</h2>
+    <p className="text-sm text-slate-600">Scan the bin's QR code, then tap whether the garbage is segregated. The Purok Leader is notified right away.</p>
+    <div className="flex flex-wrap gap-2">
+      <input aria-label="Household bin QR payload" value={qr} disabled={submitting.current} onChange={e=>changeQr(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();void identify();}}} className="min-w-0 flex-1 rounded-xl border p-3" placeholder="Scan QR into this field" />
+      <button type="button" disabled={busy || !qr.trim()} onClick={()=>void identify()} className="rounded-xl bg-emerald-700 p-3 font-bold text-white disabled:opacity-50">Identify bin</button>
+      <button type="button" disabled={busy} onClick={()=>{if(camera)setCamera(false);else{changeQr("");setCamera(true);}}} className="rounded-xl border p-3 font-bold">{camera?"Stop camera":"Scan with camera"}</button>
+    </div>
+    {camera&&<video ref={video} muted playsInline className="max-h-64 w-full rounded-xl bg-black" />}
+    {bin&&<div className="space-y-3 rounded-xl bg-slate-50 p-4">
+      <div>
+        <p className="text-xs font-black uppercase tracking-wider text-slate-500">QR {bin.bin_code} · {bin.purok_name}</p>
+        <p className="text-lg font-black text-slate-900">{bin.full_name}</p>
+      </div>
+      {bin.scanned_today&&<p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm font-semibold text-amber-800">This bin was already scanned today ({bin.scanned_today === "segregated" ? "Segregated" : "Not Segregated"}).</p>}
+      {bin.collection_suspended_until&&<p role="alert" className="rounded-lg bg-rose-50 p-3 text-sm font-semibold text-rose-800">Collection service is suspended until {new Date(bin.collection_suspended_until).toLocaleDateString("en-PH",{timeZone:"Asia/Manila"})}. Record the result but do not collect the garbage.</p>}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <button type="button" disabled={busy||Boolean(bin.scanned_today)} onClick={()=>void save("segregated")} className="rounded-2xl bg-emerald-600 px-4 py-5 text-base font-black text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50">✓ Segregated</button>
+        <button type="button" disabled={busy||Boolean(bin.scanned_today)} onClick={()=>void save("not_segregated")} className="rounded-2xl bg-rose-600 px-4 py-5 text-base font-black text-white shadow-sm transition hover:bg-rose-700 disabled:opacity-50">✗ Not Segregated</button>
+      </div>
+    </div>}
+    <p role="status" className="text-sm font-semibold text-slate-700">{message}</p>
+  </section>;
 }

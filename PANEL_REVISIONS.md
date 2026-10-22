@@ -1,5 +1,29 @@
 # SGMS panel revision setup
 
+## Four-role workflow (Barangay Bangbang, 2026-10-22)
+
+The Municipal role is removed. The system has four users:
+
+| Role | Workflow |
+| --- | --- |
+| Admin (Barangay Captain) | Creates Puroks, Purok Leaders and Collectors; sees every household and member, activity logs (with date/time), violations, payments and endorsements; resolves complaints. |
+| Collector | Goes straight to assigned puroks, scans each bin's QR and taps **Segregated** or **Not Segregated**. No started run or leader guidance is needed. The Purok Leader is notified with the QR/bin and household. |
+| Purok Leader | Decides **Warning / Fine / Suspension** for not-segregated scans (or suspends a resident directly); marks resident payments **Received & Verified** (final, visible in the resident's history); approves and releases endorsements, which are auto-filled and exportable as PDF. |
+| Resident | Requests endorsements, pays online through Xendit, files complaints (including about their Purok Leader or a Collector, which go directly to the Admin). Google sign-up now requires setting a password before the account is created. |
+
+Setup:
+
+1. Apply `backend/migrations/20261022_sgms_four_role_workflow.up.sql` after
+   `20261021_sgms_panel.sql`, **before** running with `SGMS_REVISIONS_ENABLED=true`.
+   The new queries (including the login suspension check) need its columns.
+2. Create the barangay's Admin once from the server:
+   `BARANGAY_NAME=Bangbang CAPTAIN_NAME=... CAPTAIN_EMAIL=... CAPTAIN_PASSWORD=... npm run create-barangay-captain`
+   (in `backend/`). Existing `super_admin` accounts can no longer sign in.
+3. Without an Admin-recorded template, released endorsements use the standard
+   template in `shared/endorsementTemplate.ts`.
+
+Not tested, built or typechecked, as requested.
+
 The code is prepared in the existing application. The latest panel-completion
 batch was not tested, built, typechecked or deployed. Earlier dependency-only
 validation does not validate the QR, document or TLS changes in this batch.

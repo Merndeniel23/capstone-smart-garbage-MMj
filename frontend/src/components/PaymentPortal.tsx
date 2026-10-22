@@ -2429,7 +2429,7 @@ export default function PaymentPortal({
                             event.target.value,
                           )
                         }
-                        placeholder="Optional verification or rejection remarks"
+                        placeholder="Optional remarks (e.g. OR number). Verified payments appear in the resident's history."
                         className="w-full rounded-xl border p-3 text-xs"
                       />
 
@@ -2446,7 +2446,7 @@ export default function PaymentPortal({
                           className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-xs font-black text-white"
                         >
                           <Check className="h-4 w-4" />
-                          Verify
+                          Received & Verified
                         </button>
 
                         <button

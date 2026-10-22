@@ -1,123 +1,43 @@
-import { ClipboardCheck, LayoutDashboard, Calendar, User, Bell, Map, ClipboardList, Shield, Users, Award, CreditCard, MessageSquare, FileText, Truck, MapPinned } from 'lucide-react';
+import type { AppRole } from "../context/AppStateContext";
 import type { AdminActionCounts } from "../hooks/useAdminActionCounts";
 import { useNotifications } from "../context/NotificationsContext";
+import { menuSections, useSgmsFlags } from "./navigation";
 
 interface BottomNavProps {
   activeTab: string;
   onTabChange: (tab: any) => void;
-  role: 'household' | 'collector' | 'leader' | 'admin' | 'super_admin';
+  role: AppRole;
   adminActionCounts: AdminActionCounts;
-  directoryRoleFilter?: string;
-  onOpenDirectory?: (role: string) => void;
 }
 
-export default function BottomNav({ activeTab, onTabChange, role, adminActionCounts, onOpenDirectory }: BottomNavProps) {
+export default function BottomNav({ activeTab, onTabChange, role, adminActionCounts }: BottomNavProps) {
   const { notifications, enabled } = useNotifications();
   const unseenCount = notifications.filter(
     (item) => !Boolean(Number(item.is_seen)),
   ).length;
+  const { revisions } = useSgmsFlags();
 
-  const {
-    pendingPayments,
-    pendingEndorsements,
-    pendingCollectionTasks,
-    unreadAccounts,
-    unreadComplaints,
-  } = adminActionCounts;
-
-  const householdTabs = [
-    { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-    { id: 'schedule', icon: Calendar, label: 'Schedule' },
-    { id: 'complaints', icon: MessageSquare, label: 'Complaints', count: unreadComplaints },
-    { id: 'endorsements', icon: Award, label: 'Endorsements' },
-    { id: 'payments', icon: CreditCard, label: 'Payments' },
-    { id: 'notifications', icon: Bell, label: 'Notifications', count: unseenCount },
-    { id: 'profile', icon: User, label: 'Profile' },
-  ];
-
-  const collectorTabs = [
-    { id: 'collector-tasks', icon: ClipboardList, label: 'Tasks', count: pendingCollectionTasks },
-    { id: 'route-map', icon: Map, label: 'Route Map' },
-    { id: 'complaints', icon: MessageSquare, label: 'Complaints', count: unreadComplaints },
-    { id: 'collector-pickup-log', icon: Truck, label: 'Pickup Log' },
-    { id: 'schedule', icon: Calendar, label: 'Schedule' },
-    { id: 'notifications', icon: Bell, label: 'Notifications', count: unseenCount },
-    { id: 'profile', icon: User, label: 'Profile' },
-  ];
-
-  const leaderTabs = [
-    { id: 'leader-dashboard', icon: LayoutDashboard, label: 'Leader HUD' },
-    { id: 'garbage-bins', icon: MapPinned, label: 'Garbage Bins' },
-    // Keep the approval queue visible early in the horizontally scrolling mobile bar.
-    { id: 'endorsements', icon: Award, label: 'Endorsements', count: pendingEndorsements },
-    { id: 'bin-inspections', icon: ClipboardCheck, label: 'Inspect Bins' },
-    { id: 'members-list', icon: Users, label: 'Purok Members' },
-    { id: 'payments', icon: CreditCard, label: 'Verify Payments', count: pendingPayments },
-    { id: 'complaints', icon: MessageSquare, label: 'Complaints', count: unreadComplaints },
-    { id: 'schedule', icon: Calendar, label: 'Schedule' },
-    { id: 'notifications', icon: Bell, label: 'Notifications', count: unseenCount },
-    { id: 'profile', icon: User, label: 'Profile' },
-  ];
-
-  const adminTabs = [
-    { id: 'admin-dashboard', icon: Shield, label: 'Admin Panel' },
-    { id: 'garbage-bins', icon: MapPinned, label: 'Garbage Bins' },
-    { id: 'bin-inspections', icon: ClipboardCheck, label: 'Inspections' },
-    { id: 'user-management', icon: Users, label: 'Manage Users', count: unreadAccounts },
-    { id: 'payments', icon: CreditCard, label: 'Ledger Audit', count: pendingPayments },
-    { id: 'complaints', icon: MessageSquare, label: 'Complaints', count: unreadComplaints },
-    { id: 'route-map', icon: Map, label: 'Global Map' },
-    { id: 'schedule', icon: Calendar, label: 'Schedule' },
-    { id: 'notifications', icon: Bell, label: 'Notifications', count: unseenCount },
-    { id: 'reports', icon: FileText, label: 'Reports' },
-    { id: 'profile', icon: User, label: 'Profile' },
-  ];
-
-  const superAdminTabs = [
-    { id: 'super-admin-dashboard', icon: LayoutDashboard, label: 'Municipal' },
-    { id: 'user-management', icon: Users, label: 'User Directory' },
-    { id: 'garbage-bins', icon: MapPinned, label: 'Bins' },
-    { id: 'truck-crew-management', icon: Truck, label: 'Truck & Crew' },
-    { id: 'complaints', icon: MessageSquare, label: 'Complaints', count: unreadComplaints },
-    { id: 'payments', icon: CreditCard, label: 'Payments', count: pendingPayments },
-    { id: 'schedule', icon: Calendar, label: 'Schedules' },
-    { id: 'notifications', icon: Bell, label: 'Notifications', count: unseenCount },
-    { id: 'reports', icon: FileText, label: 'Reports' },
-    { id: 'profile', icon: User, label: 'Profile' },
-  ];
-
-  const residentAccessRestricted = role === 'household' && !enabled;
-
-  const restrictedHouseholdTabs =
-    householdTabs.filter((tab) => tab.id === 'profile');
-
-  const tabs =
-    role === 'super_admin'
-      ? superAdminTabs
-      : role === 'collector'
-      ? collectorTabs
-      : role === 'leader'
-        ? leaderTabs
-        : role === 'admin'
-          ? adminTabs
-          : residentAccessRestricted
-            ? restrictedHouseholdTabs
-            : householdTabs;
+  // Same order as the desktop sidebar, flattened for the scrolling mobile bar.
+  const tabs = menuSections(
+    role,
+    { ...adminActionCounts, unseenNotifications: unseenCount },
+    { revisions, residentRestricted: role === 'household' && !enabled },
+  ).flatMap((section) => section.items);
 
   return (
     <nav aria-label="Mobile navigation" className="h-20 bg-white border-t border-slate-100 flex items-center gap-1 overflow-x-auto shrink-0 pb-2 px-3 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] w-full">
       {tabs.map((tab) => {
         const Icon = tab.icon;
-        const isDirectoryTab = role === 'super_admin' && tab.id === 'user-management';
         const isActive = activeTab === tab.id;
-        
+        const count = tab.count ?? 0;
+
         return (
           <button
             key={tab.id}
             type="button"
             aria-label={tab.label}
             aria-current={isActive ? 'page' : undefined}
-            onClick={() => isDirectoryTab && onOpenDirectory ? onOpenDirectory('all') : onTabChange(tab.id)}
+            onClick={() => onTabChange(tab.id)}
             className={`flex flex-col items-center gap-1 transition-all duration-300 shrink-0 min-w-[76px] cursor-pointer ${
               isActive ? 'text-emerald-500 scale-105' : 'text-slate-400'
             }`}
@@ -126,11 +46,11 @@ export default function BottomNav({ activeTab, onTabChange, role, adminActionCou
               isActive ? 'bg-emerald-50 text-emerald-600' : ''
             }`}>
               <Icon className="w-5.5 h-5.5" />
-              {Boolean(tab.count) && (
+              {count > 0 && (
                 <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full select-none">
-                  {tab.count > 99
+                  {count > 99
                     ? "99+"
-                    : tab.count}
+                    : count}
                 </span>
               )}
             </div>

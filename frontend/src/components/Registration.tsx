@@ -42,6 +42,9 @@ export default function Registration() {
     fullName: string;
     email: string;
   } | null>(null);
+  // A Gmail signup sets its own password before it can enter the system.
+  const [googlePassword, setGooglePassword] = useState('');
+  const [googleConfirmPassword, setGoogleConfirmPassword] = useState('');
   const [registrationSubmitting, setRegistrationSubmitting] = useState(false);
   const [registrationVerificationEmail, setRegistrationVerificationEmail] = useState('');
   const [registrationToken, setRegistrationToken] = useState('');
@@ -129,9 +132,25 @@ const [resendCountdown, setResendCountdown] = useState(0);
     setActiveTab(tab);
     setRegistrationVerificationStep(false);
     setPendingGoogleRegistration(null);
+    setGooglePassword('');
+    setGoogleConfirmPassword('');
     setAcceptedPolicies(false);
     setError('');
     setSuccessMessage('');
+  };
+
+  const passwordProblem = (password: string, confirmation: string) => {
+    if (
+      password.length < 8 ||
+      password.length > 72 ||
+      !/[A-Z]/.test(password) ||
+      !/[a-z]/.test(password) ||
+      !/\d/.test(password)
+    ) {
+      return 'Password must be 8-72 characters with uppercase, lowercase, and a number.';
+    }
+
+    return password === confirmation ? '' : 'Passwords do not match.';
   };
 
  
@@ -316,6 +335,11 @@ const [resendCountdown, setResendCountdown] = useState(0);
     }
 
     if (pendingGoogleRegistration) {
+      const problem = passwordProblem(googlePassword, googleConfirmPassword);
+      if (problem) {
+        setError(problem);
+        return;
+      }
       await handleGoogleLogin(pendingGoogleRegistration.credential);
       return;
     }
@@ -404,11 +428,17 @@ const [resendCountdown, setResendCountdown] = useState(0);
       const response = await apiFetch('/api/auth/google', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ credential, acceptedPolicies }),
+        body: JSON.stringify({
+          credential,
+          acceptedPolicies,
+          ...(pendingGoogleRegistration
+            ? { password: googlePassword, confirmPassword: googleConfirmPassword }
+            : {}),
+        }),
       });
       const data = await response.json();
 
-      if (data.requiresPolicyAcceptance) {
+      if (data.requiresPolicyAcceptance && !pendingGoogleRegistration) {
         setPendingGoogleRegistration({
           credential,
           fullName: data.fullName || 'Google account',
@@ -426,6 +456,8 @@ const [resendCountdown, setResendCountdown] = useState(0);
         setRegistrationResendCountdown(Number(data.resendAfter) || 0);
         setRegistrationVerificationStep(true);
         setPendingGoogleRegistration(null);
+        setGooglePassword('');
+        setGoogleConfirmPassword('');
         setAcceptedPolicies(false);
         setSuccessMessage(response.ok ? data.message || '' : '');
         return;
@@ -850,7 +882,39 @@ const handleResetPasswordSubmit = async (
                   <h2 className="text-sm font-bold text-stone-800">Complete your Google registration</h2>
                   <p className="mt-2 text-xs font-semibold text-stone-700">{pendingGoogleRegistration.fullName}</p>
                   <p className="mt-1 break-all text-xs text-stone-500">{pendingGoogleRegistration.email}</p>
-                  <p className="mt-3 text-xs leading-relaxed text-stone-600">Review the policies below, then continue to email verification.</p>
+                  <p className="mt-3 text-xs leading-relaxed text-stone-600">Create your password now. You can sign in with Google or with this email and password after verifying your email.</p>
+                  <fieldset className="mt-3 space-y-3" disabled={registrationSubmitting}>
+                    <legend className="sr-only">Create your password</legend>
+                    {[
+                      { label: 'Password', value: googlePassword, onChange: setGooglePassword, placeholder: '8+ chars, upper/lower/number' },
+                      { label: 'Confirm Password', value: googleConfirmPassword, onChange: setGoogleConfirmPassword, placeholder: 'Confirm password' },
+                    ].map((field) => (
+                      <label key={field.label} className="block text-[11px] font-bold uppercase tracking-widest text-stone-500">
+                        {field.label}
+                        <div className="relative mt-1 flex items-center">
+                          <Lock className="absolute left-4 h-4 w-4 text-stone-400" />
+                          <input
+                            type={showPassword ? 'text' : 'password'}
+                            required
+                            minLength={8}
+                            maxLength={72}
+                            autoComplete="new-password"
+                            placeholder={field.placeholder}
+                            value={field.value}
+                            onChange={(event) => field.onChange(event.target.value)}
+                            className="auth-input w-full rounded-2xl border border-stone-200 bg-white py-3 pl-11 pr-4 text-xs font-semibold normal-case tracking-normal text-stone-800 focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
+                          />
+                        </div>
+                      </label>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="text-[10px] font-bold text-emerald-700 hover:underline"
+                    >
+                      {showPassword ? 'Hide passwords' : 'Show passwords'}
+                    </button>
+                  </fieldset>
                   <button
                     type="button"
                     disabled={registrationSubmitting}

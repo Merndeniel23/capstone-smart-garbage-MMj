@@ -20,6 +20,7 @@ import {
   resendPendingRegistration,
 } from "../services/pendingRegistration.js";
 import {
+  MUNICIPAL_ACCOUNT_REMOVED,
   requireAuth,
   requireAuthenticatedAccount,
   requireSessionAccount,
@@ -470,6 +471,12 @@ router.post(
         });
       }
 
+      if (user.role === "super_admin") {
+        return res.status(403).json({
+          message: MUNICIPAL_ACCOUNT_REMOVED,
+        });
+      }
+
       if (await archivedAccount(Number(user.id)) || await accountSuspended(Number(user.id)) || (user.status !== "active" && user.status !== "pending")) {
         return res.status(403).json({
           message:
@@ -805,17 +812,40 @@ router.post(
         }
 
         /*
-         * Google signup details are staged until the application OTP is
-         * verified. Only then is a Resident account created for profile setup.
+         * A Gmail signup must choose its own password before entering the
+         * system, so the account can also sign in with email and password.
+         * Details are staged until the application OTP is verified; only then
+         * is a Resident account created for profile setup.
          */
-        const randomPassword =
-          crypto
-            .randomBytes(32)
-            .toString("hex");
+        const password = String(req.body.password || "");
+
+        if (!password) {
+          return res.status(409).json({
+            success: false,
+            requiresPolicyAcceptance: true,
+            requiresPassword: true,
+            email,
+            fullName,
+            message:
+              "Create a password for your account before continuing with Google.",
+          });
+        }
+
+        if (
+          !isStrongPassword(password) ||
+          password !== String(req.body.confirmPassword || "")
+        ) {
+          return res.status(400).json({
+            success: false,
+            requiresPassword: true,
+            message:
+              "Passwords must match and be 8-72 characters with uppercase, lowercase, and a number.",
+          });
+        }
 
         const passwordHash =
           await bcrypt.hash(
-            randomPassword,
+            password,
             12,
           );
 
@@ -881,6 +911,12 @@ router.post(
         return res.status(500).json({
           message:
             "Unable to create or retrieve the Google account.",
+        });
+      }
+
+      if (user.role === "super_admin") {
+        return res.status(403).json({
+          message: MUNICIPAL_ACCOUNT_REMOVED,
         });
       }
 

@@ -26,6 +26,7 @@ import ConfirmDialog from './ConfirmDialog';
 import { portalOverlays } from './PortalOverlays';
 import RecordActions from './RecordActions';
 import ApprovedEndorsementDocument from './ApprovedEndorsementDocument';
+import { downloadEndorsement } from '../services/endorsementDownload';
 import FeedbackToast from './FeedbackToast';
 import Pagination, { DEFAULT_PAGE_SIZE } from './Pagination';
 
@@ -497,6 +498,27 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
   ) => {
     e.stopPropagation();
     setPendingWithdrawal(request);
+  };
+
+  // The released endorsement is already filled in from verified data, so
+  // export downloads it directly; Unicode/legacy copies open the print view.
+  const exportEndorsementPdf = async (request: EndorsementRequest) => {
+    setActionLoading(true);
+    setErrorMessage('');
+
+    try {
+      await downloadEndorsement(request.databaseId);
+      showNotification('Endorsement PDF downloaded.');
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? `${error.message} Opening the print view instead.`
+          : 'Unable to download the PDF. Opening the print view instead.',
+      );
+      setApprovedDocument(request);
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const handleDelete = async () => {
@@ -1009,7 +1031,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                             className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md shadow-emerald-700/10 active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
                           >
                             <UserCheck className="w-4 h-4" />
-                            {selectedRequest.outstandingPaymentCount > 0 ? 'Resolve Payment First' : 'Approve & Issue'}
+                            {selectedRequest.outstandingPaymentCount > 0 ? 'Verify Payment First' : 'Approve & Release'}
                           </button>
                           <button
                             disabled={actionLoading}
@@ -1063,7 +1085,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                   Your requested barangay service endorsement is ready!
                 </p>
                 <p className="text-xs text-slate-500 leading-relaxed font-medium">
-                  Approved by {approvedDocs[0].approvedBy ? 'Barangay Captain' : 'Purok Leader'} <strong>{approvedDocs[0].approvedBy || approvedDocs[0].endorsedBy}</strong>. View or print the endorsement copy.
+                  Released by Purok Leader <strong>{approvedDocs[0].approvedBy || approvedDocs[0].endorsedBy}</strong>. View, print or export it as PDF below.
                 </p>
               </div>
               <button 
@@ -1300,10 +1322,23 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                         }`}
                       >
                         <Printer className="w-3 h-3" />
-                        {item.rawStatus === 'approved' ? 'View Approved Endorsement' : 'Preview Endorsement'}
+                        {item.rawStatus === 'approved' ? 'View / Print' : 'Preview Endorsement'}
                       </button>
                     )}
-                    {item.rawStatus === 'approved' && panelRevisionsEnabled && <button type="button" onClick={event=>{event.stopPropagation();setApprovedDocument(item);}} className="rounded-lg border border-emerald-300 px-3 py-1 text-xs font-bold text-emerald-700">PDF / approved document</button>}
+                    {item.rawStatus === 'approved' && panelRevisionsEnabled && (
+                      <button
+                        type="button"
+                        disabled={actionLoading}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void exportEndorsementPdf(item);
+                        }}
+                        className="flex items-center gap-1 rounded-lg border border-emerald-300 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-50"
+                      >
+                        <FileText className="w-3 h-3" />
+                        Export PDF
+                      </button>
+                    )}
 
                     {role === 'household' && item.status === 'Pending Leader Review' && (
                       <button

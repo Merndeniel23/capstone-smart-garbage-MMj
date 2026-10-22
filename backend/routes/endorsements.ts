@@ -318,7 +318,7 @@ const endorsementSelect = `
       SELECT COUNT(*)
       FROM payments pay
       WHERE pay.resident_id = er.requester_id
-        AND COALESCE(pay.status, '') <> 'completed'
+        AND pay.status IN ('pending_leader_verification', 'discrepancy')
     ) AS outstanding_payment_count
   FROM endorsement_requests er
 `;
@@ -900,11 +900,12 @@ router.patch(
 
       const approving = action === "approve" || action === "endorse";
       if (approving) {
-        // Preserve the existing payment-compliance rule. Do not trust a stale
-        // frontend count; always verify against MySQL at the point of approval.
+        // Only payments still waiting for the leader's verification block a
+        // release; rejected records stay in history without blocking forever.
+        // Do not trust a stale frontend count; verify at the point of approval.
         const [outstandingRows] = await connection.query<any[]>(
           `SELECT COUNT(*) AS total FROM payments
-           WHERE resident_id = ? AND COALESCE(status, '') <> 'completed'`,
+           WHERE resident_id = ? AND status IN ('pending_leader_verification', 'discrepancy')`,
           [request.requester_id],
         );
         const outstanding = Number(outstandingRows[0]?.total || 0);
@@ -912,7 +913,7 @@ router.patch(
           await connection.rollback();
           return res.status(409).json({
             success: false,
-            message: "Resolve outstanding payment records before final endorsement approval.",
+            message: "Verify or reject this resident's pending payments in Verify Payments before releasing the endorsement.",
             outstandingPaymentCount: outstanding,
           });
         }
@@ -938,7 +939,22 @@ router.patch(
       );
 
       if (approving) await snapshotEndorsement(connection, request, viewer.full_name, certificateNumber!);
-      await audit(connection, req.user!, approving ? "endorsement_approved" : "endorsement_rejected", "endorsement_requests", requestId, {...request, resident_id: request.requester_id});
+      await audit(connection, req.user!, approving ? "endorsement_released" : "endorsement_rejected", "endorsement_requests", requestId, {...request, resident_id: request.requester_id});
+      await connection.execute(
+        `INSERT INTO notifications
+         (recipient_user_id, barangay_id, purok_id, title, message, notification_type, created_by)
+         VALUES (?, ?, ?, ?, ?, 'endorsement', ?)`,
+        [
+          request.requester_id,
+          request.barangay_id,
+          request.purok_id,
+          approving ? "Endorsement released" : "Endorsement rejected",
+          approving
+            ? `Your endorsement ${request.request_code} was released by ${viewer.full_name}. Open Barangay Endorsements to download the PDF.`
+            : `Your endorsement ${request.request_code} was rejected: ${remarks}`,
+          viewer.id,
+        ],
+      );
       await appendHistory(connection, {
         requestId,
         actor: viewer,

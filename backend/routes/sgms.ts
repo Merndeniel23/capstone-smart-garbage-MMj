@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { db } from "../config/db.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 import { createRateLimiter } from "../middleware/security.js";
-import { audit, canAccess, DomainError, positiveId, requiredText, revisionsEnabled, transaction } from "../services/sgms.js";
+import { activeSuspension, audit, canAccess, DomainError, positiveId, requiredText, revisionsEnabled, transaction } from "../services/sgms.js";
 import { createTextPdf, supportsTextPdf } from "../services/endorsementPdf.js";
 import { sendAccountActivation } from "../services/accountActivation.js";
 import { hasEndorsementDraftMarkers, unsupportedEndorsementPlaceholders } from "../../shared/endorsementTemplate.js";
@@ -162,59 +162,66 @@ router.post("/collections/identify", endpoint(async (req, res) => {
       AND p.archived_at IS NULL AND u.purok_id = gb.purok_id AND u.barangay_id = p.barangay_id AND p.barangay_id = ?
       AND ${assignment.sql}`, [digest(token), req.user!.barangay_id, ...assignment.values]);
   if (!rows[0]) throw new DomainError("No authorized active household bin matches this QR.", 404);
-  res.json({bin: rows[0]});
+  const suspension = await activeSuspension(Number(rows[0].resident_id), "collection");
+  const [today] = await db.query<any[]>("SELECT segregation FROM household_collections WHERE bin_id = ? AND collected_at >= CURDATE() LIMIT 1", [rows[0].bin_id]);
+  res.json({bin: {...rows[0], collection_suspended_until: suspension?.suspension_until ?? null, scanned_today: today[0]?.segregation ?? null}});
 }));
+// The Collector goes straight to the purok, scans each bin and taps
+// Segregated / Not Segregated. No leader guidance or started run is required;
+// an active run that covers the bin is linked when one exists.
 router.post("/collections", endpoint(async (req, res) => {
   role(req, ["collector"]);
   const token = String(req.body.qrPayload || "").match(/^SGMS:1:([a-f0-9]{64})$/)?.[1];
   const key = requiredText(req.body.idempotencyKey, 80);
-  if (!token || !["segregated","not_segregated"].includes(req.body.segregation) || !["collected","not_collected"].includes(req.body.collectionStatus)) throw new DomainError("Scan a registered QR and choose segregation and collection results.");
-  const reason = req.body.collectionStatus === "not_collected" ? requiredText(req.body.notCollectedReason, 1000) : null;
+  const segregation = req.body.segregation;
+  if (!token || !["segregated","not_segregated"].includes(segregation)) throw new DomainError("Scan a registered QR and choose Segregated or Not Segregated.");
   const result = await transaction(async connection => {
     await lockCollector(connection, req.user!);
     const assignment = collectorPurokScope(req.user!, "gb.purok_id");
-    const [rows] = await connection.query<any[]>(`SELECT hb.bin_id, hb.resident_id, u.barangay_id, u.purok_id FROM household_bins hb
+    const [rows] = await connection.query<any[]>(`SELECT hb.bin_id, hb.resident_id, u.full_name, u.barangay_id, u.purok_id, gb.bin_code FROM household_bins hb
       JOIN garbage_bins gb ON gb.id = hb.bin_id JOIN users u ON u.id = hb.resident_id JOIN puroks p ON p.id = gb.purok_id
       WHERE hb.qr_hash = ? AND gb.is_active = 1 AND gb.archived_at IS NULL AND u.archived_at IS NULL AND u.status = 'active' AND u.role = 'resident'
         AND p.archived_at IS NULL AND gb.purok_id = u.purok_id AND p.barangay_id = u.barangay_id AND p.barangay_id = ?
         AND ${assignment.sql} FOR UPDATE`, [digest(token), req.user!.barangay_id, ...assignment.values]);
     const bin = rows[0];
     if (!bin) throw new DomainError("No authorized active household bin matches this QR.", 404);
-    const [assignedElsewhere]=await connection.query<any[]>("SELECT id FROM collection_requests WHERE bin_id = ? AND assigned_collector_id IS NOT NULL AND assigned_collector_id <> ? AND status IN ('pending','approved','assigned','in_progress') FOR UPDATE",[bin.bin_id,req.user!.id]);
-    if(assignedElsewhere.length)throw new DomainError("This bin has an active task assigned to another Collector.",403);
     const [previous] = await connection.query<any[]>("SELECT * FROM household_collections WHERE collector_id = ? AND idempotency_key = ? FOR UPDATE", [req.user!.id, key]);
     if (previous[0]) {
-      if (Number(previous[0].bin_id) !== Number(bin.bin_id) || previous[0].segregation !== req.body.segregation || previous[0].collection_status !== req.body.collectionStatus || (previous[0].not_collected_reason ?? null) !== reason) throw new DomainError("This submission key has different collection data.", 409);
+      if (Number(previous[0].bin_id) !== Number(bin.bin_id) || previous[0].segregation !== segregation) throw new DomainError("This submission key has different collection data.", 409);
       return {id: previous[0].id, duplicate: true};
     }
-    const [runs] = await connection.query<any[]>("SELECT id FROM collection_runs WHERE collector_user_id = ? AND barangay_id = ? AND collection_date = CURDATE() AND status = 'in_progress' LIMIT 1 FOR UPDATE", [req.user!.id, bin.barangay_id]);
-    if (!runs[0]) throw new DomainError("Start today's assigned collection run before submitting a bin scan.", 409);
-    const [coverage] = await connection.query<any[]>(`SELECT rb.bin_id FROM collection_run_bins rb
-      JOIN collection_run_puroks rp ON rp.run_id = rb.run_id AND rp.purok_id = rb.purok_id
-      WHERE rb.run_id = ? AND rb.bin_id = ? AND rb.resident_id = ? AND rb.purok_id = ? FOR UPDATE`, [runs[0].id, bin.bin_id, bin.resident_id, bin.purok_id]);
-    if (!coverage[0]) throw new DomainError("This bin is not in the run's saved registered-bin coverage. No coverage will be inferred for legacy runs.", 409);
-    if (req.body.collectionStatus === "collected") {
-      const [suspensions]=await connection.query<any[]>("SELECT v.id FROM household_violations v JOIN barangay_violation_policies p ON p.id = v.policy_id WHERE v.resident_id = ? AND p.action = 'suspension' AND p.suspension_scope = 'collection' AND v.suspension_until > NOW() AND NOT EXISTS(SELECT 1 FROM household_violation_reviews r WHERE r.violation_id = v.id AND r.decision = 'voided')",[bin.resident_id]);
-      if(suspensions.length)throw new DomainError("Collection service is suspended under an approved policy. Record the bin as not collected.",409);
-    }
-    const [created]: any = await connection.execute("INSERT INTO household_collections (run_id, bin_id, resident_id, collector_id, purok_id, barangay_id, segregation, collection_status, idempotency_key, not_collected_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [runs[0].id, bin.bin_id, bin.resident_id, req.user!.id, bin.purok_id, bin.barangay_id, req.body.segregation, req.body.collectionStatus, key, reason]);
+    const [today] = await connection.query<any[]>("SELECT id FROM household_collections WHERE bin_id = ? AND collected_at >= CURDATE() LIMIT 1 FOR UPDATE", [bin.bin_id]);
+    if (today[0]) throw new DomainError(`Bin ${bin.bin_code} was already scanned today.`, 409);
+    const [runs] = await connection.query<any[]>(`SELECT r.id FROM collection_runs r JOIN collection_run_bins rb ON rb.run_id = r.id
+      WHERE r.collector_user_id = ? AND r.barangay_id = ? AND r.collection_date = CURDATE() AND r.status = 'in_progress' AND rb.bin_id = ? AND rb.resident_id = ?
+      ORDER BY r.id DESC LIMIT 1 FOR UPDATE`, [req.user!.id, bin.barangay_id, bin.bin_id, bin.resident_id]);
+    // A collection-service suspension decided by the Purok Leader means the bin is skipped.
+    const suspended = await activeSuspension(Number(bin.resident_id), "collection", connection);
+    const collectionStatus = suspended ? "not_collected" : "collected";
+    const reason = suspended ? "Collection service is suspended by a Purok Leader decision." : null;
+    const [created]: any = await connection.execute("INSERT INTO household_collections (run_id, bin_id, resident_id, collector_id, purok_id, barangay_id, segregation, collection_status, idempotency_key, not_collected_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [runs[0]?.id ?? null, bin.bin_id, bin.resident_id, req.user!.id, bin.purok_id, bin.barangay_id, segregation, collectionStatus, key, reason]);
     const id = Number(created.insertId);
-    if (req.body.collectionStatus === "collected") {
+    if (collectionStatus === "collected") {
       await connection.execute("UPDATE garbage_bins SET current_status = 'empty' WHERE id = ?", [bin.bin_id]);
       await connection.execute("UPDATE collection_requests SET status = 'completed', assigned_collector_id = ?, completed_at = NOW() WHERE bin_id = ? AND status IN ('pending','approved','assigned','in_progress') AND (assigned_collector_id IS NULL OR assigned_collector_id = ?)", [req.user!.id, bin.bin_id, req.user!.id]);
     }
+    const followed = segregation === "segregated";
     await connection.execute(`INSERT INTO notifications (recipient_role, barangay_id, purok_id, notification_type, title, message, related_entity_type, related_entity_id, created_by)
-      VALUES ('purok_leader', ?, ?, 'collection_result', 'Household collection recorded', ?, 'household_collection', ?, ?)`, [bin.barangay_id, bin.purok_id, `Household HH-${bin.resident_id}: ${req.body.segregation === "segregated" ? "Segregated" : "Not Segregated"}; ${req.body.collectionStatus.replaceAll("_", " ")}.`, id, req.user!.id]);
-    await audit(connection, req.user!, "collection_recorded", "household_collections", id, bin, {segregation: req.body.segregation, collectionStatus: req.body.collectionStatus, notCollectedReason: reason});
-    return {id, duplicate: false};
+      VALUES ('purok_leader', ?, ?, 'collection_result', ?, ?, 'household_collection', ?, ?)`, [bin.barangay_id, bin.purok_id,
+      followed ? "Segregation followed" : "Not segregated: decision needed",
+      `QR ${bin.bin_code} · ${bin.full_name} (HH-${bin.resident_id}): ${followed ? "followed segregation." : "did NOT follow segregation. Open Violations to give a warning, fine or suspension."}`, id, req.user!.id]);
+    await audit(connection, req.user!, followed ? "collection_segregated" : "collection_not_segregated", "household_collections", id, bin, {binCode: bin.bin_code, household: bin.full_name, segregation, collectionStatus, notCollectedReason: reason});
+    return {id, duplicate: false, suspended: Boolean(suspended)};
   });
-  res.status(result.duplicate ? 200 : 201).json({...result, message: result.duplicate ? "This submission was already recorded." : "Collection recorded and the assigned Purok Leader notified."});
+  res.status(result.duplicate ? 200 : 201).json({...result, message: result.duplicate ? "This submission was already recorded." : result.suspended ? "Recorded. This household's collection service is suspended, so the bin was not collected. The Purok Leader was notified." : "Recorded. The Purok Leader was notified."});
 }));
 router.get("/collections", endpoint(async (req, res) => {
   if (req.user!.role === "collector") await requireCollectionSetup();
   const area = scope(req, "c");
   const assignment = collectorPurokScope(req.user!, "c.purok_id");
-  const [rows] = await db.query<any[]>(`SELECT c.*, u.full_name AS household_name, collector.full_name AS collector_name, gb.bin_code, p.name AS purok_name FROM household_collections c JOIN users u ON u.id = c.resident_id JOIN users collector ON collector.id = c.collector_id JOIN garbage_bins gb ON gb.id = c.bin_id JOIN puroks p ON p.id = c.purok_id WHERE ${area.sql} AND ${assignment.sql} ${req.user!.role === "collector" ? "AND c.collector_id = ?" : ""} ORDER BY c.collected_at DESC, c.id DESC LIMIT 500`, [...area.values, ...assignment.values, ...(req.user!.role === "collector" ? [req.user!.id] : [])]);
+  const [rows] = await db.query<any[]>(`SELECT c.*, u.full_name AS household_name, collector.full_name AS collector_name, gb.bin_code, p.name AS purok_name,
+      (SELECT COALESCE(v.action, vp.action) FROM household_violations v LEFT JOIN barangay_violation_policies vp ON vp.id = v.policy_id WHERE v.collection_id = c.id ORDER BY v.id LIMIT 1) AS decision_action
+    FROM household_collections c JOIN users u ON u.id = c.resident_id JOIN users collector ON collector.id = c.collector_id JOIN garbage_bins gb ON gb.id = c.bin_id JOIN puroks p ON p.id = c.purok_id WHERE ${area.sql} AND ${assignment.sql} ${req.user!.role === "collector" ? "AND c.collector_id = ?" : ""} ORDER BY c.collected_at DESC, c.id DESC LIMIT 500`, [...area.values, ...assignment.values, ...(req.user!.role === "collector" ? [req.user!.id] : [])]);
   res.json({collections: rows});
 }));
 router.get("/policies", endpoint(async (req, res) => {
@@ -234,37 +241,80 @@ router.post("/policies", endpoint(async (req, res) => {
   res.status(201).json({message: "Approved policy recorded. Existing policy versions remain unchanged."});
 }));
 router.get("/violations", endpoint(async (req, res) => {
-  role(req, ["admin","super_admin","purok_leader","resident"]);
-  const area = scope(req, "c");
-  const [rows] = await db.query<any[]>(`SELECT v.*, p.title, p.action, p.fine_amount, p.official_reference, u.full_name AS household_name, actor.full_name AS issued_by_name, r.decision AS review_decision, r.reason AS review_reason, r.reviewed_at FROM household_violations v JOIN household_collections c ON c.id = v.collection_id JOIN barangay_violation_policies p ON p.id = v.policy_id JOIN users u ON u.id = v.resident_id JOIN users actor ON actor.id = v.issued_by LEFT JOIN household_violation_reviews r ON r.violation_id = v.id WHERE ${area.sql} ORDER BY v.issued_at DESC, v.id DESC LIMIT 500`, area.values);
+  role(req, ["admin","purok_leader","resident"]);
+  const area = scope(req, "v");
+  const [rows] = await db.query<any[]>(`SELECT v.id, v.collection_id, v.policy_id, v.resident_id, v.barangay_id, v.purok_id, v.reason, v.suspension_until, v.issued_at,
+      COALESCE(v.action, p.action) AS action, COALESCE(v.fine_amount, p.fine_amount) AS fine_amount, COALESCE(v.suspension_scope, p.suspension_scope) AS suspension_scope,
+      p.title, p.official_reference, u.full_name AS household_name, actor.full_name AS issued_by_name, gb.bin_code,
+      r.decision AS review_decision, r.reason AS review_reason, r.reviewed_at
+    FROM household_violations v LEFT JOIN barangay_violation_policies p ON p.id = v.policy_id JOIN users u ON u.id = v.resident_id JOIN users actor ON actor.id = v.issued_by
+      LEFT JOIN household_collections c ON c.id = v.collection_id LEFT JOIN garbage_bins gb ON gb.id = c.bin_id LEFT JOIN household_violation_reviews r ON r.violation_id = v.id
+    WHERE ${area.sql} ORDER BY v.issued_at DESC, v.id DESC LIMIT 500`, area.values);
   res.json({violations: rows});
 }));
+const decisionTitles: Record<string,string> = {warning:"Warning issued",fine:"Fine issued",suspension:"Suspension issued"};
+// The Purok Leader decides warning, fine or suspension for a "not segregated"
+// scan, or suspends a resident directly. Admin keeps full access.
 router.post("/violations", endpoint(async (req, res) => {
-  role(req, ["purok_leader"]);
-  const collectionId = positiveId(req.body.collectionId), policyId = positiveId(req.body.policyId), reason = requiredText(req.body.reason, 1000);
-  await transaction(async connection => {
-    const [events] = await connection.query<any[]>("SELECT * FROM household_collections WHERE id = ? AND segregation = 'not_segregated' FOR UPDATE", [collectionId]);
-    if (!events[0] || !canAccess(req.user!, events[0])) throw new DomainError("Non-compliant collection not found in your purok.", 404);
-    const [policies] = await connection.query<any[]>("SELECT * FROM barangay_violation_policies WHERE id = ? AND barangay_id = ? AND is_active = 1 FOR UPDATE", [policyId, events[0].barangay_id]);
-    const policy = policies[0];
-    if (!policy) throw new DomainError("Choose an approved active barangay policy.");
-    const [created]: any = await connection.execute("INSERT INTO household_violations (collection_id,policy_id,resident_id,issued_by,reason,suspension_until) VALUES (?,?,?,?,?,CASE WHEN ? IS NULL THEN NULL ELSE DATE_ADD(NOW(), INTERVAL ? DAY) END)", [collectionId,policyId,events[0].resident_id,req.user!.id,reason,policy.suspension_days,policy.suspension_days]);
-    await audit(connection, req.user!, `violation_${policy.action}_issued`, "household_violations", Number(created.insertId), events[0], {policyId, reason});
-    await connection.execute("INSERT INTO notifications (recipient_user_id,barangay_id,purok_id,title,message,notification_type,created_by) VALUES (?,?,?,?,?,'violation',?)", [events[0].resident_id,events[0].barangay_id,events[0].purok_id,"Household violation recorded",`${policy.title}: ${reason}`,req.user!.id]);
+  role(req, ["purok_leader","admin"]);
+  const reason = requiredText(req.body.reason, 1000);
+  const collectionId = req.body.collectionId ? positiveId(req.body.collectionId) : null;
+  const policyId = req.body.policyId ? positiveId(req.body.policyId) : null;
+  const message = await transaction(async connection => {
+    let subject: {resident_id: number; barangay_id: number; purok_id: number; bin_code?: string};
+    if (collectionId) {
+      const [events] = await connection.query<any[]>("SELECT c.resident_id, c.barangay_id, c.purok_id, gb.bin_code FROM household_collections c JOIN garbage_bins gb ON gb.id = c.bin_id WHERE c.id = ? AND c.segregation = 'not_segregated' FOR UPDATE", [collectionId]);
+      if (!events[0] || !canAccess(req.user!, events[0])) throw new DomainError("Not-segregated scan not found in your area.", 404);
+      const [decided] = await connection.query<any[]>("SELECT id FROM household_violations WHERE collection_id = ? LIMIT 1 FOR UPDATE", [collectionId]);
+      if (decided[0]) throw new DomainError("A decision was already recorded for this scan.", 409);
+      subject = events[0];
+    } else {
+      const [residents] = await connection.query<any[]>("SELECT id AS resident_id, barangay_id, purok_id FROM users WHERE id = ? AND role = 'resident' AND archived_at IS NULL FOR UPDATE", [positiveId(req.body.residentId)]);
+      if (!residents[0] || !canAccess(req.user!, residents[0])) throw new DomainError("Resident not found in your area.", 404);
+      subject = residents[0];
+    }
+    let action: string, fine: number | null = null, days: number | null = null, suspensionScope: string | null = null, label: string;
+    if (policyId) {
+      const [policies] = await connection.query<any[]>("SELECT * FROM barangay_violation_policies WHERE id = ? AND barangay_id = ? AND is_active = 1 FOR UPDATE", [policyId, subject.barangay_id]);
+      const policy = policies[0];
+      if (!policy) throw new DomainError("Choose an active barangay policy.");
+      action = policy.action; fine = policy.fine_amount == null ? null : Number(policy.fine_amount); days = policy.suspension_days; suspensionScope = policy.suspension_scope; label = policy.title;
+    } else {
+      action = String(req.body.action || "");
+      if (!["warning","fine","suspension"].includes(action)) throw new DomainError("Choose Warning, Fine or Suspension.");
+      if (action === "fine") {
+        fine = Number(req.body.fineAmount);
+        if (!Number.isFinite(fine) || fine <= 0 || fine > 99999999.99 || Math.abs(Math.round(fine * 100) - fine * 100) > 0.000001) throw new DomainError("Enter a valid fine amount in pesos.");
+      }
+      if (action === "suspension") {
+        days = Number(req.body.suspensionDays); suspensionScope = String(req.body.suspensionScope || "");
+        if (!Number.isSafeInteger(days) || days <= 0 || days > 3650) throw new DomainError("Enter the number of suspension days (1–3650).");
+        if (!["collection","account"].includes(suspensionScope)) throw new DomainError("Choose whether to suspend garbage collection or account access.");
+      }
+      label = decisionTitles[action];
+    }
+    const [created]: any = await connection.execute(`INSERT INTO household_violations (collection_id,policy_id,resident_id,barangay_id,purok_id,action,fine_amount,suspension_scope,issued_by,reason,suspension_until)
+      VALUES (?,?,?,?,?,?,?,?,?,?,CASE WHEN ? IS NULL THEN NULL ELSE DATE_ADD(NOW(), INTERVAL ? DAY) END)`,
+      [collectionId,policyId,subject.resident_id,subject.barangay_id,subject.purok_id,action,fine,suspensionScope,req.user!.id,reason,days,days]);
+    await audit(connection, req.user!, `violation_${action}_issued`, "household_violations", Number(created.insertId), subject, {collectionId, binCode: subject.bin_code ?? null, policyId, action, fineAmount: fine, suspensionDays: days, suspensionScope, reason});
+    const terms = action === "fine" ? ` (PHP ${fine!.toFixed(2)})` : action === "suspension" ? ` (${suspensionScope === "account" ? "account access" : "garbage collection"} for ${days} day${days === 1 ? "" : "s"})` : "";
+    await connection.execute("INSERT INTO notifications (recipient_user_id,barangay_id,purok_id,title,message,notification_type,created_by) VALUES (?,?,?,?,?,'violation',?)", [subject.resident_id,subject.barangay_id,subject.purok_id,decisionTitles[action],`${label}${terms}: ${reason}`,req.user!.id]);
+    return `${decisionTitles[action]}${terms}. The resident was notified.`;
   });
-  res.status(201).json({message: "Violation recorded under the selected approved policy."});
+  res.status(201).json({message});
 }));
 router.post("/violations/:id/review",endpoint(async(req,res)=>{
   role(req,["admin"]);
   const id=positiveId(req.params.id),reason=requiredText(req.body.reason,1000),decision=req.body.decision;
   if(!["upheld","voided"].includes(decision))throw new DomainError("Choose an explicit review decision.");
   await transaction(async connection=>{
-    const [rows]=await connection.query<any[]>("SELECT v.id,c.resident_id,c.barangay_id,c.purok_id FROM household_violations v JOIN household_collections c ON c.id = v.collection_id WHERE v.id = ? FOR UPDATE",[id]);
+    const [rows]=await connection.query<any[]>("SELECT v.id,v.resident_id,v.barangay_id,v.purok_id FROM household_violations v WHERE v.id = ? FOR UPDATE",[id]);
     if(!rows[0]||!canAccess(req.user!,rows[0]))throw new DomainError("Violation not found.",404);
     await connection.execute("INSERT INTO household_violation_reviews (violation_id,decision,reason,reviewed_by) VALUES (?,?,?,?)",[id,decision,reason,req.user!.id]);
     await audit(connection,req.user!,"violation_reviewed","household_violations",id,rows[0],{decision,reason});
+    if(decision==="voided")await connection.execute("INSERT INTO notifications (recipient_user_id,barangay_id,purok_id,title,message,notification_type,created_by) VALUES (?,?,?,'Violation voided',?,'violation',?)",[rows[0].resident_id,rows[0].barangay_id,rows[0].purok_id,`The Admin voided violation #${id}: ${reason}`,req.user!.id]);
   });
-  res.json({message:"Review recorded. The original violation and policy remain preserved."});
+  res.json({message:"Review recorded. The original violation remains preserved."});
 }));
 router.get("/activity", endpoint(async (req, res) => {
   role(req, ["admin","super_admin","purok_leader","resident","collector"]);

@@ -23,6 +23,11 @@ export interface AuthRequest extends Request {
   user?: AuthUser;
 }
 
+// The system now has four roles only: Admin (Barangay Captain), Collector,
+// Purok Leader and Resident. Municipal accounts can no longer sign in.
+export const MUNICIPAL_ACCOUNT_REMOVED =
+  "Municipal accounts have been removed. Sign in with a Barangay Captain, Purok Leader, Collector or Resident account.";
+
 async function authenticateRequest(
   req: AuthRequest,
   res: Response,
@@ -91,6 +96,13 @@ async function authenticateRequest(
       return res.status(401).json({
         success: false,
         message: "This login session no longer belongs to an account.",
+      });
+    }
+
+    if (String(currentUser.role) === "super_admin") {
+      return res.status(403).json({
+        success: false,
+        message: MUNICIPAL_ACCOUNT_REMOVED,
       });
     }
 

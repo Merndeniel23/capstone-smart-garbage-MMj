@@ -26,6 +26,29 @@ Purok Leader recorded by SGMS: {{leader_name}}
 
 Review and replace all draft notices with officially approved content before issuance.`;
 
+// Used when the Admin has not recorded a barangay-specific template, so a
+// released endorsement is always filled in automatically from verified data.
+export const STANDARD_ENDORSEMENT_TEMPLATE = `BARANGAY ENDORSEMENT
+
+Certificate No.: {{certificate_number}}
+Date issued: {{issue_date}}
+
+TO WHOM IT MAY CONCERN:
+
+This is to endorse {{resident_name}}, a registered resident of {{purok}}, Barangay {{barangay}}, with address at {{address}}.
+
+The resident is a registered household in the barangay's Smart Garbage Monitoring System and is endorsed for the following purpose:
+
+{{purpose}}
+
+This endorsement is issued upon the request of the above-named resident for whatever legal purpose it may serve.
+
+Released by:
+
+{{leader_name}}
+Purok Leader, {{purok}}
+Barangay {{barangay}}`;
+
 export function unsupportedEndorsementPlaceholders(body: string): string[] {
   return [...body.matchAll(/\{\{([^}]+)\}\}/g)]
     .map(match => match[1].trim())

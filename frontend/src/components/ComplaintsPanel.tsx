@@ -83,8 +83,19 @@ interface Complaint {
   resolved_at: string | null;
   created_at: string;
   updated_at: string;
+  subject_role?: "purok_leader" | "collector" | null;
+  subject_name?: string | null;
   messages: ComplaintMessage[];
 }
+
+interface ComplaintSubject {
+  id: number;
+  role: "purok_leader" | "collector";
+  full_name: string;
+}
+
+const subjectRoleLabel = (role?: string | null) =>
+  role === "purok_leader" ? "Purok Leader" : "Collector";
 
 interface Collector {
   id: number;
@@ -271,6 +282,17 @@ export default function ComplaintsPanel({
     useState(
       "Overflowing Communal Barrel",
     );
+  // Residents may complain about their Purok Leader or a Collector; such
+  // complaints go straight to the Barangay Captain (Admin).
+  const [subjects, setSubjects] = useState<ComplaintSubject[]>([]);
+  const [subjectId, setSubjectId] = useState("");
+  const complaintAboutStaff = newType === "Purok Leader Conduct" || newType === "Collector Conduct";
+  useEffect(() => {
+    if (role !== "household" || !directReview) return;
+    void apiRequest("/complaints/subjects")
+      .then((data) => setSubjects(Array.isArray(data.subjects) ? data.subjects : []))
+      .catch(() => setSubjects([]));
+  }, [role, directReview]);
   const [newDescription, setNewDescription] =
     useState("");
   const [newPhone, setNewPhone] =
@@ -769,6 +791,11 @@ export default function ComplaintsPanel({
       return;
     }
 
+    if (complaintAboutStaff && !subjectId) {
+      setError("Choose the Purok Leader or Collector this complaint is about.");
+      return;
+    }
+
     setSaving(true);
     setError("");
     setSuccess("");
@@ -790,6 +817,8 @@ export default function ComplaintsPanel({
               null,
             purok_id:
               currentUser.purok_id,
+            subject_user_id:
+              complaintAboutStaff ? Number(subjectId) : null,
           }),
         },
       );
@@ -802,6 +831,7 @@ export default function ComplaintsPanel({
       stopComplaintCamera();
       setCameraError("");
       setShowSubmitModal(false);
+      setSubjectId("");
       setNewDescription("");
       setNewPhotoData("");
       setNewPhotoName("");
@@ -1410,6 +1440,12 @@ export default function ComplaintsPanel({
                       />
                     </div>
 
+                    {item.subject_name && (
+                      <p className="mt-1 text-[10px] font-black uppercase tracking-wider text-rose-600">
+                        About {subjectRoleLabel(item.subject_role)}: {item.subject_name}
+                      </p>
+                    )}
+
                     <p className="mt-2 line-clamp-2 text-[11px] leading-relaxed text-slate-500">
                       {item.description}
                     </p>
@@ -1517,7 +1553,13 @@ export default function ComplaintsPanel({
                   }
                 </h2>
 
-                {isMunicipal && <p className="flex items-center gap-2 text-sm font-semibold text-slate-700"><User className="h-4 w-4" />Resident: {selectedComplaint.reporter_name}</p>}
+                {canManage && <p className="flex items-center gap-2 text-sm font-semibold text-slate-700"><User className="h-4 w-4" />Resident: {selectedComplaint.reporter_name}</p>}
+
+                {selectedComplaint.subject_name && (
+                  <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">
+                    Complaint about {subjectRoleLabel(selectedComplaint.subject_role)} {selectedComplaint.subject_name}
+                  </p>
+                )}
 
                 <div className="flex flex-wrap gap-4 text-xs font-bold text-slate-500">
                   <span className="flex items-center gap-1.5">
@@ -1973,8 +2015,42 @@ export default function ComplaintsPanel({
                   <option value="Damaged Garbage Bin">
                     Damaged Garbage Bin
                   </option>
+                  {role === "household" && subjects.length > 0 && (
+                    <>
+                      <option value="Purok Leader Conduct">
+                        Complaint about my Purok Leader
+                      </option>
+                      <option value="Collector Conduct">
+                        Complaint about a Collector
+                      </option>
+                    </>
+                  )}
                 </select>
               </label>
+
+              {complaintAboutStaff && (
+                <label className="sg-complaint-modal-label block text-[10px] font-black uppercase tracking-widest text-slate-500">
+                  Who is this about?
+                  <select
+                    required
+                    value={subjectId}
+                    onChange={(event) => setSubjectId(event.target.value)}
+                    className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs font-extrabold text-slate-800"
+                  >
+                    <option value="">Choose a person</option>
+                    {subjects
+                      .filter((subject) => subject.role === (newType === "Purok Leader Conduct" ? "purok_leader" : "collector"))
+                      .map((subject) => (
+                        <option key={subject.id} value={subject.id}>
+                          {subject.full_name} · {subjectRoleLabel(subject.role)}
+                        </option>
+                      ))}
+                  </select>
+                  <span className="mt-1 block text-[10px] font-semibold normal-case tracking-normal text-slate-500">
+                    This complaint goes directly to the Barangay Captain for resolution.
+                  </span>
+                </label>
+              )}
 
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="sg-complaint-modal-label block text-[10px] font-black uppercase tracking-widest text-slate-500">

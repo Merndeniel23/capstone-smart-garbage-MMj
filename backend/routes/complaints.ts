@@ -274,13 +274,9 @@ async function notifyComplaintParticipants(
     recipients.push({ userId: Number(input.assignedCollectorId) });
   }
 
-  // Admins need to see messages from residents and collectors. Super Admin
-  // receives a separate global notification because it has no barangay scope.
-  if (!isAdmin(input.sender.role)) {
-    if (input.barangayId) {
-      recipients.push({ role: "admin", barangayId: input.barangayId });
-    }
-    recipients.push({ role: "super_admin" });
+  // Admins need to see messages from residents and collectors.
+  if (!isAdmin(input.sender.role) && input.barangayId) {
+    recipients.push({ role: "admin", barangayId: input.barangayId });
   }
 
   for (const recipient of recipients) {
@@ -294,6 +290,39 @@ async function notifyComplaintParticipants(
     });
   }
 }
+
+// Staff a resident may file a complaint about: their own Purok Leader and the
+// Collectors of their barangay.
+router.get(
+  "/subjects",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    try {
+      const viewer =
+        await getCurrentDatabaseUser(req);
+
+      if (!viewer || !isResident(viewer.role) || !revisionsEnabled()) {
+        return res.json({ success: true, subjects: [] });
+      }
+
+      const [subjects]: any = await db.query(
+        `SELECT id, role, full_name FROM users
+         WHERE barangay_id = ? AND archived_at IS NULL AND status = 'active'
+           AND (role = 'collector' OR (role = 'purok_leader' AND purok_id = ?))
+         ORDER BY role DESC, full_name`,
+        [viewer.barangay_id, viewer.purok_id],
+      );
+
+      return res.json({ success: true, subjects });
+    } catch (error) {
+      console.error("Complaint subjects error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Unable to load barangay staff.",
+      });
+    }
+  },
+);
 
 router.get(
   "/",
@@ -417,11 +446,14 @@ router.get(
             c.resolved_at,
             c.created_at,
             c.updated_at
+            ${revisionsEnabled() ? ", c.subject_role, subject.full_name AS subject_name" : ""}
 
           FROM complaints c
 
           INNER JOIN users reporter
             ON reporter.id = c.reported_by
+
+          ${revisionsEnabled() ? "LEFT JOIN users subject ON subject.id = c.subject_user_id" : ""}
 
           LEFT JOIN puroks p
             ON p.id = c.purok_id
@@ -762,6 +794,38 @@ router.post(
         });
       }
 
+      // A resident may complain about their own Purok Leader or a Collector
+      // of their barangay. Such complaints go straight to the Admin.
+      const subjectUserId = parsePositiveInteger(req.body.subject_user_id);
+      let subject: { id: number; role: string; full_name: string } | null = null;
+
+      if (subjectUserId) {
+        if (!revisionsEnabled() || !isResident(viewer.role)) {
+          await connection.rollback();
+          return res.status(400).json({
+            success: false,
+            message: "Only residents can file a complaint about a Purok Leader or Collector.",
+          });
+        }
+
+        const [subjectRows]: any = await connection.query(
+          `SELECT id, role, full_name FROM users
+           WHERE id = ? AND barangay_id = ? AND archived_at IS NULL
+             AND (role = 'collector' OR (role = 'purok_leader' AND purok_id = ?))
+           LIMIT 1`,
+          [subjectUserId, barangayId, purokId],
+        );
+        subject = subjectRows[0] || null;
+
+        if (!subject) {
+          await connection.rollback();
+          return res.status(404).json({
+            success: false,
+            message: "Choose your Purok Leader or a Collector of your barangay.",
+          });
+        }
+      }
+
       const [result]: any =
         await connection.execute(
           `
@@ -798,7 +862,8 @@ router.post(
 
       if (revisionsEnabled()) {
         if (viewer.role === "resident") await connection.execute("UPDATE complaints SET admin_only = 1 WHERE id = ?", [Number(result.insertId)]);
-        await audit(connection, req.user!, "complaint_submitted", "complaints", Number(result.insertId), {barangay_id: barangayId, purok_id: purokId, resident_id: viewer.role === "resident" ? viewer.id : null});
+        if (subject) await connection.execute("UPDATE complaints SET subject_user_id = ?, subject_role = ? WHERE id = ?", [subject.id, subject.role, Number(result.insertId)]);
+        await audit(connection, req.user!, "complaint_submitted", "complaints", Number(result.insertId), {barangay_id: barangayId, purok_id: purokId, resident_id: viewer.role === "resident" ? viewer.id : null}, subject ? {subjectRole: subject.role, subjectName: subject.full_name} : null);
       }
       await notifyComplaintParticipants(connection, {
         complaintId: Number(result.insertId),
@@ -806,12 +871,14 @@ router.post(
         barangayId,
         sender: viewer,
         notificationType: "new_complaint",
-        title: "New sanitation complaint",
-        message: `${
-          isPurokLeader(viewer.role)
-            ? "A Purok Leader"
-            : "A resident"
-        } submitted a ${complaintType} complaint. Review and assign it in Complaints & Tickets.`,
+        title: subject ? "Complaint about barangay staff" : "New sanitation complaint",
+        message: subject
+          ? `A resident filed a ${complaintType} complaint about ${subject.role === "purok_leader" ? "Purok Leader" : "Collector"} ${subject.full_name}. Resolve it in Complaints & Tickets.`
+          : `${
+              isPurokLeader(viewer.role)
+                ? "A Purok Leader"
+                : "A resident"
+            } submitted a ${complaintType} complaint. Review and assign it in Complaints & Tickets.`,
       });
 
       await connection.execute(

@@ -1837,9 +1837,11 @@ router.patch(
         });
       }
 
+      // The Purok Leader physically receives the payment, so a verified
+      // payment is final. Remittance remains only for older records.
       const nextStatus: PaymentStatus =
         action === "approve"
-          ? "pending_remittance"
+          ? "completed"
           : "rejected_by_leader";
 
       const [result] = await connection.execute<any>(
@@ -1870,14 +1872,29 @@ router.patch(
         });
       }
 
-      await audit(connection, req.user!, action === "approve" ? "manual_payment_verified" : "manual_payment_rejected", "payments", paymentId, payment, {remarks});
+      await audit(connection, req.user!, action === "approve" ? "payment_received_verified" : "manual_payment_rejected", "payments", paymentId, payment, {remarks});
+      await connection.execute(
+        `INSERT INTO notifications
+         (recipient_user_id, barangay_id, purok_id, title, message, notification_type, created_by)
+         VALUES (?, ?, ?, ?, ?, 'payment', ?)`,
+        [
+          payment.resident_id,
+          payment.barangay_id,
+          payment.purok_id,
+          action === "approve" ? "Payment received" : "Payment rejected",
+          action === "approve"
+            ? `Your Purok Leader ${viewer.full_name} received and verified your payment.${remarks ? ` ${remarks}` : ""}`
+            : `Your Purok Leader rejected your payment record: ${remarks}`,
+          viewer.id,
+        ],
+      );
       await connection.commit();
 
       return res.json({
         success: true,
         message:
           action === "approve"
-            ? "Payment verified. It is now pending remittance to the barangay."
+            ? "Payment received and verified. It now appears in the resident's payment history."
             : "Payment rejected by the Purok Leader.",
       });
     } catch (error) {
