@@ -8,7 +8,7 @@ import { activeSuspension, audit, canAccess, DomainError, positiveId, requiredTe
 import { createTextPdf, supportsTextPdf } from "../services/endorsementPdf.js";
 import { sendAccountActivation } from "../services/accountActivation.js";
 import { hasEndorsementDraftMarkers, unsupportedEndorsementPlaceholders } from "../../shared/endorsementTemplate.js";
-import { assertPurokNotCollecting, collectorPurokScope, lockCollector, phase1Configured, phase1Ready, requireCollectionSetup } from "../services/collectorAssignments.js";
+import { assertPurokNotCollecting, collectorPurokScope, lockCollector, phase1Configured, phase1Enabled, phase1Ready, refreshCollectorScope } from "../services/collectorAssignments.js";
 
 const router = Router();
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -37,11 +37,6 @@ function scope(req: AuthRequest, alias: string, residentColumn = "resident_id"):
 router.get("/config", async (_req, res) => res.json({enabled: revisionsEnabled(), phase1Configured: phase1Configured(), phase1Enabled: await phase1Ready()}));
 router.use(enabled, requireAuth);
 
-router.get("/endorsement-records",endpoint(async(req,res)=>{
-  role(req,["admin"]);
-  const [endorsements]=await db.query<any[]>("SELECT id,request_code,requester_name_snapshot,purok_name_snapshot,status,purpose,created_at,leader_name_snapshot,leader_reviewed_at,issued_at FROM endorsement_requests WHERE barangay_id = ? AND archived_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 500",[req.user!.barangay_id]);
-  res.json({endorsements});
-}));
 router.post("/complaints/:id/investigate",endpoint(async(req,res)=>{
   role(req,["admin","super_admin"]);
   const id=positiveId(req.params.id);
@@ -152,7 +147,7 @@ router.post("/households/:id/bin", endpoint(async (req, res) => {
 
 router.post("/collections/identify", endpoint(async (req, res) => {
   role(req, ["collector"]);
-  await requireCollectionSetup();
+  await refreshCollectorScope();
   const token = String(req.body.qrPayload || "").match(/^SGMS:1:([a-f0-9]{64})$/)?.[1];
   if (!token) throw new DomainError("Invalid household bin QR code.");
   const assignment = collectorPurokScope(req.user!, "gb.purok_id");
@@ -192,9 +187,11 @@ router.post("/collections", endpoint(async (req, res) => {
     }
     const [today] = await connection.query<any[]>("SELECT id FROM household_collections WHERE bin_id = ? AND collected_at >= CURDATE() LIMIT 1 FOR UPDATE", [bin.bin_id]);
     if (today[0]) throw new DomainError(`Bin ${bin.bin_code} was already scanned today.`, 409);
-    const [runs] = await connection.query<any[]>(`SELECT r.id FROM collection_runs r JOIN collection_run_bins rb ON rb.run_id = r.id
-      WHERE r.collector_user_id = ? AND r.barangay_id = ? AND r.collection_date = CURDATE() AND r.status = 'in_progress' AND rb.bin_id = ? AND rb.resident_id = ?
-      ORDER BY r.id DESC LIMIT 1 FOR UPDATE`, [req.user!.id, bin.barangay_id, bin.bin_id, bin.resident_id]);
+    const [runs] = phase1Enabled()
+      ? await connection.query<any[]>(`SELECT r.id FROM collection_runs r JOIN collection_run_bins rb ON rb.run_id = r.id
+        WHERE r.collector_user_id = ? AND r.barangay_id = ? AND r.collection_date = CURDATE() AND r.status = 'in_progress' AND rb.bin_id = ? AND rb.resident_id = ?
+        ORDER BY r.id DESC LIMIT 1 FOR UPDATE`, [req.user!.id, bin.barangay_id, bin.bin_id, bin.resident_id])
+      : [[] as any[]];
     // A collection-service suspension decided by the Purok Leader means the bin is skipped.
     const suspended = await activeSuspension(Number(bin.resident_id), "collection", connection);
     const collectionStatus = suspended ? "not_collected" : "collected";
@@ -216,7 +213,7 @@ router.post("/collections", endpoint(async (req, res) => {
   res.status(result.duplicate ? 200 : 201).json({...result, message: result.duplicate ? "This submission was already recorded." : result.suspended ? "Recorded. This household's collection service is suspended, so the bin was not collected. The Purok Leader was notified." : "Recorded. The Purok Leader was notified."});
 }));
 router.get("/collections", endpoint(async (req, res) => {
-  if (req.user!.role === "collector") await requireCollectionSetup();
+  if (req.user!.role === "collector") await refreshCollectorScope();
   const area = scope(req, "c");
   const assignment = collectorPurokScope(req.user!, "c.purok_id");
   const [rows] = await db.query<any[]>(`SELECT c.*, u.full_name AS household_name, collector.full_name AS collector_name, gb.bin_code, p.name AS purok_name,

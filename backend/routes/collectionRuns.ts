@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../config/db.js";
-import { audit, DomainError, positiveId, requiredText, transaction } from "../services/sgms.js";
-import { collectionRunProgress, collectorPurokScope, lockCollector, requireCollectionSetup } from "../services/collectorAssignments.js";
+import { activeRecord, audit, DomainError, positiveId, requiredText, revisionsEnabled, transaction } from "../services/sgms.js";
+import { collectionRunProgress, collectorPurokScope, lockCollector, phase1Enabled, refreshCollectorScope, requireCollectionSetup } from "../services/collectorAssignments.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
@@ -121,7 +121,7 @@ router.get(
         });
       }
 
-      await requireCollectionSetup();
+      await refreshCollectorScope();
       const collector = await loadCollectorContext(collectorUserId);
 
       if (!collector) {
@@ -143,6 +143,8 @@ router.get(
       const schedule = await loadTodaySchedule(barangayId);
       const run = await loadTodayRun(barangayId, collectorUserId);
 
+      // Registered household bins exist with the SGMS workflow; otherwise
+      // count the barangay's active bins as before.
       const assignment = collectorPurokScope(req.user!, "gb.purok_id");
       const [binRows]: any = await db.query(
         `
@@ -150,20 +152,23 @@ router.get(
           FROM garbage_bins gb
           INNER JOIN puroks p
             ON p.id = gb.purok_id
-          JOIN household_bins hb ON hb.bin_id = gb.id JOIN users u ON u.id = hb.resident_id
+          ${revisionsEnabled() ? "JOIN household_bins hb ON hb.bin_id = gb.id JOIN users u ON u.id = hb.resident_id" : ""}
           WHERE p.barangay_id = ?
             AND gb.is_active = 1
             AND ${assignment.sql}
-            AND gb.archived_at IS NULL AND u.archived_at IS NULL AND u.role = 'resident' AND u.status = 'active'
-            AND u.purok_id = gb.purok_id AND u.barangay_id = p.barangay_id
+            ${revisionsEnabled() ? `AND gb.archived_at IS NULL AND u.archived_at IS NULL AND u.role = 'resident' AND u.status = 'active'
+            AND u.purok_id = gb.purok_id AND u.barangay_id = p.barangay_id` : ""}
         `,
         [barangayId, ...assignment.values],
       );
 
-      const [assignedPuroks] = await db.query<any[]>(`SELECT p.id, p.name FROM puroks p
-        JOIN collector_purok_assignments a ON a.purok_id = p.id
-        WHERE a.collector_id = ? AND a.is_active = 1 AND p.barangay_id = ? AND p.archived_at IS NULL ORDER BY p.name`, [collectorUserId, barangayId]);
-      const progress = run ? await collectionRunProgress(Number(run.id), collectorUserId, barangayId) : null;
+      // Without Phase 1 purok assignments the Collector covers every purok of the barangay.
+      const [assignedPuroks] = phase1Enabled()
+        ? await db.query<any[]>(`SELECT p.id, p.name FROM puroks p
+          JOIN collector_purok_assignments a ON a.purok_id = p.id
+          WHERE a.collector_id = ? AND a.is_active = 1 AND p.barangay_id = ? AND p.archived_at IS NULL ORDER BY p.name`, [collectorUserId, barangayId])
+        : await db.query<any[]>(`SELECT p.id, p.name FROM puroks p WHERE p.barangay_id = ?${activeRecord("p")} ORDER BY p.name`, [barangayId]);
+      const progress = run && phase1Enabled() ? await collectionRunProgress(Number(run.id), collectorUserId, barangayId) : null;
 
       return res.json({
         success: true,
@@ -190,6 +195,7 @@ router.get(
         collectionPointCount: progress ? progress.required : Number(binRows[0]?.total || 0),
         assignedPuroks,
         progress,
+        runsEnabled: phase1Enabled(),
       });
     } catch (error) {
       console.error("Load today's collection run error:", error);
@@ -222,6 +228,8 @@ router.post(
 
       await connection.beginTransaction();
 
+      // Runs snapshot purok/bin coverage in the Phase 1 tables.
+      await requireCollectionSetup(connection);
       await lockCollector(connection, req.user!);
 
       const [collectorRows]: any = await connection.query(
@@ -427,6 +435,8 @@ router.patch(
 
       await connection.beginTransaction();
 
+      // Runs snapshot purok/bin coverage in the Phase 1 tables.
+      await requireCollectionSetup(connection);
       await lockCollector(connection, req.user!);
 
       const [runRows]: any = await connection.query(

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../config/db.js";
 import { activeRecord, DomainError } from "../services/sgms.js";
-import { collectorPurokScope, requireCollectionSetup } from "../services/collectorAssignments.js";
+import { collectorPurokScope, refreshCollectorScope } from "../services/collectorAssignments.js";
 import {
   requireAuth,
   type AuthRequest,
@@ -198,7 +198,7 @@ router.get(
 
         parameters.push(barangayId);
         if (role === "collector") {
-          await requireCollectionSetup();
+          await refreshCollectorScope();
           const assignment = collectorPurokScope(req.user!, "gb.purok_id");
           query += ` AND ${assignment.sql}`;
           parameters.push(...assignment.values);

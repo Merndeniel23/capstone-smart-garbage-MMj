@@ -1,7 +1,8 @@
 import { Router } from "express";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../config/db.js";
-import { collectorPurokScope, phase1Enabled, phase1Ready } from "../services/collectorAssignments.js";
+import { collectorPurokScope, phase1Ready } from "../services/collectorAssignments.js";
+import { revisionsEnabled } from "../services/sgms.js";
 import {
   requireAuth,
   type AuthRequest,
@@ -133,11 +134,11 @@ function collectorNotificationScope(viewer: any, alias = "n") {
 }
 
 function collectorComplaintNoticeScope(viewer: any, alias = "n") {
-  if (normalizeRole(viewer?.role) !== "collector" || !phase1Enabled()) return {sql: "0=1", values: [] as number[]};
+  if (normalizeRole(viewer?.role) !== "collector") return {sql: "0=1", values: [] as number[]};
   const assignment = collectorNotificationScope(viewer, "notice_complaint");
   return {sql: `EXISTS (SELECT 1 FROM complaints notice_complaint JOIN puroks notice_p ON notice_p.id = notice_complaint.purok_id
     WHERE notice_complaint.id = ${alias}.related_entity_id AND notice_complaint.assigned_collector_id = ?
-      AND notice_complaint.admin_only = 0 AND notice_complaint.archived_at IS NULL
+      ${revisionsEnabled() ? "AND notice_complaint.admin_only = 0 AND notice_complaint.archived_at IS NULL" : ""}
       AND notice_p.barangay_id = ? AND ${assignment.sql})`, values: [Number(viewer.id), Number(viewer.barangay_id), ...assignment.values]};
 }
 

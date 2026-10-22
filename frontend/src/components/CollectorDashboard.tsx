@@ -103,6 +103,8 @@ type TodayCollectionOperation = {
   collectionPointCount: number;
   assignedPuroks?: {id: number; name: string}[];
   progress?: {required: number; verified: number; remaining: number; notCollected: number} | null;
+  /** Collection runs need Phase 1; Collectors can always scan bins directly. */
+  runsEnabled?: boolean;
   schedule: {
     schedule_id: number;
     barangay_id: number;
@@ -238,8 +240,9 @@ function priorityForBin(
 export default function CollectorDashboard({
   setCurrentScreen,
 }: CollectorDashboardProps) {
-  const [revisions,setRevisions]=useState(false);
-  useEffect(()=>{void apiFetch("/api/sgms/config").then(res=>res.json()).then(data=>setRevisions(data.phase1Enabled===true)).catch(()=>undefined);},[]);
+  // With the SGMS workflow enabled, bins are completed by scanning their QR.
+  const [qrScanning,setQrScanning]=useState(false);
+  useEffect(()=>{void apiFetch("/api/sgms/config").then(res=>res.json()).then(data=>setQrScanning(data.enabled===true)).catch(()=>undefined);},[]);
   const [bins, setBins] =
     useState<GarbageBin[]>([]);
 
@@ -396,12 +399,14 @@ export default function CollectorDashboard({
     setErrorMessage("");
 
     try {
+      // Load each section independently so one unavailable service does not
+      // blank the whole dashboard.
       const [
         binResult,
         requestResult,
         complaintResult,
         operationResult,
-      ] = await Promise.all([
+      ] = await Promise.allSettled([
         apiRequest(
           "/api/garbage-bins",
         ),
@@ -416,35 +421,57 @@ export default function CollectorDashboard({
         ),
       ]);
 
-      setBins(
-        Array.isArray(binResult.bins)
-          ? binResult.bins
-          : [],
+      if (binResult.status === "fulfilled") {
+        setBins(
+          Array.isArray(binResult.value.bins)
+            ? binResult.value.bins
+            : [],
+        );
+      }
+
+      if (requestResult.status === "fulfilled") {
+        setRequests(
+          Array.isArray(
+            requestResult.value.requests,
+          )
+            ? requestResult.value.requests
+            : [],
+        );
+      }
+
+      if (complaintResult.status === "fulfilled") {
+        setComplaints(
+          Array.isArray(
+            complaintResult.value.complaints,
+          )
+            ? complaintResult.value.complaints
+            : [],
+        );
+      }
+
+      setTodayOperation(
+        operationResult.status === "fulfilled"
+          ? operationResult.value
+          : null,
       );
 
-      setRequests(
-        Array.isArray(
-          requestResult.requests,
-        )
-          ? requestResult.requests
-          : [],
+      const failure = [
+        binResult,
+        requestResult,
+        complaintResult,
+        operationResult,
+      ].find(
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected",
       );
 
-      setComplaints(
-        Array.isArray(
-          complaintResult.complaints,
-        )
-          ? complaintResult.complaints
-          : [],
-      );
-
-      setTodayOperation(operationResult);
-    } catch (error) {
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : "Failed to load collector dashboard.",
-      );
+      if (failure) {
+        setErrorMessage(
+          failure.reason instanceof Error
+            ? failure.reason.message
+            : "Some collector dashboard data could not be loaded.",
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -821,9 +848,8 @@ export default function CollectorDashboard({
   ) => {
     if (!bin.request) return;
 
-    if (status === "completed") {
-      if (revisions) setCurrentScreen("collection-records");
-      else setErrorMessage("Collection requires the reviewed panel and Phase 1 setup. Direct completion is disabled.");
+    if (status === "completed" && qrScanning) {
+      setCurrentScreen("collection-records");
       return;
     }
 
@@ -1002,10 +1028,16 @@ export default function CollectorDashboard({
 
         <div className="space-y-5 p-6">
           {!todayOperation ? (
-            <div className="flex items-center gap-3 text-sm font-bold text-slate-500">
-              <RefreshCw className="h-4 w-4 animate-spin" />
-              Loading today&apos;s collection operation...
-            </div>
+            loading ? (
+              <div className="flex items-center gap-3 text-sm font-bold text-slate-500">
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                Loading today&apos;s collection operation...
+              </div>
+            ) : (
+              <p className="text-sm font-bold text-slate-500">
+                Today&apos;s collection details are unavailable. Use Refresh to try again.
+              </p>
+            )
           ) : (
             <>
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -1098,12 +1130,24 @@ export default function CollectorDashboard({
                     </div>
                   )}
 
-                {todayOperation.hasScheduleToday &&
+                {qrScanning && !todayOperation.run && (
+                  <button
+                    type="button"
+                    onClick={() => setCurrentScreen("collection-records")}
+                    className="flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-black uppercase tracking-wide text-white"
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    Scan Bins (QR)
+                  </button>
+                )}
+
+                {todayOperation.runsEnabled &&
+                  todayOperation.hasScheduleToday &&
                   todayOperation.truck &&
                   !todayOperation.run && (
                     <button
                       type="button"
-                      disabled={runUpdating || !revisions || !todayOperation.assignedPuroks?.length || !todayOperation.collectionPointCount}
+                      disabled={runUpdating || !todayOperation.assignedPuroks?.length || !todayOperation.collectionPointCount}
                       onClick={() => void startCollectionRun()}
                       className="flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-black uppercase tracking-wide text-white disabled:opacity-50"
                     >
@@ -1170,8 +1214,7 @@ export default function CollectorDashboard({
               </p>
 
               <p className="mt-1 text-xs text-slate-400">
-                Only the Barangay Captain, Municipal Administrator,
-                and Purok Leader can view this location.
+                Only the Barangay Captain and Purok Leader can view this location.
               </p>
 
               {lastLocationUpdate && (
@@ -1430,12 +1473,12 @@ export default function CollectorDashboard({
                           busy
                         }
                         onClick={() =>
-                          revisions ? setCurrentScreen("collection-records") : updateStatus(bin,"completed")
+                          qrScanning ? setCurrentScreen("collection-records") : updateStatus(bin,"completed")
                         }
                         className="flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-xs font-black uppercase text-white disabled:opacity-50"
                       >
                         <CheckCircle2 className="h-4 w-4" />
-                        {revisions ? "Scan Household QR" : "Mark Collected"}
+                        {qrScanning ? "Scan Household QR" : "Mark Collected"}
                       </button>
                     )}
                   </div>

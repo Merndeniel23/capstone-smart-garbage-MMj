@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../config/db.js";
-import { collectorPurokScope, lockCollector, requireCollectionSetup } from "../services/collectorAssignments.js";
-import { DomainError } from "../services/sgms.js";
+import { collectorPurokScope, lockCollector, refreshCollectorScope } from "../services/collectorAssignments.js";
+import { DomainError, revisionsEnabled } from "../services/sgms.js";
 import {
   requireAuth,
   type AuthRequest,
@@ -96,7 +96,7 @@ router.get(
       const role = normalizeRole(req.user?.role);
 
       if (role === "collector") {
-        await requireCollectionSetup();
+        await refreshCollectorScope();
         if (!req.user!.barangay_id) {
           return res.status(400).json({
             success: false,
@@ -405,7 +405,9 @@ router.patch(
         });
       }
 
-      if (nextStatus === "completed") {
+      // With the SGMS workflow enabled, a bin is completed by its QR scan;
+      // otherwise the Collector completes the request here.
+      if (revisionsEnabled() && nextStatus === "completed") {
         return res.status(409).json({message: "Record the household bin QR and segregation result to complete collection."});
       }
 

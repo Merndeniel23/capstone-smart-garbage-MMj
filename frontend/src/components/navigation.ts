@@ -83,6 +83,7 @@ export function menuSections(
       sections = [
         { title: "Overview", items: [
           { id: "admin-dashboard", icon: Shield, label: "Barangay Dashboard" },
+          notifications,
         ] },
         { title: "Users & Areas", items: [
           { id: "user-management", icon: UserCog, label: "Manage Users", count: counts.unreadAccounts },
@@ -112,7 +113,6 @@ export function menuSections(
         ] },
         { title: "Settings", items: [
           { id: "barangay-policies", icon: Settings, label: "Policies & Templates", revisions: true },
-          notifications,
           profile,
         ] },
       ];
@@ -122,6 +122,7 @@ export function menuSections(
       sections = [
         { title: "Overview", items: [
           { id: "leader-dashboard", icon: LayoutDashboard, label: "Leader Dashboard" },
+          notifications,
         ] },
         { title: "My Purok", items: [
           { id: "households", icon: Users, label: "Households", revisions: true },
@@ -144,7 +145,7 @@ export function menuSections(
           { id: "payment-history", icon: Receipt, label: "Payment History", revisions: true },
           { id: "archives", icon: ScrollText, label: "Archives", revisions: true },
         ] },
-        { title: "Account", items: [notifications, profile] },
+        { title: "Account", items: [profile] },
       ];
       break;
 
@@ -152,6 +153,7 @@ export function menuSections(
       sections = [
         { title: "Overview", items: [
           { id: "collector-tasks", icon: ClipboardList, label: "Collection Tasks", count: counts.pendingCollectionTasks },
+          notifications,
         ] },
         { title: "Garbage Collection", items: [
           { id: "collection-records", icon: QrCode, label: "Scan Bins (QR)", revisions: true },
@@ -165,7 +167,7 @@ export function menuSections(
         { title: "Records", items: [
           { id: "activity-logs", icon: History, label: "Activity Logs", revisions: true },
         ] },
-        { title: "Account", items: [notifications, profile] },
+        { title: "Account", items: [profile] },
       ];
       break;
 
@@ -175,6 +177,7 @@ export function menuSections(
         : [
             { title: "Overview", items: [
               { id: "dashboard", icon: LayoutDashboard, label: "Dashboard" },
+              notifications,
             ] },
             { title: "My Household", items: [
               { id: "households", icon: Users, label: "My Household", revisions: true },
@@ -192,7 +195,7 @@ export function menuSections(
               { id: "payment-history", icon: Receipt, label: "Payment History", revisions: true },
               { id: "activity-logs", icon: History, label: "Activity History", revisions: true },
             ] },
-            { title: "Account", items: [notifications, profile] },
+            { title: "Account", items: [profile] },
           ];
   }
 

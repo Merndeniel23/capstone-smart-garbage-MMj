@@ -341,6 +341,14 @@ function canViewRequest(
     );
   }
 
+  // The Barangay Captain can read every endorsement in the barangay.
+  if (role === "admin") {
+    return (
+      viewer.barangay_id !== null &&
+      Number(request.barangay_id) ===
+        Number(viewer.barangay_id)
+    );
+  }
 
   return false;
 }
@@ -508,6 +516,20 @@ router.get("/", async (req: AuthRequest, res) => {
 
       whereClause = "WHERE er.purok_id = ?";
       parameters = [purokId];
+    } else if (role === "admin") {
+      // Read-only: the Purok Leader remains the one who releases endorsements.
+      const barangayId = positiveInteger(viewer.barangay_id);
+
+      if (!barangayId) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Your Barangay Captain account has no assigned barangay.",
+        });
+      }
+
+      whereClause = "WHERE er.barangay_id = ?";
+      parameters = [barangayId];
     } else {
       return res.status(403).json({
         success: false,

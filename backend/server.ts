@@ -572,7 +572,8 @@ async function loadRoleScopedChatContext(user: AuthUser) {
   if (!viewer) return "No current account context is available.";
 
   const role = viewer.role;
-  if (role === "collector" && !await phase1Ready()) return "Phase 1 operational context is disabled or unavailable. No collection or complaint data is available.";
+  // Refresh readiness so the Collector's scope reflects current purok assignments.
+  if (role === "collector") await phase1Ready();
   const context: Record<string, unknown> = {
     account: {
       role,

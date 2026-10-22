@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { db } from "../config/db.js";
 import { activeRecord, audit, DomainError, revisionsEnabled } from "../services/sgms.js";
 import type { PoolConnection } from "mysql2/promise";
-import { collectorHasPurok, collectorPurokScope, requireCollectionSetup } from "../services/collectorAssignments.js";
+import { collectorHasPurok, collectorPurokScope, refreshCollectorScope } from "../services/collectorAssignments.js";
 import {
   deleteStoredProof,
   imageExtensionForDataUrl,
@@ -359,7 +359,7 @@ router.get(
       const parameters: number[] = [];
 
       if (isCollector(role)) {
-        await requireCollectionSetup();
+        await refreshCollectorScope();
         const assignment = collectorPurokScope(viewer, "c.purok_id");
         whereClause = `WHERE c.assigned_collector_id = ? AND p.barangay_id = ? AND ${assignment.sql}`;
         parameters.push(viewer.id, Number(viewer.barangay_id), ...assignment.values);
