@@ -691,12 +691,9 @@ function AppContent() {
   <PaymentPortal role={userRole as any} />
 )}
 
-              {currentScreen === "endorsements" && userRole === "admin" && <SgmsRecords view="endorsement-records" />}
-              {(userRole === "household" ||
-                userRole === "leader") &&
-                currentScreen === "endorsements" && (
-                  <EndorsementManager role={userRole as any} />
-                )}
+              {currentScreen === "endorsements" && (
+                <EndorsementManager role={userRole as any} />
+              )}
 
               {currentScreen === "notifications" && (
                 <NotificationsPanel

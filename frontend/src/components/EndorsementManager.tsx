@@ -321,7 +321,6 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
   const loadEndorsements = useCallback(
     async (quiet = false) => {
-      if (role === 'admin') { setRecordsLoading(false); setProfileLoading(false); return; }
       if (!quiet) {
         setRecordsLoading(true);
       }
@@ -675,15 +674,6 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
     'Awaiting Purok Leader';
   const certificateApprovedByCaptain = Boolean(activeCertificate?.approvedBy);
 
-   if (role === 'admin') {
-     return (
-       <section className="rounded-2xl border border-slate-200 bg-white p-6 text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
-         <h2 className="text-lg font-bold">Endorsement approvals are handled by Purok Leaders</h2>
-         <p className="mt-2 text-sm text-slate-500 dark:text-slate-300">Residents submit requests directly to their assigned Purok Leader for final review. No Barangay Captain action is required.</p>
-       </section>
-     );
-   }
-
   return portalOverlays(
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500 pb-20 md:pb-0">
       <style>{`
@@ -797,7 +787,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
           <p className="text-slate-500 text-sm">
             {role === 'household' ? 'Request a service endorsement for a document, permit, or assistance' :
              role === 'leader' ? 'Make the final approval or rejection decision for residents of your purok' :
-             'Endorsements are managed by Purok Leaders.'}
+             'View every endorsement request in your barangay. Purok Leaders release or reject them.'}
           </p>
         </div>
         
@@ -965,8 +955,12 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                   <BadgeCheck className="w-5 h-5 text-indigo-500" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-black text-slate-800">Received Request Processor</h2>
-                  <p className="text-[11px] text-slate-400 font-medium">Review resident details and make the final endorsement decision</p>
+                  <h2 className="text-lg font-black text-slate-800">{role === 'admin' ? 'Request Details' : 'Received Request Processor'}</h2>
+                  <p className="text-[11px] text-slate-400 font-medium">
+                    {role === 'admin'
+                      ? "Review resident details and the Purok Leader's decision"
+                      : 'Review resident details and make the final endorsement decision'}
+                  </p>
                 </div>
               </div>
 
@@ -1009,7 +1003,17 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
                    {/* Operational workflow form based on status & role */}
                   <div className="space-y-4">
-                    
+
+                    {role === 'admin' && (
+                      <p className="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-xs font-medium leading-relaxed text-slate-600">
+                        {['pending_leader_review', 'leader_endorsed'].includes(selectedRequest.rawStatus)
+                          ? 'Waiting for the Purok Leader to release or reject this request. The Barangay Captain has view-only access.'
+                          : selectedRequest.rawStatus === 'approved'
+                            ? `Released by Purok Leader ${selectedRequest.approvedBy || selectedRequest.endorsedBy || ''}. Use View / Print or Export PDF in the list.`
+                            : 'This request is closed. The Barangay Captain has view-only access.'}
+                      </p>
+                    )}
+
                     {role === 'leader' && ['pending_leader_review', 'leader_endorsed'].includes(selectedRequest.rawStatus) && (
                       <div className="space-y-3 bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100">
                         <p className="text-xs text-emerald-800 font-medium leading-relaxed">
@@ -1368,7 +1372,11 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
               <div className="bg-slate-50 border-2 border-dashed border-slate-200 p-12 text-center rounded-[2.5rem]">
                 <FileText className="w-12 h-12 text-slate-300 mx-auto mb-2" />
                 <p className="font-extrabold text-slate-500 text-sm">No Barangay Service Requests</p>
-                <p className="text-slate-400 text-xs mt-1">Submit your first barangay service request above.</p>
+                <p className="text-slate-400 text-xs mt-1">
+                  {role === 'household'
+                    ? 'Submit your first barangay service request above.'
+                    : 'No resident requests match these filters.'}
+                </p>
               </div>
             )}
 
