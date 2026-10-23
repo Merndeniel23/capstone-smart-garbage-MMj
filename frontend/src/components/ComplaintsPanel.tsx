@@ -303,6 +303,8 @@ export default function ComplaintsPanel({
     useState("");
   const complaintPhotoInputRef =
     useRef<HTMLInputElement>(null);
+  const resolutionInputRef =
+    useRef<HTMLInputElement>(null);
   const complaintCameraInputRef =
     useRef<HTMLInputElement>(null);
   const complaintVideoRef = useRef<HTMLVideoElement>(null);
@@ -1553,6 +1555,25 @@ export default function ComplaintsPanel({
                   }
                 </h2>
 
+                {/* Keep the Captain's verification visible above long evidence photos. */}
+                {canResolve && selectedComplaint.status === "completed" && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                    <p className="text-sm font-bold text-emerald-800">
+                      The Collector completed this task. Verify the work and resolve the complaint.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        resolutionInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+                        resolutionInputRef.current?.focus({ preventScroll: true });
+                      }}
+                      className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black uppercase text-white"
+                    >
+                      Verify & Resolve
+                    </button>
+                  </div>
+                )}
+
                 {canManage && <p className="flex items-center gap-2 text-sm font-semibold text-slate-700"><User className="h-4 w-4" />Resident: {selectedComplaint.reporter_name}</p>}
 
                 {selectedComplaint.subject_name && (
@@ -1604,6 +1625,13 @@ export default function ComplaintsPanel({
               </section>
 
               {isMunicipal && <ComplaintProgress complaint={selectedComplaint} />}
+
+              {/* Only the Barangay Captain verifies; other roles see who acts next. */}
+              {!canManage && selectedComplaint.status === "completed" && (
+                <p className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
+                  The Collector marked this complaint completed. It is waiting for the Barangay Captain to verify the work and resolve it.
+                </p>
+              )}
 
               {canManage && (
                 <section className="space-y-4 rounded-[1.8rem] border border-slate-800 bg-slate-900 p-5 text-white">
@@ -1696,6 +1724,7 @@ export default function ComplaintsPanel({
                   <label className="block text-[9px] font-black uppercase text-slate-400">
                     Official Resolution Note (required)
                     <input
+                      ref={resolutionInputRef}
                       type="text"
                       value={
                         resolutionRemark
@@ -1722,7 +1751,7 @@ export default function ComplaintsPanel({
                     }
                     className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-xs font-black uppercase text-white disabled:opacity-50"
                   >
-                    Resolve Complaint
+                    Verify & Resolve
                   </button>
                   </>}
                 </section>
