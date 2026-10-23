@@ -53,3 +53,17 @@ ALTER TABLE complaints
   ADD COLUMN subject_role ENUM('purok_leader','collector') NULL,
   ADD KEY idx_complaint_subject (subject_user_id),
   ADD CONSTRAINT fk_complaint_subject FOREIGN KEY (subject_user_id) REFERENCES users(id) ON DELETE RESTRICT;
+
+-- 4. Complaints soft-deleted before this migration (complaint_archives) move
+--    into complaints.archived_at so they can be restored from Archives.
+CREATE TABLE IF NOT EXISTS complaint_archives (
+  complaint_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+  archived_by INT UNSIGNED NOT NULL,
+  archived_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+UPDATE complaints c
+  JOIN complaint_archives a ON a.complaint_id = c.id
+SET c.archived_at = a.archived_at,
+    c.archived_by = a.archived_by
+WHERE c.archived_at IS NULL;
+DELETE FROM complaint_archives;

@@ -439,6 +439,8 @@ for (const [path, entity] of [
 ]) archiveRouter.delete(path, requireAuth, (req: AuthRequest, res, next) => {
   // Retain residents' existing withdrawal/cancellation semantics.
   if (req.user!.role === "resident" && ["endorsements","complaints"].includes(entity)) return next("route");
+  // Before the migration, complaints use the complaint_archives soft delete.
+  if (!revisionsEnabled() && entity === "complaints") return next("route");
   enabled(req, res, () => archiveWriteLimit(req,res,()=>archiveAction(entity)(req, res, next)));
 });
 archiveRouter.patch("/payments/:id/archive", requireAuth, enabled, archiveWriteLimit, archiveAction("payments"));

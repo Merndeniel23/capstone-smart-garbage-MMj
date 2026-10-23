@@ -18,6 +18,25 @@ import {
 
 const router = Router();
 
+// Soft delete for complaints archived before the SGMS migration adds
+// complaints.archived_at. The migration moves these rows into that column.
+let complaintArchives: Promise<void> | null = null;
+function ensureComplaintArchives() {
+  if (!complaintArchives) {
+    complaintArchives = db.query(`
+      CREATE TABLE IF NOT EXISTS complaint_archives (
+        complaint_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+        archived_by INT UNSIGNED NOT NULL,
+        archived_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB
+    `).then(() => undefined, (error) => {
+      complaintArchives = null;
+      throw error;
+    });
+  }
+  return complaintArchives;
+}
+
 router.use("/:id", requireAuth, async (req: AuthRequest, res, next) => {
   if (!revisionsEnabled() || !/^\d+$/.test(String(req.params.id))) return next();
   try {
@@ -410,6 +429,8 @@ router.get(
       }
 
       if (revisionsEnabled()) whereClause += `${whereClause ? "" : "WHERE 1=1"}${activeRecord("c")}${["purok_leader","collector"].includes(role) ? " AND c.admin_only = 0" : ""}`;
+      await ensureComplaintArchives();
+      whereClause += `${whereClause ? " AND" : "WHERE"} NOT EXISTS (SELECT 1 FROM complaint_archives ca WHERE ca.complaint_id = c.id)`;
       const [complaintRows]: any =
         await db.query(
           `
@@ -1723,8 +1744,6 @@ router.delete(
     const connection =
       await db.getConnection();
 
-    let deletedPhotoReference: string | null = null;
-
     try {
       const viewer =
         getCurrentDatabaseUser(req);
@@ -1755,6 +1774,8 @@ router.delete(
         });
       }
 
+      // DDL commits implicitly, so prepare the archive table before the transaction.
+      await ensureComplaintArchives();
       await connection.beginTransaction();
 
       const [complaintRows]: any = await connection.query(
@@ -1795,68 +1816,24 @@ router.delete(
           return res.status(409).json({
             success: false,
             message:
-              "Only completed or resolved complaints can be deleted.",
+              "Only completed or resolved complaints can be archived.",
           });
         }
 
-        deletedPhotoReference =
-          typeof complaint.photo_url === "string"
-            ? complaint.photo_url
-            : null;
-
-        await connection.execute(
-          `
-          DELETE FROM notifications
-          WHERE related_entity_type = 'complaint'
-            AND related_entity_id = ?
-          `,
-          [complaintId],
+        // Soft delete only: the complaint, its messages, notifications and
+        // photo are preserved; it is just hidden from complaint lists.
+        const [archiveResult]: any = await connection.execute(
+          "INSERT IGNORE INTO complaint_archives (complaint_id, archived_by) VALUES (?, ?)",
+          [complaintId, viewer.id],
         );
-
-        await connection.execute(
-          `
-          DELETE FROM complaint_messages
-          WHERE complaint_id = ?
-          `,
-          [complaintId],
-        );
-
-        const [deleteResult]: any = await connection.execute(
-          `
-          DELETE FROM complaints
-          WHERE id = ?
-            AND status IN ('completed', 'resolved')
-          `,
-          [complaintId],
-        );
-
-        if (deleteResult.affectedRows !== 1) {
-          await connection.rollback();
-
-          return res.status(409).json({
-            success: false,
-            message:
-              "Complaint status changed before deletion. Only completed or resolved complaints can be deleted.",
-          });
-        }
 
         await connection.commit();
 
-        if (deletedPhotoReference) {
-          try {
-            await deleteStoredProof(deletedPhotoReference);
-          } catch (cleanupError) {
-            console.error(
-              "Deleted complaint photo cleanup error:",
-              cleanupError,
-            );
-          }
-        }
-
         return res.json({
           success: true,
-          message:
-            "Completed complaint deleted successfully.",
+          message: archiveResult.affectedRows
+            ? "Complaint archived. Its messages and history are preserved."
+            : "Complaint was already archived.",
         });
       }
 

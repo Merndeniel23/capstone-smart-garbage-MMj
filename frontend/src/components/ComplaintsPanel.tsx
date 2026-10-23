@@ -540,12 +540,10 @@ export default function ComplaintsPanel({
       role === "household" &&
       selectedComplaint.status === "pending",
   );
-  // Archiving is a soft delete stored by the SGMS migration (archived_at);
-  // never fall back to the legacy hard delete.
+  // Archiving is a soft delete; history stays preserved and restorable.
   const canDelete = Boolean(
     selectedComplaint &&
       canManage &&
-      directReview &&
       ["completed", "resolved"].includes(selectedComplaint.status),
   );
   const confirmationIsCurrent = Boolean(
@@ -1472,7 +1470,7 @@ export default function ComplaintsPanel({
                     </div>
                   </button>
 
-                  {canManage && directReview && ["completed", "resolved"].includes(item.status) && (
+                  {canManage && ["completed", "resolved"].includes(item.status) && (
                     <RecordActions label={`complaint ${item.id}`} disabled={saving} onArchive={() => {
                         setSelectedId(item.id);
                         setError("");
