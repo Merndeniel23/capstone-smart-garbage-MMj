@@ -125,24 +125,17 @@ export function menuSections(
           notifications,
         ] },
         { title: "My Purok", items: [
-          { id: "households", icon: Users, label: "Households", revisions: true },
-          { id: "members-list", icon: Users, label: "Purok Members" },
+          { id: "members-list", icon: Users, label: "Purok Members", count: counts.pendingPayments },
+          { id: "households", icon: Building2, label: "Households & Bins", revisions: true },
           { id: "garbage-bins", icon: MapPinned, label: "Garbage Bins" },
-          { id: "bin-inspections", icon: ClipboardCheck, label: "Bin Inspections" },
           { id: "schedule", icon: Calendar, label: "Collection Schedule" },
         ] },
-        { title: "Segregation", items: [
-          { id: "collection-records", icon: ClipboardList, label: "Collector Scans", revisions: true },
-          { id: "violations", icon: ShieldAlert, label: "Violations & Suspensions", revisions: true },
-        ] },
         { title: "Resident Services", items: [
-          { id: "payments", icon: CreditCard, label: "Verify Payments", count: counts.pendingPayments },
           { id: "endorsements", icon: Award, label: "Endorsements", count: counts.pendingEndorsements },
           { id: "complaints", icon: MessageSquare, label: "Complaints", count: counts.unreadComplaints },
         ] },
         { title: "Records", items: [
-          { id: "activity-logs", icon: History, label: "Activity Logs", revisions: true },
-          { id: "payment-history", icon: Receipt, label: "Payment History", revisions: true },
+          { id: "activity-logs", icon: History, label: "Activity Logs & History", revisions: true },
           { id: "archives", icon: ScrollText, label: "Archives", revisions: true },
         ] },
         { title: "Account", items: [profile] },
@@ -159,7 +152,6 @@ export function menuSections(
           { id: "collection-records", icon: QrCode, label: "Scan Bins (QR)", revisions: true },
           { id: "schedule", icon: Calendar, label: "Collection Schedule" },
           { id: "route-map", icon: Map, label: "Route Map" },
-          { id: "collector-pickup-log", icon: Truck, label: "Pickup Log" },
         ] },
         { title: "Monitoring", items: [
           { id: "complaints", icon: MessageSquare, label: "Assigned Complaints", count: counts.unreadComplaints },

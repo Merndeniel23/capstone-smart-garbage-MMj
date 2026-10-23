@@ -17,6 +17,7 @@ import {
 import { notifyAdminActionCountsChanged } from "../hooks/useAdminActionCounts";
 import Pagination, { DEFAULT_PAGE_SIZE } from "./Pagination";
 import RecordActions from "./RecordActions";
+import QrCollection from "./QrCollection";
 import {
   useEffect,
   useMemo,
@@ -1018,6 +1019,8 @@ export default function CollectorDashboard({
           {errorMessage}
         </div>
       )}
+
+      <QrCollection onSaved={loadData} />
 
       <section className="overflow-hidden rounded-3xl border border-emerald-100 bg-white shadow-sm">
         <div className="bg-emerald-800 p-6 text-white">

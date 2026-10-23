@@ -1109,6 +1109,34 @@ router.get("/purok-members", requireAuth, async (req: AuthRequest, res) => {
         u.purok_id,
         p.name AS purok_name,
         u.created_at,
+        (
+          SELECT hc.segregation
+          FROM household_collections hc
+          WHERE hc.resident_id = u.id
+          ORDER BY hc.collected_at DESC, hc.id DESC
+          LIMIT 1
+        ) AS latest_scan_segregation,
+        (
+          SELECT gb.bin_code
+          FROM household_collections hc
+          JOIN garbage_bins gb ON gb.id = hc.bin_id
+          WHERE hc.resident_id = u.id
+          ORDER BY hc.collected_at DESC, hc.id DESC
+          LIMIT 1
+        ) AS latest_scan_bin_code,
+        (
+          SELECT hc.collected_at
+          FROM household_collections hc
+          WHERE hc.resident_id = u.id
+          ORDER BY hc.collected_at DESC, hc.id DESC
+          LIMIT 1
+        ) AS latest_scan_at,
+        (
+          SELECT COUNT(*)
+          FROM payments pay
+          WHERE pay.resident_id = u.id
+            AND pay.status = 'pending_leader_verification'
+        ) AS pending_payments_count,
         ${memberContributionFields()}
       FROM users u
       LEFT JOIN barangays b ON b.id = u.barangay_id
@@ -1122,6 +1150,69 @@ router.get("/purok-members", requireAuth, async (req: AuthRequest, res) => {
       [purokId, barangayId, ARCHIVED_EMAIL_LIKE],
     );
 
+    const [purokCollectionsResult, purokPendingPaymentsResult] = await Promise.allSettled([
+      db.query(
+        `
+        SELECT
+          c.id,
+          c.resident_id,
+          u.full_name AS household_name,
+          gb.bin_code,
+          collector.full_name AS collector_name,
+          c.segregation,
+          c.collection_status,
+          c.collected_at,
+          (
+            SELECT COALESCE(v.action, vp.action)
+            FROM household_violations v
+            LEFT JOIN barangay_violation_policies vp ON vp.id = v.policy_id
+            WHERE v.collection_id = c.id
+            ORDER BY v.id LIMIT 1
+          ) AS decision_action
+        FROM household_collections c
+        JOIN users u ON u.id = c.resident_id
+        JOIN users collector ON collector.id = c.collector_id
+        JOIN garbage_bins gb ON gb.id = c.bin_id
+        WHERE c.purok_id = ? AND c.barangay_id = ?
+        ORDER BY c.collected_at DESC, c.id DESC
+        LIMIT 300
+        `,
+        [purokId, barangayId],
+      ),
+      db.query(
+        `
+        SELECT
+          pay.id,
+          pay.transaction_code,
+          pay.resident_id,
+          u.full_name AS resident_name,
+          pay.amount,
+          pay.category,
+          pay.billing_period,
+          pay.payment_method,
+          pay.status,
+          pay.created_at
+        FROM payments pay
+        JOIN users u ON u.id = pay.resident_id
+        WHERE pay.purok_id = ? AND pay.barangay_id = ?
+          AND pay.status = 'pending_leader_verification'
+        ORDER BY pay.created_at DESC, pay.id DESC
+        `,
+        [purokId, barangayId],
+      ),
+    ]);
+
+    const collections =
+      purokCollectionsResult.status === "fulfilled" &&
+      Array.isArray((purokCollectionsResult.value as any)[0])
+        ? (purokCollectionsResult.value as any)[0]
+        : [];
+    const pendingPayments =
+      purokPendingPaymentsResult.status === "fulfilled" &&
+      Array.isArray((purokPendingPaymentsResult.value as any)[0])
+        ? (purokPendingPaymentsResult.value as any)[0]
+        : [];
+
     const users = await Promise.all(
       rows.map(async (row: any) => ({
         ...row,
@@ -1133,6 +1224,8 @@ router.get("/purok-members", requireAuth, async (req: AuthRequest, res) => {
     return res.json({
       success: true,
       users,
+      collections,
+      pendingPayments,
     });
   } catch (error) {
     console.error("Load purok members error:", error);

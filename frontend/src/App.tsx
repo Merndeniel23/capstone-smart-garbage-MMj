@@ -96,7 +96,6 @@ const ROLE_SCREENS: Record<Role, Screen[]> = {
   collector: [
     "collection-records", "activity-logs",
     "collector-tasks",
-    "collector-pickup-log",
     "complaints",
     "route-map",
     "schedule",
@@ -652,10 +651,6 @@ function AppContent() {
                 <CollectorDashboard
                   setCurrentScreen={setCurrentScreen as any}
                 />
-              )}
-
-              {currentScreen === "collector-pickup-log" && (
-                <CollectorPickupLog />
               )}
 
               {currentScreen === "leader-dashboard" && (

@@ -30,8 +30,9 @@
 - `frontend/src/components/navigation.ts`, `Sidebar.tsx`, `BottomNav.tsx` — Role-aligned navigation hierarchy.
 - `frontend/src/components/Registration.tsx` — Login, Registration, and Google OAuth password setup before account creation.
 - `frontend/src/components/UserManagement.tsx` — Admin creates Puroks, Collectors, Purok Leaders, assigns Collectors to Puroks, and soft-deletes (archives) users.
-- `frontend/src/components/QrCollection.tsx` — Collector scans QR and immediately selects `Segregated` or `Not Segregated`.
-- `frontend/src/components/SgmsRecords.tsx` — Views for `households`, `puroks`, `collection-records`, `violations`, `activity-logs`, `archives`, `payment-history`, `endorsement-records`.
+- `frontend/src/components/QrCollection.tsx` — Collector QR Scanner Modal (`role="dialog"`) with camera/input scanner and Check (`✓ Segregated`) / X (`✗ Not Segregated`) buttons; also embedded on `CollectorDashboard.tsx`. Pickup Log (`collector-pickup-log`) is removed.
+- `frontend/src/components/MembersList.tsx` — Unified Purok Members view (`members-list`) showing each resident's Collector QR Scan status (`✓ Segregated` / `✗ Not Segregated`), inline Leader Violation Decision (`Warning` / `Fine` / `Suspend`), and inline Payment Verification (`Verify Paid` / `Reject`).
+- `frontend/src/components/SgmsRecords.tsx` — Unified `activity-logs` ("Activity Logs & History") with inline decision form for `✗ Not Segregated` QR scans and history tabs (`All Activity Logs`, `QR Scan Results`, `Payment History`, `Violations & Suspensions`).
 - `frontend/src/components/ComplaintsPanel.tsx` — Resident complaint form (including against Leader/Collector -> Admin).
 - `frontend/src/components/EndorsementManager.tsx` & `ApprovedEndorsementDocument.tsx` — Endorsement request, Leader release, auto-fill preview, and PDF download.
 - `frontend/src/components/PaymentPortal.tsx` & `OnlinePayments.tsx` — Leader payment verification & Resident Xendit payment.

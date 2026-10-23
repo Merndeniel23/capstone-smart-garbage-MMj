@@ -66,9 +66,9 @@ router.post("/households", endpoint(async(req,res)=>{
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||!/^(09\d{9}|\+639\d{9})$/.test(phone))throw new DomainError("Enter a valid email and Philippine mobile number.");
   const unusableHash=await bcrypt.hash(randomBytes(32).toString("hex"),12);
   await transaction(async connection=>{
-    const [puroks]=await connection.query<any[]>("SELECT id FROM puroks WHERE id = ? AND barangay_id = ? AND archived_at IS NULL FOR UPDATE",[purokId,req.user!.barangay_id]);
+    const [puroks]=await connection.query<any[]>("SELECT id FROM puroks WHERE id = ? AND barangay_id = ? AND archived_at IS NULL FOR UPDATE",[purokId,req.user!.barangay_id ?? null]);
     if(!puroks.length)throw new DomainError("Choose a purok within your assigned barangay.");
-    const [created]:any=await connection.execute("INSERT INTO users (full_name,email,phone,address,password_hash,role,barangay_id,purok_id,status,must_change_password) VALUES (?,?,?,?,?,'resident',?,?,'pending_activation',1)",[fullName,email,phone,address,unusableHash,req.user!.barangay_id,purokId]);
+    const [created]:any=await connection.execute("INSERT INTO users (full_name,email,phone,address,password_hash,role,barangay_id,purok_id,status,must_change_password) VALUES (?,?,?,?,?,'resident',?,?,'pending_activation',1)",[fullName,email,phone,address,unusableHash,req.user!.barangay_id ?? null,purokId]);
     await sendAccountActivation(connection,{id:Number(created.insertId),email,full_name:fullName});
     await audit(connection,req.user!,"household_registered","users",Number(created.insertId),{resident_id:Number(created.insertId),purok_id:purokId});
   });
@@ -205,8 +205,8 @@ router.post("/collections", endpoint(async (req, res) => {
     const followed = segregation === "segregated";
     await connection.execute(`INSERT INTO notifications (recipient_role, barangay_id, purok_id, notification_type, title, message, related_entity_type, related_entity_id, created_by)
       VALUES ('purok_leader', ?, ?, 'collection_result', ?, ?, 'household_collection', ?, ?)`, [bin.barangay_id, bin.purok_id,
-      followed ? "Segregation followed" : "Not segregated: decision needed",
-      `QR ${bin.bin_code} · ${bin.full_name} (HH-${bin.resident_id}): ${followed ? "followed segregation." : "did NOT follow segregation. Open Violations to give a warning, fine or suspension."}`, id, req.user!.id]);
+      followed ? "Segregation followed (✓ Segregated)" : "Not segregated (✗): decision needed",
+      `QR ${bin.bin_code} · ${bin.full_name} (HH-${bin.resident_id}): ${followed ? "followed segregation (✓ Segregated)." : "did NOT follow segregation (✗ Not Segregated). Open Purok Members or Activity Logs to issue a Warning, Fine, or Suspension."}`, id, req.user!.id]);
     await audit(connection, req.user!, followed ? "collection_segregated" : "collection_not_segregated", "household_collections", id, bin, {binCode: bin.bin_code, household: bin.full_name, segregation, collectionStatus, notCollectedReason: reason});
     return {id, duplicate: false, suspended: Boolean(suspended)};
   });
@@ -232,7 +232,7 @@ router.post("/policies", endpoint(async (req, res) => {
   const fine = action === "fine" ? Number(req.body.fineAmount) : null, days = action === "suspension" ? Number(req.body.suspensionDays) : null;
   if (req.body.confirmApproved !== true || !["warning","fine","suspension"].includes(action) || (fine !== null && (!Number.isFinite(fine) || fine <= 0 || fine > 99999999.99 || Math.abs(Math.round(fine * 100) - fine * 100) > 0.000001)) || (days !== null && (!Number.isSafeInteger(days) || days <= 0 || days > 3650 || !["collection","account"].includes(req.body.suspensionScope)))) throw new DomainError("Supply an approved policy reference and its exact approved amount, duration and scope.");
   await transaction(async connection => {
-    const [created]: any = await connection.execute("INSERT INTO barangay_violation_policies (barangay_id,title,official_reference,action,fine_amount,suspension_days,suspension_scope,approved_by) VALUES (?,?,?,?,?,?,?,?)", [req.user!.barangay_id,title,reference,action,fine,days,action === "suspension" ? req.body.suspensionScope : null,req.user!.id]);
+    const [created]: any = await connection.execute("INSERT INTO barangay_violation_policies (barangay_id,title,official_reference,action,fine_amount,suspension_days,suspension_scope,approved_by) VALUES (?,?,?,?,?,?,?,?)", [req.user!.barangay_id ?? null,title,reference,action,fine,days,action === "suspension" ? req.body.suspensionScope : null,req.user!.id]);
     await audit(connection, req.user!, "approved_policy_recorded", "barangay_violation_policies", Number(created.insertId));
   });
   res.status(201).json({message: "Approved policy recorded. Existing policy versions remain unchanged."});
@@ -317,7 +317,18 @@ router.get("/activity", endpoint(async (req, res) => {
   role(req, ["admin","super_admin","purok_leader","resident","collector"]);
   const area = scope(req, "a");
   const [rows] = await db.query<any[]>(`SELECT a.* FROM activity_logs a WHERE ${area.sql} ${["purok_leader","collector"].includes(req.user!.role) ? "AND a.entity_type <> 'complaints'" : ""} ${req.user!.role === "collector" ? "AND a.actor_id = ?" : ""} ORDER BY a.occurred_at DESC,a.id DESC LIMIT 500`, [...area.values,...(req.user!.role === "collector" ? [req.user!.id] : [])]);
-  res.json({activities: rows, timezone: "Asia/Manila"});
+  const colArea = scope(req, "c");
+  const [collections] = await db.query<any[]>(`SELECT c.*, u.full_name AS household_name, collector.full_name AS collector_name, gb.bin_code, p.name AS purok_name,
+      (SELECT COALESCE(v.action, vp.action) FROM household_violations v LEFT JOIN barangay_violation_policies vp ON vp.id = v.policy_id WHERE v.collection_id = c.id ORDER BY v.id LIMIT 1) AS decision_action
+    FROM household_collections c JOIN users u ON u.id = c.resident_id JOIN users collector ON collector.id = c.collector_id JOIN garbage_bins gb ON gb.id = c.bin_id JOIN puroks p ON p.id = c.purok_id
+    WHERE ${colArea.sql} ${req.user!.role === "collector" ? "AND c.collector_id = ?" : ""}
+    ORDER BY c.collected_at DESC, c.id DESC LIMIT 300`, [...colArea.values, ...(req.user!.role === "collector" ? [req.user!.id] : [])]);
+  res.json({
+    activities: rows,
+    collections,
+    undecidedCollections: collections.filter((row: any) => row.segregation === "not_segregated" && !row.decision_action),
+    timezone: "Asia/Manila",
+  });
 }));
 router.post("/endorsement-templates", endpoint(async (req, res) => {
   role(req, ["admin"]);
@@ -325,7 +336,7 @@ router.post("/endorsement-templates", endpoint(async (req, res) => {
   if (req.body.confirmApproved !== true || unsupportedEndorsementPlaceholders(body).length) throw new DomainError("Confirm that the template is officially approved and use supported placeholders.");
   if (hasEndorsementDraftMarkers(body)) throw new DomainError("Draft outlines are not official templates. Obtain barangay approval and replace all draft markers and missing official wording first.");
   await transaction(async connection => {
-    const [created]: any = await connection.execute("INSERT INTO barangay_endorsement_templates (barangay_id,official_reference,body,approved_by) VALUES (?,?,?,?)", [req.user!.barangay_id,reference,body,req.user!.id]);
+    const [created]: any = await connection.execute("INSERT INTO barangay_endorsement_templates (barangay_id,official_reference,body,approved_by) VALUES (?,?,?,?)", [req.user!.barangay_id ?? null,reference,body,req.user!.id]);
     await audit(connection, req.user!, "approved_template_recorded", "barangay_endorsement_templates", Number(created.insertId));
   });
   res.status(201).json({message: "Approved template version recorded."});

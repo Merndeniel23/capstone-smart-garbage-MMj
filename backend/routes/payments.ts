@@ -31,6 +31,7 @@ const ALLOWED_CATEGORIES = new Set([
   "weekly_fee",
   "special_heavy_trash",
   "hazardous_disposal",
+  "violation_fine",
 ]);
 
 
@@ -1697,7 +1698,7 @@ router.post(
 );
 
 router.patch(
-  "/:id/leader-review",
+  ["/:id/leader-review", "/:id/leader-verify"],
   requireAuth,
   async (
     req: AuthRequest,
@@ -1790,13 +1791,19 @@ router.patch(
         await connection.query<any[]>(
           `
           SELECT
-            id,
-            purok_id,
-            barangay_id,
-            resident_id,
-            status
-          FROM payments
-          WHERE id = ?
+            pay.id,
+            pay.transaction_code,
+            pay.amount,
+            pay.category,
+            pay.billing_period,
+            pay.purok_id,
+            pay.barangay_id,
+            pay.resident_id,
+            pay.status,
+            u.full_name AS resident_name
+          FROM payments pay
+          LEFT JOIN users u ON u.id = pay.resident_id
+          WHERE pay.id = ?
           FOR UPDATE
           `,
           [paymentId],
@@ -1872,7 +1879,14 @@ router.patch(
         });
       }
 
-      await audit(connection, req.user!, action === "approve" ? "payment_received_verified" : "manual_payment_rejected", "payments", paymentId, payment, {remarks});
+      await audit(connection, req.user!, action === "approve" ? "payment_received_verified" : "manual_payment_rejected", "payments", paymentId, payment, {
+        household: payment.resident_name || `Resident #${payment.resident_id}`,
+        transactionCode: payment.transaction_code,
+        amount: Number(payment.amount || 0),
+        category: payment.category,
+        billingPeriod: payment.billing_period,
+        remarks,
+      });
       await connection.execute(
         `INSERT INTO notifications
          (recipient_user_id, barangay_id, purok_id, title, message, notification_type, created_by)

@@ -7,18 +7,22 @@ import {
 } from "react";
 import {
   CalendarDays,
+  Check,
   CheckCircle2,
+  CreditCard,
   Filter,
   Loader2,
   Mail,
   MapPin,
   Phone,
+  QrCode,
   RefreshCw,
   Search,
   ShieldAlert,
   Trash2,
   User,
   UserRoundCheck,
+  X,
 } from "lucide-react";
 import {
   AnimatePresence,
@@ -84,6 +88,31 @@ type CurrentUser = {
   barangay_name: string | null;
   purok_id: number | null;
   purok_name: string | null;
+};
+
+type CollectorScanRecord = {
+  id: number;
+  resident_id: number;
+  household_name: string;
+  bin_code: string;
+  collector_name: string;
+  segregation: "segregated" | "not_segregated";
+  collection_status: string;
+  collected_at: string;
+  decision_action?: string | null;
+};
+
+type ResidentPaymentRecord = {
+  id: number;
+  transaction_code: string;
+  resident_id: number;
+  resident_name?: string;
+  amount: number | string;
+  category: string;
+  billing_period?: string | null;
+  payment_method: string;
+  status: string;
+  created_at: string;
 };
 
 function normalizePurok(
@@ -238,6 +267,17 @@ export default function MembersList() {
       text: string;
     } | null>(null);
 
+  const [collectorScans, setCollectorScans] = useState<CollectorScanRecord[]>([]);
+  const [residentPayments, setResidentPayments] = useState<ResidentPaymentRecord[]>([]);
+  const [verifyingPaymentId, setVerifyingPaymentId] = useState<number | null>(null);
+  const [paymentRemarks, setPaymentRemarks] = useState<Record<number, string>>({});
+  const [violationAction, setViolationAction] = useState<"warning" | "fine" | "suspension">("warning");
+  const [fineAmount, setFineAmount] = useState("");
+  const [suspensionDays, setSuspensionDays] = useState("7");
+  const [suspensionScope, setSuspensionScope] = useState<"collection" | "account">("collection");
+  const [violationReason, setViolationReason] = useState("");
+  const [submittingViolation, setSubmittingViolation] = useState(false);
+
   const canManageUsers =
     currentUser?.role === "admin" ||
     currentUser?.role === "super_admin";
@@ -291,11 +331,22 @@ export default function MembersList() {
             ? "/admin/purok-members"
             : "/admin/users";
 
-        const data = await apiRequest<{
-          success: boolean;
-          users?: DatabaseUser[];
-        }>(endpoint);
+        const [usersRes, scansRes, paymentsRes] = await Promise.allSettled([
+          apiRequest<{
+            success: boolean;
+            users?: DatabaseUser[];
+            collections?: CollectorScanRecord[];
+            pendingPayments?: ResidentPaymentRecord[];
+          }>(endpoint),
+          apiRequest<{ collections?: CollectorScanRecord[] }>("/sgms/collections"),
+          apiRequest<{ payments?: ResidentPaymentRecord[] }>("/payments"),
+        ]);
 
+        if (usersRes.status === "rejected") {
+          throw usersRes.reason;
+        }
+
+        const data = usersRes.value;
         const rows = Array.isArray(
           data.users,
         )
@@ -309,6 +360,20 @@ export default function MembersList() {
                 user.role === "resident",
             )
             .map(mapDatabaseUser),
+        );
+        setCollectorScans(
+          Array.isArray(data.collections) && data.collections.length > 0
+            ? data.collections
+            : scansRes.status === "fulfilled" && Array.isArray(scansRes.value.collections)
+              ? scansRes.value.collections
+              : [],
+        );
+        setResidentPayments(
+          Array.isArray(data.pendingPayments) && data.pendingPayments.length > 0
+            ? data.pendingPayments
+            : paymentsRes.status === "fulfilled" && Array.isArray(paymentsRes.value.payments)
+              ? paymentsRes.value.payments
+              : [],
         );
         return true;
       } catch (error) {
@@ -524,6 +589,127 @@ export default function MembersList() {
     setDeleteConfirmation(member);
   };
 
+  const scansByResident = useMemo(() => {
+    const map = new Map<number, CollectorScanRecord[]>();
+    for (const scan of collectorScans) {
+      const residentId = Number(scan.resident_id);
+      if (!map.has(residentId)) map.set(residentId, []);
+      map.get(residentId)!.push(scan);
+    }
+    return map;
+  }, [collectorScans]);
+
+  const pendingPaymentsByResident = useMemo(() => {
+    const map = new Map<number, ResidentPaymentRecord[]>();
+    for (const payment of residentPayments) {
+      if (
+        payment.status !== "pending_leader_verification" &&
+        payment.status !== "pending"
+      ) {
+        continue;
+      }
+      const residentId = Number(payment.resident_id);
+      if (!map.has(residentId)) map.set(residentId, []);
+      map.get(residentId)!.push(payment);
+    }
+    return map;
+  }, [residentPayments]);
+
+  const handleVerifyPayment = async (
+    payment: ResidentPaymentRecord,
+    action: "approve" | "reject",
+  ) => {
+    if (verifyingPaymentId !== null) return;
+    setVerifyingPaymentId(payment.id);
+    setActionMessage(null);
+    try {
+      const remarks =
+        (paymentRemarks[payment.id] || "").trim() ||
+        (action === "approve"
+          ? "Payment received and verified by Purok Leader."
+          : "Payment rejected by Purok Leader.");
+      const result = await apiRequest<{ message?: string }>(
+        `/payments/${payment.id}/leader-verify`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ action, remarks }),
+        },
+      );
+      notifyAdminActionCountsChanged();
+      await loadDatabaseMembers();
+      setActionMessage({
+        type: "success",
+        text:
+          result.message ||
+          (action === "approve"
+            ? "Payment verified and recorded in Activity Logs."
+            : "Payment rejected."),
+      });
+    } catch (error) {
+      setActionMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Unable to verify payment.",
+      });
+    } finally {
+      setVerifyingPaymentId(null);
+    }
+  };
+
+  const handleIssueViolation = async (
+    member: DirectoryMember,
+    undecidedCollectionId?: number,
+  ) => {
+    if (submittingViolation || !violationReason.trim()) return;
+    setSubmittingViolation(true);
+    setActionMessage(null);
+    try {
+      const payload: Record<string, unknown> = {
+        action: violationAction,
+        reason: violationReason.trim(),
+      };
+      if (undecidedCollectionId) {
+        payload.collectionId = undecidedCollectionId;
+      } else {
+        payload.residentId = member.id;
+      }
+      if (violationAction === "fine") {
+        payload.fineAmount = Number(fineAmount);
+      }
+      if (violationAction === "suspension") {
+        payload.suspensionDays = Number(suspensionDays);
+        payload.suspensionScope = suspensionScope;
+      }
+      const result = await apiRequest<{ message?: string }>("/sgms/violations", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      setViolationReason("");
+      setFineAmount("");
+      setViolationAction("warning");
+      notifyAdminActionCountsChanged();
+      await loadDatabaseMembers();
+      setActionMessage({
+        type: "success",
+        text:
+          result.message ||
+          "Violation decision recorded in Activity Logs.",
+      });
+    } catch (error) {
+      setActionMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Unable to record violation decision.",
+      });
+    } finally {
+      setSubmittingViolation(false);
+    }
+  };
+
   return (
     <div className="space-y-6 pb-20 md:pb-0 animate-in fade-in slide-in-from-right-4 duration-500">
       <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -537,7 +723,7 @@ export default function MembersList() {
           </h1>
 
           <p className="text-sm font-medium text-slate-500">
-            {currentUser?.role === "super_admin" ? "Resident and household records, contact details, and contributions. Manage system roles and account access in User Directory." : "View household accounts, contact details, and contribution status."}
+            {currentUser?.role === "super_admin" ? "Resident and household records, contact details, and contributions. Manage system roles and account access in User Directory." : "Unified view for Purok Members: Collector QR Scan Results (✓ Segregated / ✗ Not Segregated), Violation Decisions, and Payment Verification."}
           </p>
         </div>
 
@@ -716,6 +902,9 @@ export default function MembersList() {
               const isSelected =
                 selectedMemberId ===
                 member.id;
+              const memberScans = scansByResident.get(member.id) || [];
+              const latestScan = memberScans[0] || null;
+              const memberPendingPayments = pendingPaymentsByResident.get(member.id) || [];
 
               return (
                 <motion.button
@@ -756,6 +945,26 @@ export default function MembersList() {
                       <span className="text-[10px] font-black tracking-widest text-slate-400">
                         {member.householdId}
                       </span>
+
+                      {latestScan && (
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black ${
+                            latestScan.segregation === "segregated"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-rose-100 text-rose-800"
+                          }`}
+                        >
+                          {latestScan.segregation === "segregated"
+                            ? `✓ Segregated (${latestScan.bin_code})`
+                            : `✗ Not Segregated (${latestScan.bin_code})`}
+                        </span>
+                      )}
+
+                      {memberPendingPayments.length > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-800">
+                          Verify Payment ({memberPendingPayments.length})
+                        </span>
+                      )}
                     </div>
 
                     <p className="mt-1 truncate text-[11px] font-medium text-slate-500">
@@ -969,6 +1178,228 @@ export default function MembersList() {
                         ₱{selectedMember.previousMonthContribution.toFixed(2)} recorded
                       </p>
                     </div>
+                  </div>
+
+                  {/* Unified Collector QR Scan Result & Violation Decision */}
+                  <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-center gap-2">
+                      <QrCode className="h-4 w-4 text-emerald-700" />
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                        Collector QR Scan Status
+                      </h4>
+                    </div>
+                    {(() => {
+                      const scans = scansByResident.get(selectedMember.id) || [];
+                      const latest = scans[0] || null;
+                      const undecidedNotSegregated = scans.find(
+                        (s) => s.segregation === "not_segregated" && !s.decision_action,
+                      );
+                      return (
+                        <>
+                          {latest ? (
+                            <div
+                              className={`rounded-xl border p-3 ${
+                                latest.segregation === "segregated"
+                                  ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                                  : "border-rose-200 bg-rose-50 text-rose-900"
+                              }`}
+                            >
+                              <p className="text-xs font-black">
+                                {latest.segregation === "segregated"
+                                  ? "✓ Segregated"
+                                  : "✗ Not Segregated"}{" "}
+                                · QR {latest.bin_code}
+                              </p>
+                              <p className="mt-1 text-[11px] font-medium opacity-80">
+                                Scanned by {latest.collector_name} ·{" "}
+                                {new Date(latest.collected_at).toLocaleString("en-PH", {
+                                  timeZone: "Asia/Manila",
+                                })}
+                              </p>
+                              {latest.decision_action && (
+                                <p className="mt-1 text-[11px] font-bold">
+                                  Leader Decision: {latest.decision_action.toUpperCase()}
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-xs font-medium text-slate-500">
+                              No QR bin scans recorded yet for this household.
+                            </p>
+                          )}
+
+                          {(isPurokLeader || canManageUsers) && (
+                            <div className="space-y-2 border-t border-slate-200 pt-3">
+                              <p className="text-[11px] font-black text-slate-700">
+                                {undecidedNotSegregated
+                                  ? `Decide on ✗ Not Segregated Scan (QR ${undecidedNotSegregated.bin_code}):`
+                                  : "Issue Warning, Fine (Pay Violation), or Suspend:"}
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {([
+                                  ["warning", "Warning"],
+                                  ["fine", "Fine (Pay)"],
+                                  ["suspension", "Suspend"],
+                                ] as const).map(([val, label]) => (
+                                  <button
+                                    key={val}
+                                    type="button"
+                                    onClick={() => setViolationAction(val)}
+                                    className={`rounded-xl border px-3 py-1.5 text-[11px] font-black ${
+                                      violationAction === val
+                                        ? "border-emerald-700 bg-emerald-700 text-white"
+                                        : "border-slate-200 bg-white text-slate-700"
+                                    }`}
+                                  >
+                                    {label}
+                                  </button>
+                                ))}
+                              </div>
+                              {violationAction === "fine" && (
+                                <input
+                                  type="number"
+                                  min="0.01"
+                                  step="0.01"
+                                  value={fineAmount}
+                                  onChange={(e) => setFineAmount(e.target.value)}
+                                  placeholder="Fine amount in PHP"
+                                  className="w-full rounded-xl border border-slate-200 bg-white p-2.5 text-xs"
+                                />
+                              )}
+                              {violationAction === "suspension" && (
+                                <div className="grid grid-cols-2 gap-2">
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="3650"
+                                    value={suspensionDays}
+                                    onChange={(e) => setSuspensionDays(e.target.value)}
+                                    placeholder="Days"
+                                    className="w-full rounded-xl border border-slate-200 bg-white p-2.5 text-xs"
+                                  />
+                                  <select
+                                    value={suspensionScope}
+                                    onChange={(e) =>
+                                      setSuspensionScope(
+                                        e.target.value as "collection" | "account",
+                                      )
+                                    }
+                                    className="w-full rounded-xl border border-slate-200 bg-white p-2.5 text-xs"
+                                  >
+                                    <option value="collection">Suspend Collection</option>
+                                    <option value="account">Suspend Account</option>
+                                  </select>
+                                </div>
+                              )}
+                              <textarea
+                                rows={2}
+                                value={violationReason}
+                                onChange={(e) => setViolationReason(e.target.value)}
+                                placeholder="Reason for warning, fine, or suspension..."
+                                className="w-full rounded-xl border border-slate-200 bg-white p-2.5 text-xs"
+                              />
+                              <button
+                                type="button"
+                                disabled={
+                                  submittingViolation ||
+                                  !violationReason.trim() ||
+                                  (violationAction === "fine" && !(Number(fineAmount) > 0))
+                                }
+                                onClick={() =>
+                                  void handleIssueViolation(
+                                    selectedMember,
+                                    undecidedNotSegregated?.id,
+                                  )
+                                }
+                                className="w-full rounded-xl bg-emerald-700 px-3 py-2.5 text-xs font-black text-white transition hover:bg-emerald-800 disabled:opacity-50"
+                              >
+                                {submittingViolation ? "Saving..." : "Save Leader Decision"}
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Unified Verify Resident Payment Section */}
+                  <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-center gap-2">
+                      <CreditCard className="h-4 w-4 text-emerald-700" />
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                        Verify Resident Payment
+                      </h4>
+                    </div>
+                    {(() => {
+                      const pendingList =
+                        pendingPaymentsByResident.get(selectedMember.id) || [];
+                      if (pendingList.length === 0) {
+                        return (
+                          <p className="text-xs font-medium text-slate-500">
+                            No pending payments waiting for verification.
+                          </p>
+                        );
+                      }
+                      return (
+                        <div className="space-y-3">
+                          {pendingList.map((payment) => (
+                            <div
+                              key={payment.id}
+                              className="space-y-2 rounded-xl border border-amber-200 bg-white p-3"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-black text-slate-900">
+                                  ₱{Number(payment.amount).toFixed(2)} · {payment.category}
+                                </span>
+                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-800">
+                                  {payment.payment_method}
+                                </span>
+                              </div>
+                              <p className="text-[11px] font-medium text-slate-500">
+                                Ref: {payment.transaction_code} ·{" "}
+                                {payment.billing_period || "Current period"}
+                              </p>
+                              <input
+                                type="text"
+                                value={paymentRemarks[payment.id] || ""}
+                                onChange={(e) =>
+                                  setPaymentRemarks((prev) => ({
+                                    ...prev,
+                                    [payment.id]: e.target.value,
+                                  }))
+                                }
+                                placeholder="Verification remarks (optional)"
+                                className="w-full rounded-lg border border-slate-200 p-2 text-xs"
+                              />
+                              <div className="grid grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  disabled={verifyingPaymentId !== null}
+                                  onClick={() =>
+                                    void handleVerifyPayment(payment, "approve")
+                                  }
+                                  className="flex items-center justify-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-700 disabled:opacity-50"
+                                >
+                                  <Check className="h-3.5 w-3.5" />
+                                  Verify Paid
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={verifyingPaymentId !== null}
+                                  onClick={() =>
+                                    void handleVerifyPayment(payment, "reject")
+                                  }
+                                  className="flex items-center justify-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-xs font-black text-white hover:bg-rose-700 disabled:opacity-50"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                  Reject
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {selectedMember.canDelete && (
