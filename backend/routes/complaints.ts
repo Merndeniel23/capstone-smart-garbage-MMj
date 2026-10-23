@@ -18,18 +18,31 @@ import {
 
 const router = Router();
 
-// Soft delete for complaints archived before the SGMS migration adds
-// complaints.archived_at. The migration moves these rows into that column.
+// Soft deletes that work without the SGMS migration:
+// - complaint_archives: the Admin archives a complaint for everyone. The
+//   migration moves these rows into complaints.archived_at.
+// - complaint_user_archives: a Collector removes a finished complaint from
+//   their own list only; the Admin keeps the full record.
 let complaintArchives: Promise<void> | null = null;
 function ensureComplaintArchives() {
   if (!complaintArchives) {
-    complaintArchives = db.query(`
-      CREATE TABLE IF NOT EXISTS complaint_archives (
-        complaint_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
-        archived_by INT UNSIGNED NOT NULL,
-        archived_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-      ) ENGINE=InnoDB
-    `).then(() => undefined, (error) => {
+    complaintArchives = (async () => {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS complaint_archives (
+          complaint_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+          archived_by INT UNSIGNED NOT NULL,
+          archived_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB
+      `);
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS complaint_user_archives (
+          complaint_id BIGINT UNSIGNED NOT NULL,
+          user_id INT UNSIGNED NOT NULL,
+          archived_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (complaint_id, user_id)
+        ) ENGINE=InnoDB
+      `);
+    })().catch((error) => {
       complaintArchives = null;
       throw error;
     });
@@ -430,7 +443,9 @@ router.get(
 
       if (revisionsEnabled()) whereClause += `${whereClause ? "" : "WHERE 1=1"}${activeRecord("c")}${["purok_leader","collector"].includes(role) ? " AND c.admin_only = 0" : ""}`;
       await ensureComplaintArchives();
-      whereClause += `${whereClause ? " AND" : "WHERE"} NOT EXISTS (SELECT 1 FROM complaint_archives ca WHERE ca.complaint_id = c.id)`;
+      whereClause += `${whereClause ? " AND" : "WHERE"} NOT EXISTS (SELECT 1 FROM complaint_archives ca WHERE ca.complaint_id = c.id)
+        AND NOT EXISTS (SELECT 1 FROM complaint_user_archives cua WHERE cua.complaint_id = c.id AND cua.user_id = ?)`;
+      parameters.push(viewer.id);
       const [complaintRows]: any =
         await db.query(
           `
@@ -956,6 +971,72 @@ router.post(
       });
     } finally {
       connection.release();
+    }
+  },
+);
+
+// A Collector removes a finished complaint from their own list (per-user
+// soft delete). The complaint and its history stay with the Admin.
+router.post(
+  "/:id/archive-mine",
+  requireAuth,
+  async (req: AuthRequest, res) => {
+    try {
+      const viewer = getCurrentDatabaseUser(req);
+      const complaintId = parsePositiveInteger(req.params.id);
+
+      if (!viewer || !complaintId) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid complaint ID.",
+        });
+      }
+
+      if (!isCollector(normalizeRole(viewer.role))) {
+        return res.status(403).json({
+          success: false,
+          message: "Only Collectors can remove a complaint from their own list.",
+        });
+      }
+
+      await ensureComplaintArchives();
+
+      const [rows]: any = await db.query(
+        "SELECT id, assigned_collector_id, status FROM complaints WHERE id = ? LIMIT 1",
+        [complaintId],
+      );
+      const complaint = rows[0];
+
+      if (!complaint || Number(complaint.assigned_collector_id) !== viewer.id) {
+        return res.status(404).json({
+          success: false,
+          message: "Complaint was not found in your assigned list.",
+        });
+      }
+
+      if (!["completed", "resolved", "cancelled"].includes(String(complaint.status))) {
+        return res.status(409).json({
+          success: false,
+          message: "Finish the task first. Only completed or resolved complaints can be removed from your list.",
+        });
+      }
+
+      await db.execute(
+        "INSERT IGNORE INTO complaint_user_archives (complaint_id, user_id) VALUES (?, ?)",
+        [complaintId, viewer.id],
+      );
+
+      return res.json({
+        success: true,
+        message: "Complaint removed from your list. The Barangay Captain keeps the full record.",
+      });
+    } catch (error) {
+      console.error("Archive own complaint error:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Unable to remove the complaint from your list.",
+      });
     }
   },
 );

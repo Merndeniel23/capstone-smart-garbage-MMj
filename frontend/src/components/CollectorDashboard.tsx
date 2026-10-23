@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { notifyAdminActionCountsChanged } from "../hooks/useAdminActionCounts";
 import Pagination, { DEFAULT_PAGE_SIZE } from "./Pagination";
+import RecordActions from "./RecordActions";
 import {
   useEffect,
   useMemo,
@@ -932,6 +933,36 @@ export default function CollectorDashboard({
       }
     };
 
+  // Soft delete from this Collector's list only; the Admin keeps the record.
+  const archiveOwnComplaint =
+    async (complaint: AssignedComplaint) => {
+      setUpdatingComplaintId(complaint.id);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      try {
+        const result = await apiRequest(
+          `/api/complaints/${complaint.id}/archive-mine`,
+          { method: "POST", body: "{}" },
+        );
+
+        setSuccessMessage(
+          result.message ||
+            "Complaint removed from your list.",
+        );
+
+        await loadData();
+      } catch (error) {
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "Failed to remove the complaint from your list.",
+        );
+      } finally {
+        setUpdatingComplaintId(null);
+      }
+    };
+
   return (
     <div className="space-y-7">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1684,6 +1715,19 @@ export default function CollectorDashboard({
                     >
                       Open Details
                     </button>
+
+                    {complaint.status ===
+                      "completed" && (
+                      <RecordActions
+                        label={`complaint ${complaint.id}`}
+                        disabled={busy}
+                        onArchive={() =>
+                          void archiveOwnComplaint(
+                            complaint,
+                          )
+                        }
+                      />
+                    )}
                   </div>
                 </article>
               );

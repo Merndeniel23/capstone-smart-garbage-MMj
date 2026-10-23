@@ -1547,6 +1547,17 @@ export default function ComplaintsPanel({
                 {canDelete && (
                   <RecordActions label={`complaint ${selectedComplaint.id}`} disabled={saving} onArchive={()=>openConfirmation("delete")} />
                 )}
+                {/* Collector soft delete: hides the finished complaint from their own list only. */}
+                {role === "collector" && ["completed", "resolved"].includes(selectedComplaint.status) && (
+                  <RecordActions label={`complaint ${selectedComplaint.id}`} disabled={saving} onArchive={() => {
+                    setSaving(true);
+                    setError("");
+                    void apiRequest(`/complaints/${selectedComplaint.id}/archive-mine`, { method: "POST", body: "{}" })
+                      .then((data) => { setSuccess(data.message); setSelectedId(null); return loadData(); })
+                      .catch((error) => setError(error instanceof Error ? error.message : "Unable to remove the complaint from your list."))
+                      .finally(() => setSaving(false));
+                  }} />
+                )}
               </div>
 
               <section className="space-y-3">
