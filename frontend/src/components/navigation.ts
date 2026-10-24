@@ -46,14 +46,14 @@ export interface MenuSection {
 
 /** Reads whether the four-role workflow tables are enabled on the server. */
 export function useSgmsFlags() {
-  const [revisions, setRevisions] = useState(false);
+  const [revisions, setRevisions] = useState(true);
 
   useEffect(() => {
     let active = true;
     void apiFetch("/api/sgms/config")
       .then((res) => res.json())
       .then((data) => {
-        if (active) setRevisions(data.enabled === true);
+        if (active && data.enabled === false) setRevisions(false);
       })
       .catch(() => undefined);
     return () => {

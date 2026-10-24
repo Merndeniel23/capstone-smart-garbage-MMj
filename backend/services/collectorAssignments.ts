@@ -4,7 +4,7 @@ import { db } from "../config/db.js";
 import { activeRecord, DomainError, revisionsEnabled } from "./sgms.js";
 import { inspectPhase1Schema } from "./phase1Schema.js";
 
-export const phase1Configured = () => revisionsEnabled() && process.env.SGMS_PHASE1_ENABLED === "true";
+export const phase1Configured = () => revisionsEnabled() && process.env.SGMS_PHASE1_ENABLED !== "false";
 let dependenciesReady = false, checkedAt = 0;
 let checking: Promise<boolean> | null = null;
 export const phase1Enabled = () => phase1Configured() && dependenciesReady;

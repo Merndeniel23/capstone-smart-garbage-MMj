@@ -2,7 +2,7 @@ import type { PoolConnection } from "mysql2/promise";
 import type { AuthUser } from "../middleware/auth.js";
 import { db } from "../config/db.js";
 
-export const revisionsEnabled = () => process.env.SGMS_REVISIONS_ENABLED === "true";
+export const revisionsEnabled = () => process.env.SGMS_REVISIONS_ENABLED !== "false";
 export const activeRecord = (alias: string) => revisionsEnabled() ? ` AND ${alias}.archived_at IS NULL` : "";
 export class DomainError extends Error {
   constructor(message: string, public status = 400) { super(message); }

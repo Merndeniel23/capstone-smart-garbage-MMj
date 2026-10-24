@@ -32,7 +32,14 @@ export default function HouseholdQrLabel({ label }: { label: HouseholdQrLabelDat
       <text x={qr.size / 2} y={qr.size + 3} textAnchor="middle" fontFamily="Arial, sans-serif" fontSize="2" fill="black" shapeRendering="auto">{label.binCode.slice(0, 35)}</text>
       <text x={qr.size / 2} y={qr.size + 6} textAnchor="middle" fontFamily="Arial, sans-serif" fontSize="2" fill="black" shapeRendering="auto">SGMS · HH-{label.householdId} · Bin #{label.binId}</text>
     </svg>
-    <div className="flex flex-wrap gap-2"><button type="button" onClick={download} className="rounded-xl border bg-white px-4 py-2 font-bold">Download QR label</button><button type="button" onClick={() => { if (svg.current) void printDocument(`SGMS household ${label.householdId} bin ${label.binId}`, svg.current).catch(error => setMessage(error instanceof Error ? error.message : "Unable to print.")); }} className="rounded-xl border bg-white px-4 py-2 font-bold">Print label</button></div>
+    <div className="rounded-lg border border-emerald-200 bg-white p-2.5 text-xs font-mono break-all text-slate-700">
+      {label.payload}
+    </div>
+    <div className="flex flex-wrap gap-2">
+      <button type="button" onClick={() => { void navigator.clipboard?.writeText(label.payload).then(() => setMessage("QR code payload copied! Paste it into the Collector QR Scanner.")); }} className="rounded-xl bg-emerald-700 px-4 py-2 font-bold text-white">Copy QR Code</button>
+      <button type="button" onClick={download} className="rounded-xl border bg-white px-4 py-2 font-bold">Download QR label</button>
+      <button type="button" onClick={() => { if (svg.current) void printDocument(`SGMS household ${label.householdId} bin ${label.binId}`, svg.current).catch(error => setMessage(error instanceof Error ? error.message : "Unable to print.")); }} className="rounded-xl border bg-white px-4 py-2 font-bold">Print label</button>
+    </div>
     <p className="text-xs">Generated locally. The label contains a random bin token, not household names, contact details or passwords.</p>
     <p role="status" className="text-sm">{message}</p>
   </section>;
