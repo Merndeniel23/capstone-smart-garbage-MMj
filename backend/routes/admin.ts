@@ -1109,34 +1109,6 @@ router.get("/purok-members", requireAuth, async (req: AuthRequest, res) => {
         u.purok_id,
         p.name AS purok_name,
         u.created_at,
-        (
-          SELECT hc.segregation
-          FROM household_collections hc
-          WHERE hc.resident_id = u.id
-          ORDER BY hc.collected_at DESC, hc.id DESC
-          LIMIT 1
-        ) AS latest_scan_segregation,
-        (
-          SELECT gb.bin_code
-          FROM household_collections hc
-          JOIN garbage_bins gb ON gb.id = hc.bin_id
-          WHERE hc.resident_id = u.id
-          ORDER BY hc.collected_at DESC, hc.id DESC
-          LIMIT 1
-        ) AS latest_scan_bin_code,
-        (
-          SELECT hc.collected_at
-          FROM household_collections hc
-          WHERE hc.resident_id = u.id
-          ORDER BY hc.collected_at DESC, hc.id DESC
-          LIMIT 1
-        ) AS latest_scan_at,
-        (
-          SELECT COUNT(*)
-          FROM payments pay
-          WHERE pay.resident_id = u.id
-            AND pay.status = 'pending_leader_verification'
-        ) AS pending_payments_count,
         ${memberContributionFields()}
       FROM users u
       LEFT JOIN barangays b ON b.id = u.barangay_id
@@ -1144,7 +1116,7 @@ router.get("/purok-members", requireAuth, async (req: AuthRequest, res) => {
       WHERE u.role = 'resident'
         AND u.purok_id = ?
         AND u.barangay_id = ?
-        AND u.email NOT LIKE ? ${activeRecord("u")}
+        AND u.email NOT LIKE ?
       ORDER BY u.full_name ASC
       `,
       [purokId, barangayId, ARCHIVED_EMAIL_LIKE],
