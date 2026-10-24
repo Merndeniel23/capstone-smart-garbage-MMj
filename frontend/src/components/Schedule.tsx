@@ -839,10 +839,10 @@ export default function Schedule() {
       )}
 
       <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
-        <span className="rounded-full bg-white px-3 py-1.5 shadow-sm ring-1 ring-slate-100">
+        <span className="rounded-full bg-emerald-700 px-3 py-1.5 text-white shadow-sm">
           {roleLabel(currentUser?.role || "resident")}
         </span>
-        <span className="sg-schedule-mode-chip rounded-full bg-emerald-50 px-3 py-1.5 text-emerald-700 ring-1 ring-emerald-100">
+        <span className="sg-schedule-mode-chip rounded-full bg-emerald-700 px-3 py-1.5 text-white shadow-sm">
           {canManage ? "Schedule manager" : "Read-only schedule"}
         </span>
       </div>

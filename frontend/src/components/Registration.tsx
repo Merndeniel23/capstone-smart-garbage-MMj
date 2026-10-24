@@ -850,15 +850,6 @@ const handleResetPasswordSubmit = async (
               </div>
 
              <>
-  {loginSubmitting && (
-    <div
-      role="progressbar"
-      aria-label="Signing in"
-      className="h-1.5 w-full overflow-hidden rounded-full bg-emerald-100"
-    >
-      <div className="h-full w-full animate-pulse rounded-full bg-emerald-600" />
-    </div>
-  )}
   <button
     type="submit"
     disabled={loginSubmitting}

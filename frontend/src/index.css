@@ -848,3 +848,30 @@ html.sg-dark .sg-app-shell .sg-form-section-title {
 }
 }
 
+
+/* Dark mode maps white/light surfaces to #111827 (see the utilities layer
+   above), which turned outlined green action buttons black. Give them the
+   same solid green as primary actions such as "Create Purok Leader".
+   Unlayered on purpose so it wins over the layered utility colours. */
+html.sg-dark .sg-app-shell button:is(
+  [class~="border-emerald-200"], [class~="border-emerald-300"], [class~="border-emerald-400"],
+  [class~="border-emerald-500"], [class~="border-emerald-600"], [class~="border-emerald-700"]
+) {
+  background-color: #047857;
+  border-color: #047857;
+  color: #ffffff;
+}
+
+html.sg-dark .sg-app-shell button:is(
+  [class~="border-emerald-200"], [class~="border-emerald-300"], [class~="border-emerald-400"],
+  [class~="border-emerald-500"], [class~="border-emerald-600"], [class~="border-emerald-700"]
+):not(:disabled):hover {
+  background-color: #065f46;
+}
+
+html.sg-dark .sg-app-shell button:is(
+  [class~="border-emerald-200"], [class~="border-emerald-300"], [class~="border-emerald-400"],
+  [class~="border-emerald-500"], [class~="border-emerald-600"], [class~="border-emerald-700"]
+) svg {
+  color: inherit;
+}

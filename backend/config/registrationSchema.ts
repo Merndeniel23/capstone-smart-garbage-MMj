@@ -113,6 +113,12 @@ export async function ensureRegistrationSchema(database: Pick<Pool, "query">) {
     ) ENGINE=InnoDB
   `);
 
+  // Resident can view their own bin QR later, so the token is kept alongside its hash.
+  await safeAlter(
+    database,
+    "ALTER TABLE household_bins ADD COLUMN qr_token CHAR(64) NULL",
+  );
+
   await database.query(`
     CREATE TABLE IF NOT EXISTS household_collections (
       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,

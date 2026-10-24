@@ -4,7 +4,7 @@ import { printDocument } from "../services/printDocument";
 
 export type HouseholdQrLabelData = { payload: string; householdId: number; binId: number; binCode: string };
 
-export default function HouseholdQrLabel({ label }: { label: HouseholdQrLabelData }) {
+export default function HouseholdQrLabel({ label, owner = false }: { label: HouseholdQrLabelData; owner?: boolean }) {
   const titleId = useId();
   const svg = useRef<SVGSVGElement>(null);
   const [message, setMessage] = useState("");
@@ -23,8 +23,8 @@ export default function HouseholdQrLabel({ label }: { label: HouseholdQrLabelDat
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   return <section className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4" aria-label="Registered household bin QR label">
-    <h3 className="font-bold">Save the newly registered QR label</h3>
-    <p className="text-sm">This label is shown once. Download or print it before leaving. Rotating the QR invalidates the previous label.</p>
+    <h3 className="font-bold">{owner ? `My household bin QR · ${label.binCode}` : "Save the newly registered QR label"}</h3>
+    <p className="text-sm">{owner ? "Show this QR to the Garbage Collector when they scan your bin. The Collector marks it Segregated or Not Segregated, and your Purok Leader handles any warning, fine or suspension." : "This label is also available to the resident in My Household. Rotating the QR invalidates the previous label."}</p>
     <svg ref={svg} xmlns="http://www.w3.org/2000/svg" viewBox={`0 0 ${qr.size} ${qr.size + 9}`} width="328" height="400" role="img" aria-labelledby={titleId} className="max-w-full bg-white" shapeRendering="crispEdges">
       <title id={titleId}>SGMS bin {label.binCode}, household HH-{label.householdId}</title>
       <rect width={qr.size} height={qr.size + 9} fill="white" />

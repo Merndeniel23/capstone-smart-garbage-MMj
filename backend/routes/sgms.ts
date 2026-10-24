@@ -82,6 +82,13 @@ router.get("/payment-history", endpoint(async(req,res)=>{
   res.json({payments});
 }));
 
+// The Resident sees their own bin QR; the Collector scans it from the resident's screen or label.
+router.get("/my-qr", endpoint(async (req, res) => {
+  role(req, ["resident"]);
+  const [rows] = await db.query<any[]>(`SELECT hb.bin_id, hb.qr_token, gb.bin_code, gb.location_name FROM household_bins hb JOIN garbage_bins gb ON gb.id = hb.bin_id
+    WHERE hb.resident_id = ? AND gb.archived_at IS NULL AND gb.is_active = 1`, [req.user!.id]);
+  res.json({qrs: rows.map(row => ({householdId: req.user!.id, binId: Number(row.bin_id), binCode: String(row.bin_code), locationName: row.location_name, qrPayload: row.qr_token ? `SGMS:1:${row.qr_token}` : null}))});
+}));
 router.get("/households", endpoint(async (req, res) => {
   role(req, ["admin","super_admin","purok_leader","resident"]);
   const area = scope(req, "u", "id");
@@ -138,7 +145,7 @@ router.post("/households/:id/bin", endpoint(async (req, res) => {
     const [links] = await connection.query<any[]>("SELECT resident_id FROM household_bins WHERE bin_id = ? FOR UPDATE", [binId]);
     if (links[0] && Number(links[0].resident_id) !== residentId) throw new DomainError("This bin is registered to another household.", 409);
     if (!links[0]) await assertPurokNotCollecting(connection, Number(rows[0].purok_id));
-    await connection.execute("INSERT INTO household_bins (bin_id, resident_id, qr_hash, registered_by) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE qr_hash = VALUES(qr_hash), registered_by = VALUES(registered_by)", [binId, residentId, digest(token), req.user!.id]);
+    await connection.execute("INSERT INTO household_bins (bin_id, resident_id, qr_hash, qr_token, registered_by) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE qr_hash = VALUES(qr_hash), qr_token = VALUES(qr_token), registered_by = VALUES(registered_by)", [binId, residentId, digest(token), token, req.user!.id]);
     await audit(connection, req.user!, "bin_qr_registered", "garbage_bins", binId, rows[0]);
     return { householdId: residentId, binId, binCode: String(rows[0].bin_code) };
   });

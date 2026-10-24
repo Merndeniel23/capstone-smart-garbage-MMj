@@ -328,9 +328,9 @@ export default function QrCollection({
                     setCamera(true);
                   }
                 }}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm font-black text-slate-800 hover:bg-slate-100"
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 p-3 text-sm font-black text-white hover:bg-emerald-800 disabled:opacity-50"
               >
-                <Camera className="h-4 w-4 text-emerald-700" />
+                <Camera className="h-4 w-4" />
                 {camera ? "Stop Camera Scanner" : "Scan QR with Camera"}
               </button>
 
