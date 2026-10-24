@@ -25,11 +25,15 @@ const safe=(work:(req:AuthRequest,res:any)=>Promise<any>):RequestHandler=>async(
   try{configured();await work(req as AuthRequest,res);}
   catch(error){res.status(error instanceof DomainError?error.status:503).json({message:error instanceof DomainError?error.message:"Payment provider temporarily unavailable. Check transaction history before trying again."});}
 };
-router.get("/",requireAuth,safe(async(req,res)=>{
-  if(req.user!.role!=="resident")throw new DomainError("Resident access required.",403);
-  const [attempts]=await db.query<any[]>("SELECT external_id,category,billing_period,amount,checkout_url,status,created_at,paid_at FROM online_payment_attempts WHERE resident_id = ? ORDER BY created_at DESC LIMIT 100",[req.user!.id]);
-  res.json({attempts});
-}));
+router.get("/",requireAuth,async(req:AuthRequest,res)=>{
+  try {
+    if(req.user!.role!=="resident")throw new DomainError("Resident access required.",403);
+    const [attempts]=await db.query<any[]>("SELECT external_id,category,billing_period,amount,checkout_url,status,created_at,paid_at FROM online_payment_attempts WHERE resident_id = ? ORDER BY created_at DESC LIMIT 100",[req.user!.id]).catch(()=>[[]]);
+    res.json({attempts, configured: Boolean(process.env.XENDIT_SECRET_KEY && process.env.XENDIT_CALLBACK_TOKEN)});
+  } catch (error) {
+    res.status(error instanceof DomainError ? error.status : 500).json({message: error instanceof DomainError ? error.message : "Unable to load online payments."});
+  }
+});
 router.post("/",requireAuth,safe(async(req,res)=>{
   if(req.user!.role!=="resident")throw new DomainError("Only residents may create a checkout.",403);
   const category=requiredText(req.body.category,40),period=requiredText(req.body.billingPeriod,80);

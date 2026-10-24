@@ -1129,14 +1129,14 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                   setShowPurokModal(true);
                 }}
                 disabled={loading || !assignedBarangay}
-                className="flex items-center justify-center gap-2 rounded-2xl border border-emerald-700 bg-emerald-50 px-4 py-3 text-xs font-black uppercase tracking-wide text-emerald-800 transition hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-600 dark:bg-emerald-950 dark:text-emerald-200"
+                className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-4 py-3 text-xs font-black uppercase tracking-wide text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Plus className="h-4 w-4" /> Manage Puroks
               </button>
               <button type="button" onClick={() => openStaffModal("purok_leader")} disabled={loading || !assignedBarangay} className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-4 py-3 text-xs font-black uppercase tracking-wide text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">
                 <Plus className="h-4 w-4" />Create Purok Leader
               </button>
-              <button type="button" onClick={() => openStaffModal("collector")} disabled={loading || !assignedBarangay} className="flex items-center justify-center gap-2 rounded-2xl border border-emerald-700 bg-white px-4 py-3 text-xs font-black uppercase tracking-wide text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50">
+              <button type="button" onClick={() => openStaffModal("collector")} disabled={loading || !assignedBarangay} className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-4 py-3 text-xs font-black uppercase tracking-wide text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">
                 <Plus className="h-4 w-4" />Create Collector
               </button>
             </>

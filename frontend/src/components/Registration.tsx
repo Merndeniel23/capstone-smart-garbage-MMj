@@ -29,6 +29,7 @@ export default function Registration() {
   // Login fields
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [loginSubmitting, setLoginSubmitting] = useState(false);
   
   // Registration fields
   const [regFullName, setRegFullName] = useState('');
@@ -277,6 +278,7 @@ const [resendCountdown, setResendCountdown] = useState(0);
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loginSubmitting) return;
 
     setError('');
     setSuccessMessage('');
@@ -285,6 +287,10 @@ const [resendCountdown, setResendCountdown] = useState(0);
       setError('Please fill in all credentials.');
       return;
     }
+
+    // Stays on after a successful login until the dashboard replaces this screen.
+    setLoginSubmitting(true);
+    let signedIn = false;
 
     try {
       const response = await apiFetch('/api/auth/login', {
@@ -314,6 +320,7 @@ const [resendCountdown, setResendCountdown] = useState(0);
       }
 
       setSuccessMessage('Login successful! Entering dashboard...');
+      signedIn = true;
 
       window.setTimeout(() => {
         completeLogin(data, rememberMe);
@@ -321,6 +328,8 @@ const [resendCountdown, setResendCountdown] = useState(0);
     } catch (error) {
       console.error('Login error:', error);
       setError('Cannot connect to the server.');
+    } finally {
+      if (!signedIn) setLoginSubmitting(false);
     }
   };
   const handleRegisterSubmit = async (e: React.FormEvent) => {
@@ -841,11 +850,22 @@ const handleResetPasswordSubmit = async (
               </div>
 
              <>
+  {loginSubmitting && (
+    <div
+      role="progressbar"
+      aria-label="Signing in"
+      className="h-1.5 w-full overflow-hidden rounded-full bg-emerald-100"
+    >
+      <div className="h-full w-full animate-pulse rounded-full bg-emerald-600" />
+    </div>
+  )}
   <button
     type="submit"
-    className="auth-primary-action mt-1 w-full cursor-pointer rounded-2xl border-none bg-emerald-700 py-3 text-[10px] font-extrabold uppercase tracking-widest text-white shadow-lg shadow-emerald-800/10 transition-all hover:bg-emerald-800 active:scale-[0.98]"
+    disabled={loginSubmitting}
+    className="auth-primary-action mt-1 flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl border-none bg-emerald-700 py-3 text-[10px] font-extrabold uppercase tracking-widest text-white shadow-lg shadow-emerald-800/10 transition-all hover:bg-emerald-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
   >
-    Authenticate & Enter Console
+    {loginSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+    {loginSubmitting ? 'Signing in...' : 'Authenticate & Enter Console'}
   </button>
 
   {googleSignInEnabled && (

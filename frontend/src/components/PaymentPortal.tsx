@@ -836,6 +836,29 @@ export default function PaymentPortal({
     setSubmitting(true);
 
     try {
+      if (method === "xendit" && !reference.trim() && !receiptProof) {
+        try {
+          const checkoutData = await apiRequest("/api/online-payments", {
+            method: "POST",
+            body: JSON.stringify({
+              category,
+              billingPeriod,
+              amount: enteredAmount,
+            }),
+          });
+          if (checkoutData?.checkoutUrl) {
+            const url = new URL(String(checkoutData.checkoutUrl));
+            if (url.protocol === "https:" && url.hostname.endsWith(".xendit.co")) {
+              window.location.assign(url.href);
+              return;
+            }
+          }
+        } catch {
+          // Fall back to recording Xendit payment directly in /api/payments
+          // when live Xendit invoice keys are not configured on the server.
+        }
+      }
+
       const data = await apiRequest(
         "/",
         {
@@ -2720,8 +2743,9 @@ export default function PaymentPortal({
 
             <fieldset className="sg-form-section">
               <legend>Payment method</legend>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {[
+                ["xendit", "Xendit (Online)"],
                 ["gcash", "GCash"],
                 ["maya", "Maya"],
                 [
@@ -2749,14 +2773,16 @@ export default function PaymentPortal({
             </div>
 
             <div className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
-              {method ===
-              "over_the_counter"
-                ? "Pay the Purok Leader in person. Enter the official receipt number and upload a photo of the signed receipt."
-                : "Pay only to the official Purok collection account shown by your local office. The uploaded screenshot is supporting evidence; the Leader must still verify the actual transaction."}
+              {method === "xendit"
+                ? "Pay online via Xendit. Click 'Pay with Xendit / Submit Payment' below to open Xendit checkout (or enter your Xendit reference / receipt if already paid)."
+                : method ===
+                  "over_the_counter"
+                  ? "Pay the Purok Leader in person. Enter the official receipt number and upload a photo of the signed receipt."
+                  : "Pay only to the official Purok collection account shown by your local office. The uploaded screenshot is supporting evidence; the Leader must still verify the actual transaction."}
             </div>
 
             <input
-              aria-label={method === "over_the_counter" ? "Official receipt number" : "Payment reference number"}
+              aria-label={method === "over_the_counter" ? "Official receipt number" : method === "xendit" ? "Xendit reference number (optional for checkout)" : "Payment reference number"}
               value={reference}
               onChange={(event) =>
                 setReference(
@@ -2764,21 +2790,25 @@ export default function PaymentPortal({
                 )
               }
               placeholder={
-                method ===
-                "over_the_counter"
-                  ? "Official receipt number"
-                  : "GCash / Maya reference number"
+                method === "xendit"
+                  ? "Xendit reference number (leave blank to launch Xendit)"
+                  : method ===
+                    "over_the_counter"
+                    ? "Official receipt number"
+                    : "GCash / Maya reference number"
               }
               className="mt-3 min-h-11 w-full rounded-xl border px-3 py-2 text-sm"
-              required
+              required={method !== "xendit"}
             />
 
             <UploadField
               label={
-                method ===
-                "over_the_counter"
-                  ? "Upload signed official receipt"
-                  : "Upload payment screenshot"
+                method === "xendit"
+                  ? "Upload Xendit receipt screenshot (optional)"
+                  : method ===
+                    "over_the_counter"
+                    ? "Upload signed official receipt"
+                    : "Upload payment screenshot"
               }
               ready={Boolean(receiptProof)}
               onFile={(file) =>
@@ -2794,7 +2824,7 @@ export default function PaymentPortal({
               type="submit"
               disabled={
                 submitting ||
-                !receiptProof
+                (method !== "xendit" && !receiptProof)
               }
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-4 text-xs font-black uppercase text-white disabled:opacity-50"
             >
@@ -2803,7 +2833,9 @@ export default function PaymentPortal({
               ) : (
                 <CreditCard className="h-4 w-4" />
               )}
-              Submit for Verification
+              {method === "xendit"
+                ? "Pay Online with Xendit / Submit"
+                : "Submit for Verification"}
             </button>
           </form>
         </Modal>

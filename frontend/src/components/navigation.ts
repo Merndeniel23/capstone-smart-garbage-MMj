@@ -178,7 +178,6 @@ export function menuSections(
               { id: "violations", icon: ShieldAlert, label: "Violations", revisions: true },
             ] },
             { title: "Services", items: [
-              { id: "online-payments", icon: CreditCard, label: "Pay Online (Xendit)", revisions: true },
               { id: "payments", icon: Wallet, label: "Payments" },
               { id: "endorsements", icon: Award, label: "Request Endorsement" },
               { id: "complaints", icon: MessageSquare, label: "Complaints", count: counts.unreadComplaints },

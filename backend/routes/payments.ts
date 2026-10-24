@@ -40,6 +40,7 @@ const ALLOWED_METHODS = new Set([
   "gcash",
   "maya",
   "over_the_counter",
+  "xendit",
 ]);
 
 function positiveInteger(value: unknown) {
@@ -1447,12 +1448,20 @@ router.post(
         80,
       );
 
-      const paymentReference =
+      const submittedReference =
         cleanText(
           req.body.paymentReference ??
             req.body.payment_reference,
           120,
         );
+      const paymentReference =
+        submittedReference ||
+        (paymentMethod === "xendit"
+          ? `XENDIT-${Date.now().toString(36).toUpperCase()}-${crypto
+              .randomBytes(2)
+              .toString("hex")
+              .toUpperCase()}`
+          : "");
 
       const receiptProof =
         validateImageDataUrl(
@@ -1521,7 +1530,7 @@ router.post(
         });
       }
 
-      if (!receiptProof) {
+      if (!receiptProof && paymentMethod !== "xendit") {
         return res.status(400).json({
           success: false,
           message:
@@ -1597,11 +1606,16 @@ router.post(
         }
       }
 
-      uploadedReceiptProof =
-        await storeProof(
-          receiptProof,
-          `payments/${viewer.id}/${transactionCode}/receipt.${imageExtensionForDataUrl(receiptProof)}`,
-        );
+      uploadedReceiptProof = receiptProof
+        ? await storeProof(
+            receiptProof,
+            `payments/${viewer.id}/${transactionCode}/receipt.${imageExtensionForDataUrl(receiptProof)}`,
+          )
+        : JSON.stringify({
+            provider: "xendit",
+            reference: paymentReference,
+            submittedAt: new Date().toISOString(),
+          });
 
       const [result] =
         await connection.execute<any>(
