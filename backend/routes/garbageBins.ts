@@ -210,7 +210,7 @@ router.get(
         });
       }
 
-      query += `${role === "super_admin" ? " WHERE 1=1" : ""}${activeRecord("gb")}${activeRecord("p")} ORDER BY gb.id DESC`;
+      query += `${role === "super_admin" ? " WHERE 1=1" : ""} AND gb.bin_code NOT LIKE 'HH-%'${activeRecord("gb")}${activeRecord("p")} ORDER BY gb.id DESC`;
 
       const [rows] =
         await db.query(

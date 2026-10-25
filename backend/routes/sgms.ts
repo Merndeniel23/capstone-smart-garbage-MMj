@@ -82,11 +82,51 @@ router.get("/payment-history", endpoint(async(req,res)=>{
   res.json({payments});
 }));
 
+async function provisionHouseholdQr(connection: any, residentId: number, actorId: number, _requestedBinId: number | null = null) {
+  const [users] = await connection.query("SELECT u.id AS resident_id, u.full_name, u.address, u.barangay_id, u.purok_id, p.name AS purok_name FROM users u JOIN puroks p ON p.id = u.purok_id AND p.barangay_id = u.barangay_id WHERE u.id = ? AND u.role = 'resident' AND u.status = 'active' AND u.archived_at IS NULL AND p.archived_at IS NULL FOR UPDATE", [residentId]);
+  const resident = users[0];
+  if (!resident) return null;
+  let binId: number | null = null;
+  let binCode = "";
+  let locationName = "";
+  const [existing] = await connection.query("SELECT hb.bin_id, gb.bin_code, gb.location_name FROM household_bins hb JOIN garbage_bins gb ON gb.id = hb.bin_id WHERE hb.resident_id = ? ORDER BY hb.created_at DESC LIMIT 1 FOR UPDATE", [residentId]);
+  if (existing[0]) {
+    binId = Number(existing[0].bin_id); binCode = String(existing[0].bin_code); locationName = String(existing[0].location_name || "");
+    await connection.execute("UPDATE garbage_bins SET purok_id = ?, is_active = 1, archived_at = NULL WHERE id = ?", [resident.purok_id, binId]);
+  }
+  if (!binId) {
+    const autoCode = `HH-${String(residentId).padStart(4, "0")}`;
+    const autoLocation = `${resident.full_name} (${resident.address || resident.purok_name})`.slice(0, 255);
+    const [byCode] = await connection.query("SELECT gb.id, gb.bin_code, gb.location_name, hb.resident_id FROM garbage_bins gb LEFT JOIN household_bins hb ON hb.bin_id = gb.id WHERE gb.bin_code = ? FOR UPDATE", [autoCode]);
+    if (byCode[0] && (!byCode[0].resident_id || Number(byCode[0].resident_id) === residentId)) {
+      binId = Number(byCode[0].id); binCode = String(byCode[0].bin_code); locationName = autoLocation;
+      await connection.execute("UPDATE garbage_bins SET purok_id = ?, location_name = ?, is_active = 1, archived_at = NULL WHERE id = ?", [resident.purok_id, autoLocation, binId]);
+    } else {
+      const [coords] = await connection.query("SELECT latitude, longitude FROM garbage_bins WHERE purok_id = ? AND archived_at IS NULL ORDER BY id ASC LIMIT 1", [resident.purok_id]);
+      const lat = coords[0]?.latitude ?? 10.2586;
+      const lng = coords[0]?.longitude ?? 123.9498;
+      await assertPurokNotCollecting(connection, Number(resident.purok_id));
+      const finalCode = byCode[0] ? `${autoCode}-${Date.now().toString(36).toUpperCase()}` : autoCode;
+      const [createdBin]: any = await connection.execute("INSERT INTO garbage_bins (purok_id, bin_code, location_name, latitude, longitude, current_status, condition_status, is_active) VALUES (?, ?, ?, ?, ?, 'empty', 'good', 1)", [resident.purok_id, finalCode, autoLocation, lat, lng]);
+      binId = Number(createdBin.insertId); binCode = finalCode; locationName = autoLocation;
+    }
+  }
+  const token = randomBytes(32).toString("hex");
+  await connection.execute("INSERT INTO household_bins (bin_id, resident_id, qr_hash, qr_token, registered_by) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE resident_id = VALUES(resident_id), qr_hash = VALUES(qr_hash), qr_token = VALUES(qr_token), registered_by = VALUES(registered_by)", [binId, residentId, digest(token), token, actorId]);
+  await audit(connection, null, "bin_qr_registered", "garbage_bins", binId, resident);
+  return { householdId: residentId, binId, binCode, locationName, qrPayload: `SGMS:1:${token}`, resident };
+}
+  return { householdId: residentId, binId, binCode, locationName, qrPayload: `SGMS:1:${token}`, resident };
+}
 // The Resident sees their own bin QR; the Collector scans it from the resident's screen or label.
 router.get("/my-qr", endpoint(async (req, res) => {
   role(req, ["resident"]);
-  const [rows] = await db.query<any[]>(`SELECT hb.bin_id, hb.qr_token, gb.bin_code, gb.location_name FROM household_bins hb JOIN garbage_bins gb ON gb.id = hb.bin_id
+  let [rows] = await db.query<any[]>(`SELECT hb.bin_id, hb.qr_token, gb.bin_code, gb.location_name FROM household_bins hb JOIN garbage_bins gb ON gb.id = hb.bin_id
     WHERE hb.resident_id = ? AND gb.archived_at IS NULL AND gb.is_active = 1`, [req.user!.id]);
+  if (!rows.length || !rows[0].qr_token) {
+    const created = await transaction(connection => provisionHouseholdQr(connection, req.user!.id, req.user!.id));
+    if (created) return res.json({qrs: [{householdId: created.householdId, binId: created.binId, binCode: created.binCode, locationName: created.locationName, qrPayload: created.qrPayload}]});
+  }
   res.json({qrs: rows.map(row => ({householdId: req.user!.id, binId: Number(row.bin_id), binCode: String(row.bin_code), locationName: row.location_name, qrPayload: row.qr_token ? `SGMS:1:${row.qr_token}` : null}))});
 }));
 router.get("/households", endpoint(async (req, res) => {
@@ -122,11 +162,10 @@ router.patch("/households/:id", endpoint(async (req, res) => {
     if (!rows[0] || !canAccess(req.user!, rows[0])) throw new DomainError("Household not found.", 404);
     const [puroks] = await connection.query<any[]>("SELECT id FROM puroks WHERE id = ? AND barangay_id = ? AND archived_at IS NULL FOR UPDATE", [purokId, req.user!.barangay_id]);
     if (!puroks.length) throw new DomainError("Choose an active purok in your barangay.");
-    const [links] = await connection.query<any[]>("SELECT hb.bin_id FROM household_bins hb JOIN garbage_bins gb ON gb.id = hb.bin_id WHERE hb.resident_id = ? AND gb.purok_id <> ?", [id, purokId]);
-    if (links.length) throw new DomainError("Reconcile the household's registered bins before changing its purok.", 409);
     if (Number(rows[0].purok_id) !== purokId) {
       await assertPurokNotCollecting(connection, Number(rows[0].purok_id));
       await assertPurokNotCollecting(connection, purokId);
+      await connection.execute("UPDATE garbage_bins gb JOIN household_bins hb ON hb.bin_id = gb.id SET gb.purok_id = ? WHERE hb.resident_id = ?", [purokId, id]);
     }
     await connection.execute("UPDATE users SET address = ?, phone = ?, purok_id = ? WHERE id = ?", [address, phone, purokId, id]);
     await audit(connection, req.user!, "household_updated", "users", id, {...rows[0], purok_id: purokId});
@@ -135,21 +174,16 @@ router.patch("/households/:id", endpoint(async (req, res) => {
 }));
 router.post("/households/:id/bin", endpoint(async (req, res) => {
   role(req, ["admin","purok_leader"]);
-  const residentId = positiveId(req.params.id), binId = positiveId(req.body.binId);
-  const token = randomBytes(32).toString("hex");
+  const residentId = positiveId(req.params.id);
+  const requestedBinId = req.body?.binId ? Number(req.body.binId) : null;
   const registered = await transaction(async connection => {
-    const [rows] = await connection.query<any[]>(`SELECT u.id AS resident_id, u.barangay_id, u.purok_id, gb.bin_code FROM users u JOIN garbage_bins gb ON gb.purok_id = u.purok_id JOIN puroks p ON p.id = gb.purok_id AND p.barangay_id = u.barangay_id
-      WHERE u.id = ? AND gb.id = ? AND u.role = 'resident' AND u.status = 'active' AND u.archived_at IS NULL AND gb.is_active = 1 AND gb.archived_at IS NULL AND p.archived_at IS NULL FOR UPDATE`, [residentId, binId]);
-    if (!rows[0] || !canAccess(req.user!, rows[0])) throw new DomainError("The active bin and household must belong to your assigned area and the same purok.", 404);
-    // Refuse silent reassignment of a bin with historical household evidence.
-    const [links] = await connection.query<any[]>("SELECT resident_id FROM household_bins WHERE bin_id = ? FOR UPDATE", [binId]);
-    if (links[0] && Number(links[0].resident_id) !== residentId) throw new DomainError("This bin is registered to another household.", 409);
-    if (!links[0]) await assertPurokNotCollecting(connection, Number(rows[0].purok_id));
-    await connection.execute("INSERT INTO household_bins (bin_id, resident_id, qr_hash, qr_token, registered_by) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE qr_hash = VALUES(qr_hash), qr_token = VALUES(qr_token), registered_by = VALUES(registered_by)", [binId, residentId, digest(token), token, req.user!.id]);
-    await audit(connection, req.user!, "bin_qr_registered", "garbage_bins", binId, rows[0]);
-    return { householdId: residentId, binId, binCode: String(rows[0].bin_code) };
+    const [rows] = await connection.query<any[]>("SELECT id AS resident_id, barangay_id, purok_id FROM users WHERE id = ? AND role = 'resident' AND status = 'active' AND archived_at IS NULL FOR UPDATE", [residentId]);
+    if (!rows[0] || !canAccess(req.user!, rows[0])) throw new DomainError("Active household not found in your assigned area.", 404);
+    const result = await provisionHouseholdQr(connection, residentId, req.user!.id, requestedBinId);
+    if (!result) throw new DomainError("Unable to register household bin QR.", 404);
+    return result;
   });
-  res.status(201).json({message: "QR payload registered. Any previous QR for this bin is invalid.", ...registered, qrPayload: `SGMS:1:${token}`});
+  res.status(201).json({message: `Household QR (${registered.binCode}) generated. Any previous QR for this household is invalid.`, householdId: registered.householdId, binId: registered.binId, binCode: registered.binCode, qrPayload: registered.qrPayload});
 }));
 
 router.post("/collections/identify", endpoint(async (req, res) => {
