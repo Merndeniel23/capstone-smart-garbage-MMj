@@ -887,18 +887,18 @@ const handleResetPasswordSubmit = async (
             </form>
           ) : (
             /* REGISTRATION SCREEN */
-            <form onSubmit={handleRegisterSubmit} className="auth-form auth-form--register">
+            <form noValidate onSubmit={handleRegisterSubmit} className="auth-form auth-form--register">
               {pendingGoogleRegistration ? (
                 <section className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
                   <h2 className="text-sm font-bold text-stone-800">Complete your Google registration</h2>
                   <p className="mt-2 text-xs font-semibold text-stone-700">{pendingGoogleRegistration.fullName}</p>
                   <p className="mt-1 break-all text-xs text-stone-500">{pendingGoogleRegistration.email}</p>
-                  <p className="mt-3 text-xs leading-relaxed text-stone-600">Create your password now. You can sign in with Google or with this email and password after verifying your email.</p>
+                  <p className="mt-3 text-xs leading-relaxed text-stone-600">Set a dedicated SGMS password (do not use your main Gmail password). Your Gmail password is never shared or stored.</p>
                   <fieldset className="mt-3 space-y-3" disabled={registrationSubmitting}>
                     <legend className="sr-only">Create your password</legend>
                     {[
-                      { label: 'Password', value: googlePassword, onChange: setGooglePassword, placeholder: '8+ chars, upper/lower/number' },
-                      { label: 'Confirm Password', value: googleConfirmPassword, onChange: setGoogleConfirmPassword, placeholder: 'Confirm password' },
+                      { label: 'SGMS Account Password', value: googlePassword, onChange: setGooglePassword, placeholder: '8+ chars, upper/lower/number' },
+                      { label: 'Confirm SGMS Password', value: googleConfirmPassword, onChange: setGoogleConfirmPassword, placeholder: 'Confirm SGMS password' },
                     ].map((field) => (
                       <label key={field.label} className="block text-[11px] font-bold uppercase tracking-widest text-stone-500">
                         {field.label}
@@ -906,7 +906,6 @@ const handleResetPasswordSubmit = async (
                           <Lock className="absolute left-4 h-4 w-4 text-stone-400" />
                           <input
                             type={showPassword ? 'text' : 'password'}
-                            required
                             minLength={8}
                             maxLength={72}
                             autoComplete="new-password"
@@ -1074,18 +1073,7 @@ const handleResetPasswordSubmit = async (
 
           {/* TOGGLE BOTTOM LINK */}
           {!registrationVerificationStep && <div className="auth-switch mt-6 border-t border-stone-100 pt-5 text-center">
-            {activeTab === 'login' ? (
-              <p className="text-[11px] text-stone-500 font-semibold">
-                Don't have an account?{' '}
-                <button
-                  type="button"
-                  onClick={() => switchAuthTab('register')}
-                  className="auth-accent text-emerald-700 font-bold hover:underline"
-                >
-                  Register here
-                </button>
-              </p>
-            ) : (
+            {activeTab !== 'login' && (
               <p className="text-[11px] text-stone-500 font-semibold">
                 Already have an account?{' '}
                 <button

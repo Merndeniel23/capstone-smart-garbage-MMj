@@ -773,6 +773,7 @@ router.post(
             u.full_name,
             u.email,
             u.email_verified_at,
+            u.password_hash,
             u.must_change_password,
             EXISTS (
               SELECT 1 FROM email_verifications ev WHERE ev.user_id = u.id
@@ -885,6 +886,7 @@ router.post(
                 u.full_name,
                 u.email,
                 u.email_verified_at,
+                u.password_hash,
                 u.must_change_password,
                 EXISTS (
                   SELECT 1 FROM email_verifications ev WHERE ev.user_id = u.id
@@ -926,6 +928,50 @@ router.post(
         });
       }
 
+      if (!String(user.password_hash || "").trim()) {
+        if (req.body.acceptedPolicies !== true) {
+          return res.status(409).json({
+            success: false,
+            requiresPolicyAcceptance: true,
+            requiresPassword: true,
+            email,
+            fullName: user.full_name || fullName,
+            message:
+              "Create an SGMS password and accept the policies to finish setting up your Google account.",
+          });
+        }
+        const newPassword = String(req.body.password || "");
+        if (!newPassword) {
+          return res.status(409).json({
+            success: false,
+            requiresPolicyAcceptance: true,
+            requiresPassword: true,
+            email,
+            fullName: user.full_name || fullName,
+            message:
+              "Create an SGMS password for your account before continuing with Google.",
+          });
+        }
+        if (
+          !isStrongPassword(newPassword) ||
+          newPassword !== String(req.body.confirmPassword || "")
+        ) {
+          return res.status(400).json({
+            success: false,
+            requiresPassword: true,
+            message:
+              "Passwords must match and be 8-72 characters with uppercase, lowercase, and a number.",
+          });
+        }
+        const hashed = await bcrypt.hash(newPassword, 12);
+        await db.query(
+          "UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?",
+          [hashed, user.id],
+        );
+        user.password_hash = hashed;
+        user.must_change_password = 0;
+      }
+
       if (requiresEmailVerification(user)) {
         return emailVerificationRequired(res, user.email);
       }
@@ -960,6 +1006,7 @@ router.post(
       const token =
         createToken(user);
       delete user.has_email_verification;
+      delete user.password_hash;
 
       return res.json({
         message: existingRows[0]
