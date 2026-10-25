@@ -514,7 +514,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
           ? `${error.message} Opening the print view instead.`
           : 'Unable to download the PDF. Opening the print view instead.',
       );
-      setApprovedDocument(request);
+      setActiveCertificate(request);
     } finally {
       setActionLoading(false);
     }
@@ -1094,8 +1094,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
               </div>
               <button 
                 onClick={() => {
-                  if (panelRevisionsEnabled) setApprovedDocument(approvedDocs[0]);
-                  else setActiveCertificate(approvedDocs[0]);
+                  setActiveCertificate(approvedDocs[0]);
                 }}
                 className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 active:scale-95 transition-all text-white font-extrabold text-xs uppercase tracking-wider rounded-xl cursor-pointer shadow-md shadow-emerald-500/15 flex items-center gap-1.5 self-start sm:self-auto shrink-0 font-sans"
               >
@@ -1318,8 +1317,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (item.rawStatus === 'approved' && panelRevisionsEnabled) setApprovedDocument(item);
-                          else setActiveCertificate(item);
+                          setActiveCertificate(item);
                         }}
                         className={`px-2.5 py-1 text-white rounded-lg text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer ${
                           item.rawStatus === 'approved' ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-indigo-500 hover:bg-indigo-600'

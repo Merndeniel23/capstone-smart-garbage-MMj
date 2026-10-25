@@ -775,7 +775,7 @@ const handleResetPasswordSubmit = async (
             <form onSubmit={handleLoginSubmit} className="auth-form auth-form--login">
               <div className="auth-field">
                 <label className="auth-label ml-1 block text-[11px] font-bold uppercase tracking-widest text-stone-500">
-                  Email or Household ID
+                 Enter Email
                 </label>
                 <div className="relative flex items-center">
                   <Mail className="absolute left-4 w-4 h-4 text-stone-400" />
