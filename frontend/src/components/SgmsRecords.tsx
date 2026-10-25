@@ -138,7 +138,7 @@ export default function SgmsRecords({view}: {view:RecordView}) {
     }catch(error){setMessage(error instanceof Error?error.message:"Unable to register bin QR.");}
     finally{setRotatingHouseholdId(null);}
   }
-    finally{setRotatingHouseholdId(null);}
+  async function mutate(path:string,body:any,method="POST") {
     if(busy)return;
     setBusy(true);setMessage("");
     if (/^\/sgms\/households\/\d+\/bin$/.test(path)) setQrLabel(null);

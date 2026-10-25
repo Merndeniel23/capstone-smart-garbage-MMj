@@ -116,8 +116,6 @@ async function provisionHouseholdQr(connection: any, residentId: number, actorId
   await audit(connection, null, "bin_qr_registered", "garbage_bins", binId, resident);
   return { householdId: residentId, binId, binCode, locationName, qrPayload: `SGMS:1:${token}`, resident };
 }
-  return { householdId: residentId, binId, binCode, locationName, qrPayload: `SGMS:1:${token}`, resident };
-}
 // The Resident sees their own bin QR; the Collector scans it from the resident's screen or label.
 router.get("/my-qr", endpoint(async (req, res) => {
   role(req, ["resident"]);
