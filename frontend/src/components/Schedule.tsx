@@ -185,6 +185,7 @@ export default function Schedule() {
   >([]);
   const [selectedSchedule, setSelectedSchedule] =
     useState<CollectionSchedule | null>(null);
+  const [dateModalOpen, setDateModalOpen] = useState(false);
   const [showFullSchedulePhoto, setShowFullSchedulePhoto] = useState(false);
   const [deleteTarget, setDeleteTarget] =
     useState<CollectionSchedule | null>(null);
@@ -1022,7 +1023,19 @@ export default function Schedule() {
               <CalendarDay
                 type="button"
                 key={`${visibleMonth.getFullYear()}-${visibleMonth.getMonth()}-${day}`}
-                onClick={() => setSelectedDate(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day))}
+                onClick={() => {
+                  const clickedDate = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day);
+                  setSelectedDate(clickedDate);
+                  const daySchedules = getPublishedSchedulesForWeekday(
+                    visibleSchedules,
+                    DAYS[(clickedDate.getDay() + 6) % 7],
+                  );
+                  if (daySchedules.length === 1) {
+                    setSelectedSchedule(daySchedules[0]);
+                  } else {
+                    setDateModalOpen(true);
+                  }
+                }}
                 aria-label={`${dayLabel}${scheduledCell ? `, ${scheduleCount} active collection ${scheduleCount === 1 ? "window" : "windows"}` : ", no active collection scheduled"}`}
                 aria-pressed={selectedCell}
                 aria-current={todayCell ? "date" : undefined}
@@ -1060,43 +1073,111 @@ export default function Schedule() {
         </p>
       </div>
 
-      {(
-        <section className="space-y-3" aria-label="Selected date collections">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-lg font-bold text-slate-900">{selectedDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</h2>
-            <div className="flex items-center gap-2">
-              <span role="status" className="text-xs text-slate-500">{selectedDateSchedules.length} published collection {selectedDateSchedules.length === 1 ? "window" : "windows"}</span>
+      {dateModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/75 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Selected date collection schedule"
+          onClick={() => setDateModalOpen(false)}
+        >
+          <div
+            className="relative max-h-[85dvh] w-full max-w-xl space-y-4 overflow-y-auto rounded-3xl border border-slate-100 bg-white p-6 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">
+                  Selected Date Schedule
+                </p>
+                <h2 className="mt-1 text-lg font-black text-slate-900">
+                  {selectedDate.toLocaleDateString("en-US", {
+                    weekday: "long",
+                    month: "long",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </h2>
+                <span role="status" className="text-xs text-slate-500">
+                  {selectedDateSchedules.length} published collection{" "}
+                  {selectedDateSchedules.length === 1 ? "window" : "windows"}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDateModalOpen(false)}
+                className="rounded-full bg-slate-100 p-2 text-slate-500 transition hover:bg-slate-200 hover:text-slate-800"
+                aria-label="Close date schedule popup"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {selectedDateSchedules.length ? (
+              <div className="space-y-3">
+                {selectedDateSchedules.map((schedule) => (
+                  <div
+                    key={schedule.id}
+                    onClick={() => {
+                      setDateModalOpen(false);
+                      setSelectedSchedule(schedule);
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setDateModalOpen(false);
+                        setSelectedSchedule(schedule);
+                      }
+                    }}
+                    className="cursor-pointer space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-4 transition hover:border-emerald-400 hover:bg-white"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-black text-slate-900">{schedule.barangay_name}</p>
+                      <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-700">
+                        {Number(schedule.is_active) === 1 ? "Active" : "Inactive"}
+                      </span>
+                    </div>
+                    <p className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                      <Clock className="h-4 w-4 text-emerald-600" />
+                      {formatTimeRange(schedule.start_time, schedule.end_time)}
+                    </p>
+                    <p className="text-xs leading-relaxed text-slate-600">
+                      {schedule.notes || "No route notes published."}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
+                No collection is scheduled for this date.
+              </div>
+            )}
+
+            <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3">
+              {canCreateSchedule && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDateModalOpen(false);
+                    openNewForm(selectedDate);
+                  }}
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white transition hover:bg-emerald-700"
+                >
+                  + Add Schedule for {selectedWeekday}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setDateModalOpen(false)}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
+              >
+                Close
+              </button>
             </div>
           </div>
-          <p className="text-xs text-slate-500">Dates follow the recurring weekly plan. Select a collection window to see its published details.</p>
-          {selectedDateSchedules.length ? (
-            <>
-              <div className="grid gap-3 md:grid-cols-2">
-              {paginatedSelectedDateSchedules.map((schedule) => (
-                <button key={schedule.id} type="button" onClick={() => setSelectedSchedule(schedule)}
-                  className="min-w-0 rounded-2xl border border-slate-200 bg-white p-3 text-left transition hover:border-emerald-400">
-                  <div className="flex items-start justify-between gap-2"><p className="font-bold text-slate-900">{schedule.barangay_name}</p><span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">{Number(schedule.is_active) === 1 ? "Active" : "Inactive"}</span></div>
-                  <p className="mt-2 flex items-center gap-2 text-sm text-slate-600"><Clock className="h-4 w-4" />{formatTimeRange(schedule.start_time, schedule.end_time)}</p>
-                  <p className="mt-2 truncate text-xs leading-relaxed text-slate-500">{schedule.notes || "No route notes published."}</p>
-                  <p className="mt-3 flex items-center gap-1 text-xs font-semibold text-emerald-600">View details <ChevronRight className="h-3 w-3" /></p>
-                </button>
-              ))}
-              </div>
-              <Pagination
-                compact
-                page={safeSelectedDatePage}
-                pageSize={selectedDatePageSize}
-                totalItems={selectedDateSchedules.length}
-                onPageChange={setSelectedDatePage}
-                onPageSizeChange={(pageSize) => {
-                  setSelectedDatePageSize(pageSize);
-                  setSelectedDatePage(1);
-                }}
-                itemLabel="collection windows"
-              />
-            </>
-          ) : <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-center text-sm text-slate-500">{error ? "Schedules could not be loaded. Refresh to try again." : "No collection is scheduled for this date in the selected barangay scope."}</div>}
-        </section>
+        </div>
       )}
       </>}
 
