@@ -996,7 +996,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                      </div>
                       {role === 'leader' && selectedRequest.outstandingPaymentCount > 0 && (
                         <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-[10px] font-black leading-relaxed text-rose-700">
-                          Approval blocked: this resident has {selectedRequest.outstandingPaymentCount} unresolved payment record{selectedRequest.outstandingPaymentCount === 1 ? '' : 's'}. Complete verification in the Payments panel first.
+                          Approval blocked: this resident has {selectedRequest.outstandingPaymentCount} unresolved payment record{selectedRequest.outstandingPaymentCount === 1 ? '' : 's'}. Complete verification in Purok Members first.
                         </div>
                       )}
                     </div>

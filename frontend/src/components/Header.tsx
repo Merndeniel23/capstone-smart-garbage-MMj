@@ -58,13 +58,6 @@ function formatPageTitle(
     return "Collection Tasks";
   }
 
-  if (
-    activeTab ===
-    "collector-pickup-log"
-  ) {
-    return "Pickup Log";
-  }
-
   return String(
     activeTab || "dashboard",
   )

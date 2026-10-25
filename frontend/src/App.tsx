@@ -10,7 +10,6 @@ import { AnimatePresence, motion } from "motion/react";
 import Registration from "./components/Registration";
 import Dashboard from "./components/Dashboard";
 import CollectorDashboard from "./components/CollectorDashboard";
-import CollectorPickupLog from "./components/CollectorPickupLog";
 import LeaderDashboard from "./components/LeaderDashboard";
 import AdminDashboard from "./components/AdminDashboard";
 import UserManagement from "./components/UserManagement";
@@ -54,7 +53,6 @@ export type Screen =
   | "registration"
   | "dashboard"
   | "collector-tasks"
-  | "collector-pickup-log"
   | "leader-dashboard"
   | "admin-dashboard"
   | "super-admin-dashboard"
@@ -110,7 +108,6 @@ const ROLE_SCREENS: Record<Role, Screen[]> = {
     "members-list",
     "complaints",
     "endorsements",
-    "payments",
     "schedule",
     "notifications",
     "profile",

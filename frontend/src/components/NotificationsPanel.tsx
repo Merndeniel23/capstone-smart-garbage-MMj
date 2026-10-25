@@ -31,6 +31,7 @@ type NotificationPage =
   | "collection-records"
   | "violations"
   | "payments"
+  | "members-list"
   | "endorsements"
   | "user-management"
   | "collector-tasks"
@@ -70,7 +71,7 @@ function linkedNotificationPage(
   const isLeader = normalizedRole === "purok_leader";
   const isResident = normalizedRole === "resident";
   const isCollector = normalizedRole === "collector";
-  if(entity==="household_collection"||type==="collection_result")return normalizedRole==="super_admin"?null:"collection-records";
+  if(entity==="household_collection"||type==="collection_result")return normalizedRole==="super_admin"?null:isLeader?"members-list":"collection-records";
   if(entity==="household_violation"||type==="violation")return isCollector?null:"violations";
 
   if (entity === "complaint" || ["new_complaint", "complaint_update", "complaint_message"].includes(type)) {
@@ -78,7 +79,8 @@ function linkedNotificationPage(
   }
   if (["payment", "payment_record", "remittance"].includes(entity) ||
       ["payment_submission", "payment_update", "payment_verification", "payment_reminder"].includes(type)) {
-    return isCollector ? null : "payments";
+    // The Purok Leader verifies payments in one place only: Purok Members.
+    return isCollector ? null : isLeader ? "members-list" : "payments";
   }
   if (["endorsement", "endorsement_request"].includes(entity) || type.startsWith("endorsement_")) {
     return (isResident || isLeader || normalizedRole === "admin")

@@ -1303,7 +1303,13 @@ export default function MembersList() {
                                 disabled={
                                   submittingViolation ||
                                   !violationReason.trim() ||
-                                  (violationAction === "fine" && !(Number(fineAmount) > 0))
+                                  (violationAction === "fine" && !(Number(fineAmount) > 0)) ||
+                                  (violationAction === "suspension" &&
+                                    !(
+                                      Number.isInteger(Number(suspensionDays)) &&
+                                      Number(suspensionDays) >= 1 &&
+                                      Number(suspensionDays) <= 3650
+                                    ))
                                 }
                                 onClick={() =>
                                   void handleIssueViolation(

@@ -45,11 +45,23 @@ function decisionText(row: any) {
 // Warning / Fine / Suspension decision used by the Purok Leader (and Admin).
 function DecisionForm({busy,onSubmit}:{busy:boolean;onSubmit:(values:Record<string,unknown>)=>Promise<boolean|undefined>}) {
   const [action,setAction]=useState("warning");
-  return <form className="space-y-2" onSubmit={event=>{event.preventDefault();const form=event.currentTarget;void onSubmit({...Object.fromEntries(new FormData(form)),action}).then(ok=>{if(ok){form.reset();setAction("warning");}});}}>
-    <div className="flex flex-wrap gap-2" role="group" aria-label="Decision">{[["warning","Warning"],["fine","Fine (Pay Violation)"],["suspension","Suspend"]].map(([value,label])=><button key={value} type="button" aria-pressed={action===value} onClick={()=>setAction(value)} className={`rounded-xl border px-4 py-2 text-sm font-bold ${action===value?"border-emerald-700 bg-emerald-700 text-white":"border-slate-200 bg-white text-slate-700"}`}>{label}</button>)}</div>
-    {action==="fine"&&<input required name="fineAmount" type="number" min="0.01" step="0.01" aria-label="Fine amount in pesos" placeholder="Fine amount (PHP)" className={inputClass}/>}
-    {action==="suspension"&&<div className="grid gap-2 sm:grid-cols-2"><input required name="suspensionDays" type="number" min="1" max="3650" step="1" aria-label="Suspension days" placeholder="Number of days" className={inputClass}/><select required name="suspensionScope" aria-label="What to suspend" className={inputClass}><option value="collection">Suspend garbage collection</option><option value="account">Suspend account access</option></select></div>}
-    <textarea required name="reason" maxLength={1000} aria-label="Reason" placeholder="Reason for this decision" className={inputClass}/>
+  const [error,setError]=useState("");
+  return <form noValidate className="space-y-2" onSubmit={event=>{
+    event.preventDefault();const form=event.currentTarget;
+    const values:Record<string,unknown>=Object.fromEntries(new FormData(form));
+    const reason=String(values.reason||"").trim(),fine=Number(values.fineAmount),days=Number(values.suspensionDays);
+    if(action==="fine"&&!(Number.isFinite(fine)&&fine>0)){setError("Enter a valid fine amount in pesos.");return;}
+    if(action==="suspension"&&!(Number.isInteger(days)&&days>=1&&days<=3650)){setError("Enter suspension days from 1 to 3650.");return;}
+    if(action==="suspension"&&!["collection","account"].includes(String(values.suspensionScope||""))){setError("Choose what to suspend.");return;}
+    if(!reason){setError("Enter the reason for this decision.");return;}
+    setError("");
+    void onSubmit({...values,reason,action}).then(ok=>{if(ok){form.reset();setAction("warning");}});
+  }}>
+    <div className="flex flex-wrap gap-2" role="group" aria-label="Decision">{[["warning","Warning"],["fine","Fine (Pay Violation)"],["suspension","Suspend"]].map(([value,label])=><button key={value} type="button" aria-pressed={action===value} onClick={()=>{setAction(value);setError("");}} className={`rounded-xl border px-4 py-2 text-sm font-bold ${action===value?"border-emerald-700 bg-emerald-700 text-white":"border-slate-200 bg-white text-slate-700"}`}>{label}</button>)}</div>
+    {action==="fine"&&<input name="fineAmount" type="number" min="0.01" step="0.01" aria-label="Fine amount in pesos" placeholder="Fine amount (PHP)" className={inputClass}/>}
+    {action==="suspension"&&<div className="grid gap-2 sm:grid-cols-2"><input name="suspensionDays" type="number" min="1" max="3650" step="1" aria-label="Suspension days" placeholder="Number of days" className={inputClass}/><select name="suspensionScope" aria-label="What to suspend" className={inputClass}><option value="collection">Suspend garbage collection</option><option value="account">Suspend account access</option></select></div>}
+    <textarea name="reason" maxLength={1000} aria-label="Reason" placeholder="Reason for this decision" className={inputClass}/>
+    {error&&<p role="alert" className="text-sm font-bold text-rose-700">{error}</p>}
     <button disabled={busy} className="rounded-xl bg-emerald-700 px-4 py-3 font-bold text-white disabled:opacity-50">Save decision</button>
   </form>;
 }
