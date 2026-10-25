@@ -627,6 +627,7 @@ function AppContent() {
           activeTab={currentScreen as any}
           onLogout={handleLogout}
           userRole={userRole as any}
+          onNavigate={openNotificationDestination}
           profilePhoto={currentUser?.profilePhoto}
         />
 

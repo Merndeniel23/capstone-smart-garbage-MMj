@@ -418,17 +418,17 @@ export default function ComplaintsPanel({
     if (!initialComplaintId || loading || loadError || handledNotificationComplaintId.current === initialComplaintId) return;
     handledNotificationComplaintId.current = initialComplaintId;
     const linked = complaints.find((item) => Number(item.id) === initialComplaintId);
-    if (!linked) {
-      setStatusNotice("The linked complaint is no longer available or your account cannot access it.");
-      return;
-    }
     setActiveTab("all");
     setBarangayFilter("");
     setDateFrom("");
     setDateTo("");
-    setSearch(String(initialComplaintId));
+    setSearch("");
     setComplaintPage(1);
-    setSelectedId(initialComplaintId);
+    if (linked) {
+      setSelectedId(linked.id);
+    } else if (complaints.length > 0) {
+      setSelectedId(complaints[0].id);
+    }
     const scrollId = window.setTimeout(() => {
       if (window.matchMedia("(max-width: 1023px)").matches) {
         detailsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });

@@ -26,7 +26,7 @@ import ConfirmDialog from "./ConfirmDialog";
 import { useNotifications } from "../context/NotificationsContext";
 import type { NotificationItem } from "../services/notificationFeed";
 
-type NotificationPage =
+export type NotificationPage =
   | "complaints"
   | "collection-records"
   | "violations"
@@ -58,7 +58,7 @@ const NOTIFICATIONS_PER_PAGE = 10;
 
 // Use actual backend relationship fields where provided. An ordinary broadcast
 // without a linked record is intentionally not given a fictitious destination.
-function linkedNotificationPage(
+export function linkedNotificationPage(
   item: NotificationItem,
   role: NotificationsPanelProps["role"],
 ): NotificationPage | null {
