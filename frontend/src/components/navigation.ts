@@ -99,11 +99,8 @@ export function menuSections(
         ] },
         { title: "Records", items: [
           { id: "activity-logs", icon: History, label: "Activity Logs", count: counts.pendingScanDecisions, revisions: true },
-          { id: "reports", icon: FileText, label: "Reports" },
-          { id: "archives", icon: ScrollText, label: "Archives", revisions: true },
         ] },
         { title: "Settings", items: [
-          { id: "barangay-policies", icon: Settings, label: "Policies & Templates", revisions: true },
           profile,
         ] },
       ];
