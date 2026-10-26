@@ -59,7 +59,7 @@ type ComplaintRecord = {
 type PaymentRecord = {
   id: number;
   transaction_code: string;
-  category: 'weekly_fee' | 'special_heavy_trash' | 'hazardous_disposal';
+  category: 'weekly_fee' | 'violation_fine' | 'special_heavy_trash' | 'hazardous_disposal';
   billing_period: string;
   amount: number | string;
   payment_method: 'gcash' | 'maya' | 'over_the_counter';

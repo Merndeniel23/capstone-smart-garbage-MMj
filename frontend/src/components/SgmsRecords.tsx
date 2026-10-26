@@ -82,7 +82,7 @@ export default function SgmsRecords({view}: {view:RecordView}) {
   const [templateBody,setTemplateBody]=useState("");
   const [phase1,setPhase1]=useState(false);
   useEffect(()=>{const controller=new AbortController();void apiRequest<{phase1Enabled:boolean}>("/sgms/config",{signal:controller.signal}).then(result=>{if(!controller.signal.aborted)setPhase1(result.phase1Enabled===true);}).catch(()=>undefined);return()=>controller.abort();},[]);
-  const admin=userRole==="admin", leader=userRole==="leader";
+  const admin=userRole==="admin", leader=userRole==="leader", collector=userRole==="collector";
   async function load(silent=false) {
     if(!silent)setLoading(true);
     try {
@@ -102,8 +102,8 @@ export default function SgmsRecords({view}: {view:RecordView}) {
         const [colRes,hhRes,payRes,vioRes]=await Promise.allSettled([
           apiRequest<any>("/sgms/collections"),
           apiRequest<any>("/sgms/households"),
-          apiRequest<any>("/sgms/payment-history"),
-          apiRequest<any>("/sgms/violations"),
+          collector?Promise.resolve({payments:[]}):apiRequest<any>("/sgms/payment-history"),
+          collector?Promise.resolve({violations:[]}):apiRequest<any>("/sgms/violations"),
         ]);
         const cols=colRes.status==="fulfilled"?colRes.value.collections||[]:[];
         setAllCollections(cols);
@@ -114,8 +114,8 @@ export default function SgmsRecords({view}: {view:RecordView}) {
       } else if (view==="activity-logs") {
         const [colRes,payRes,vioRes]=await Promise.allSettled([
           apiRequest<any>("/sgms/collections"),
-          apiRequest<any>("/sgms/payment-history"),
-          apiRequest<any>("/sgms/violations"),
+          collector?Promise.resolve({payments:[]}):apiRequest<any>("/sgms/payment-history"),
+          collector?Promise.resolve({violations:[]}):apiRequest<any>("/sgms/violations"),
         ]);
         setAllCollections(colRes.status==="fulfilled"?colRes.value.collections||[]:[]);
         setPaymentHistory(payRes.status==="fulfilled"?payRes.value.payments||[]:[]);
@@ -154,7 +154,7 @@ export default function SgmsRecords({view}: {view:RecordView}) {
   };
   const button=(label:string)=><button disabled={busy} className="rounded-xl bg-emerald-700 px-4 py-3 font-bold text-white disabled:opacity-50">{label}</button>;
   const requestArchive=(entity:string,row:any,label?:string)=>setArchive({entity,id:Number(row.id),label:label||row.full_name||row.name||`#${row.id}`});
-  return <div className="sg-page space-y-4"><header className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-black">{titles[view]}</h1><button type="button" onClick={()=>void load()} className="rounded-xl border p-3 text-sm font-bold">Refresh</button></header><p role="status" className="text-sm text-slate-600">{message}</p>{loading&&<p role="status">Loading…</p>}
+  return <div className="sg-page space-y-4"><header className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-black">{userRole==="collector"&&view==="collection-records"?"QR Bin Scanner":userRole==="collector"&&view==="activity-logs"?"Scan History":titles[view]}</h1><button type="button" onClick={()=>void load()} className="rounded-xl border p-3 text-sm font-bold">Refresh</button></header><p role="status" className="text-sm text-slate-600">{message}</p>{loading&&<p role="status">Loading…</p>}
     {view==="collection-records"&&userRole==="collector"&&<QrCollection defaultOpen onSaved={()=>void load()} />}
     {view==="collection-records"&&admin&&phase1&&<CollectionRunRecovery onRecovered={()=>void load()} />}
     {view==="barangay-policies"&&admin&&<label className="block rounded-xl border bg-white p-4 text-sm">Scope specified by the approved suspension policy<select aria-label="Approved suspension scope" value={suspensionScope} onChange={event=>setSuspensionScope(event.target.value)} className={inputClass}><option value="">Choose only if recording a suspension policy</option><option value="collection">Collection service</option><option value="account">Account access</option></select></label>}
@@ -168,7 +168,7 @@ export default function SgmsRecords({view}: {view:RecordView}) {
         ["scans", `QR Scan Results (${allCollections.length})`],
         ["payments", `Payment History (${paymentHistory.length})`],
         ["violations", `Violations & Suspensions (${violationHistory.length})`],
-      ] as [HistoryTab, string][]).map(([tabId, label]) => (
+      ] as [HistoryTab, string][]).filter(([tabId]) => userRole !== "collector" || tabId === "all" || tabId === "scans").map(([tabId, label]) => (
         <button
           key={tabId}
           type="button"

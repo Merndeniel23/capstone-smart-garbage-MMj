@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import { Camera, Check, QrCode, X } from "lucide-react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { Camera, Check, CheckCircle2, ImageUp, QrCode, RefreshCw, X, XCircle } from "lucide-react";
 import { apiRequest } from "../services/api";
+import { notifyAdminActionCountsChanged } from "../hooks/useAdminActionCounts";
 
 type HouseholdBin = {
   bin_id: number;
@@ -14,9 +15,9 @@ type HouseholdBin = {
 type IdentifiedBin = Readonly<{ payload: string; bin: Readonly<HouseholdBin>; key: string }>;
 type Segregation = "segregated" | "not_segregated";
 
-// Collector goes straight to the purok, opens the QR Scanner Modal, scans each bin,
-// and marks Check (✓ Segregated) or X (✗ Not Segregated). Result is recorded immediately
-// in the Purok Leader's Activity Log so the Leader can issue Warning, Fine, or Suspension.
+// Collector goes straight to the purok, opens the QR Scanner Modal, scans each household QR,
+// and marks Check (✓ Segregated) or X (✗ Not Segregated). The result goes directly to the
+// Purok Leader's Purok Members / Activity Log for Warning, Fine, or Suspension decisions.
 export default function QrCollection({
   onSaved,
   defaultOpen = false,
@@ -28,15 +29,32 @@ export default function QrCollection({
   const [qr, setQr] = useState("");
   const [identified, setIdentified] = useState<IdentifiedBin | null>(null);
   const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState<"success" | "error" | "info">("info");
   const [busy, setBusy] = useState(false);
   const [camera, setCamera] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const stream = useRef<MediaStream | null>(null);
   const submitting = useRef(false);
   const identifiedRef = useRef<IdentifiedBin | null>(null);
   const qrRef = useRef("");
   const lookupVersion = useRef(0);
   const lookup = useRef<AbortController | null>(null);
+
+  const canUseBarcodeDetector =
+    typeof window !== "undefined" && Boolean((window as any).BarcodeDetector);
+
+  function openScannerModal() {
+    setModalOpen(true);
+    if (
+      canUseBarcodeDetector &&
+      typeof navigator !== "undefined" &&
+      Boolean(navigator.mediaDevices?.getUserMedia) &&
+      !identifiedRef.current
+    ) {
+      setCamera(true);
+    }
+  }
 
   function changeQr(value: string, keepMessage = false) {
     if (submitting.current) return;
@@ -58,14 +76,16 @@ export default function QrCollection({
     setModalOpen(false);
   }
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    if (defaultOpen && canUseBarcodeDetector && Boolean(navigator.mediaDevices?.getUserMedia)) {
+      setCamera(true);
+    }
+    return () => {
       lookupVersion.current++;
       lookup.current?.abort();
       identifiedRef.current = null;
-    },
-    [],
-  );
+    };
+  }, [canUseBarcodeDetector, defaultOpen]);
 
   useEffect(() => {
     if (!camera || !modalOpen) return;
@@ -73,8 +93,9 @@ export default function QrCollection({
       timer: number | undefined;
     const Detector = (window as any).BarcodeDetector;
     if (!Detector || !navigator.mediaDevices?.getUserMedia) {
+      setMessageTone("info");
       setMessage(
-        "Camera QR scanning is unavailable here. Use a QR scanner that types into the QR field.",
+        "Live camera QR detection is not supported on this browser. Paste the QR code below or use Scan QR Photo.",
       );
       setCamera(false);
       return;
@@ -107,15 +128,16 @@ export default function QrCollection({
               }
             }
           } catch {
-            /* Retry a frame without keeping a failed frame. */
+            /* Retry next frame cleanly. */
           }
-          if (!cancelled) timer = window.setTimeout(() => void scan(), 300);
+          if (!cancelled) timer = window.setTimeout(() => void scan(), 260);
         };
         void scan();
       } catch {
         if (!cancelled) {
+          setMessageTone("error");
           setMessage(
-            "Unable to access the camera. Allow camera access or use a QR scanner.",
+            "Unable to access camera. Allow camera permission or paste the QR payload below.",
           );
           setCamera(false);
         }
@@ -128,6 +150,37 @@ export default function QrCollection({
       stream.current = null;
     };
   }, [camera, modalOpen]);
+
+  async function handleQrImageUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const Detector = (window as any).BarcodeDetector;
+    if (!Detector) {
+      setMessageTone("error");
+      setMessage("QR image decoding requires Chrome/Edge/Android browser or pasting the QR code directly.");
+      return;
+    }
+    try {
+      setBusy(true);
+      const bitmap = await createImageBitmap(file);
+      const detector = new Detector({ formats: ["qr_code"] });
+      const codes = await detector.detect(bitmap);
+      bitmap.close?.();
+      if (!codes[0]?.rawValue) {
+        setBusy(false);
+        setMessageTone("error");
+        setMessage("No QR code detected in the selected image. Try a clearer photo or paste the QR code.");
+        return;
+      }
+      changeQr(codes[0].rawValue);
+      await identify();
+    } catch {
+      setBusy(false);
+      setMessageTone("error");
+      setMessage("Could not read QR image. Try again or paste the QR payload.");
+    }
+  }
 
   async function identify() {
     if (submitting.current || !qrRef.current.trim()) return;
@@ -169,10 +222,12 @@ export default function QrCollection({
       identifiedRef.current = record;
       setIdentified(record);
     } catch (error) {
-      if (!controller.signal.aborted && version === lookupVersion.current)
+      if (!controller.signal.aborted && version === lookupVersion.current) {
+        setMessageTone("error");
         setMessage(
           error instanceof Error ? error.message : "QR lookup failed.",
         );
+      }
     } finally {
       if (version === lookupVersion.current) {
         lookup.current = null;
@@ -205,14 +260,19 @@ export default function QrCollection({
       if (identifiedRef.current === record) {
         submitting.current = false;
         changeQr("", true);
+        setMessageTone("success");
         setMessage(
           `${record.bin.bin_code} · ${record.bin.full_name}: ${
-            segregation === "segregated" ? "✓ Segregated" : "✗ Not Segregated"
+            segregation === "segregated"
+              ? "✓ Segregated (Followed Policy)"
+              : "✗ Not Segregated (Sent to Purok Leader Activity Log)"
           }. ${result.message}`,
         );
+        notifyAdminActionCountsChanged();
         onSaved();
       }
     } catch (error) {
+      setMessageTone("error");
       setMessage(
         error instanceof Error ? error.message : "Unable to record the scan.",
       );
@@ -227,36 +287,49 @@ export default function QrCollection({
   return (
     <section
       aria-label="Household QR collection"
-      className="space-y-3 rounded-2xl border bg-white p-4 shadow-sm"
+      className="overflow-hidden rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-900 via-emerald-800 to-slate-900 p-6 text-white shadow-lg"
     >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-black text-slate-900">
-            Scan Household Bin (QR Scanner)
+      <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+        <div className="space-y-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-emerald-100">
+            <QrCode className="h-3.5 w-3.5" />
+            Direct Purok Collection
+          </span>
+          <h2 className="text-2xl font-black tracking-tight">
+            Scan Household Bin QR
           </h2>
-          <p className="text-sm text-slate-600">
-            Open the QR scanner modal, scan each household bin in the purok, then mark{" "}
-            <span className="font-bold text-emerald-700">✓ Segregated</span> or{" "}
-            <span className="font-bold text-rose-700">✗ Not Segregated</span>. Result goes straight to the Purok Leader&apos;s Activity Log.
+          <p className="max-w-2xl text-sm text-emerald-100/90">
+            Go straight to the purok, scan each household&apos;s QR code, and mark{" "}
+            <span className="font-black text-emerald-300">✓ Check (Segregated)</span> or{" "}
+            <span className="font-black text-rose-300">✗ X (Not Segregated)</span>. Unsegregated scans go straight to the Purok Leader&apos;s Activity Log for Warning, Fine, or Suspension.
           </p>
         </div>
         <button
           type="button"
-          onClick={() => setModalOpen(true)}
-          className="inline-flex items-center gap-2 rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-800"
+          onClick={openScannerModal}
+          className="inline-flex shrink-0 items-center justify-center gap-2.5 rounded-2xl bg-white px-6 py-4 text-sm font-black text-emerald-900 shadow-lg transition hover:bg-emerald-50"
         >
-          <QrCode className="h-5 w-5" />
-          Open QR Scanner Modal
+          <QrCode className="h-5 w-5 text-emerald-700" />
+          Open QR Scanner
         </button>
       </div>
 
       {message && !modalOpen && (
-        <p
+        <div
           role="status"
-          className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800"
+          className={`mt-4 flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm font-bold ${
+            messageTone === "error"
+              ? "border-rose-300/40 bg-rose-950/60 text-rose-100"
+              : "border-emerald-300/40 bg-white/10 text-emerald-50"
+          }`}
         >
-          {message}
-        </p>
+          {messageTone === "error" ? (
+            <XCircle className="h-4 w-4 shrink-0 text-rose-300" />
+          ) : (
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-300" />
+          )}
+          <span>{message}</span>
+        </div>
       )}
 
       {modalOpen && (
@@ -264,20 +337,24 @@ export default function QrCollection({
           role="dialog"
           aria-modal="true"
           aria-label="QR Bin Scanner Modal"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-xs"
+          onClick={closeModal}
         >
-          <div className="w-full max-w-lg space-y-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
-            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+          <div
+            className="max-h-[92vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-3xl border border-slate-200 bg-white p-6 text-slate-900 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700">
                   <QrCode className="h-6 w-6" />
                 </div>
                 <div>
                   <h3 className="text-lg font-black text-slate-900">
-                    Scan Household Bin QR
+                    Household QR Scanner
                   </h3>
                   <p className="text-xs font-medium text-slate-500">
-                    Scan QR code then mark Check (✓ Segregated) or X (✗ Not Segregated)
+                    Scan QR code then mark ✓ Segregated or ✗ Not Segregated
                   </p>
                 </div>
               </div>
@@ -292,7 +369,66 @@ export default function QrCollection({
               </button>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-4">
+              {/* Camera & Photo Scanner Controls */}
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    if (camera) setCamera(false);
+                    else {
+                      changeQr("");
+                      setCamera(true);
+                    }
+                  }}
+                  className={`flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-xs font-black transition disabled:opacity-50 ${
+                    camera
+                      ? "bg-slate-900 text-white hover:bg-slate-800"
+                      : "bg-emerald-700 text-white hover:bg-emerald-800"
+                  }`}
+                >
+                  <Camera className="h-4 w-4" />
+                  {camera ? "Stop Camera" : "Scan with Camera"}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-black text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
+                >
+                  <ImageUp className="h-4 w-4 text-emerald-700" />
+                  Scan QR Image
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={(e) => void handleQrImageUpload(e)}
+                  className="hidden"
+                />
+              </div>
+
+              {camera && (
+                <div className="relative overflow-hidden rounded-2xl border-2 border-emerald-500 bg-slate-950">
+                  <video
+                    ref={video}
+                    muted
+                    playsInline
+                    className="h-64 w-full object-cover"
+                  />
+                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                    <div className="h-44 w-44 rounded-3xl border-2 border-emerald-400/90 shadow-[0_0_0_9999px_rgba(2,6,23,0.45)]" />
+                  </div>
+                  <p className="bg-slate-950/85 py-2 text-center text-[11px] font-bold text-emerald-300">
+                    Point camera at the Household QR Code...
+                  </p>
+                </div>
+              )}
+
+              {/* Manual / Hardware Scanner Input */}
               <div className="flex flex-wrap gap-2">
                 <input
                   aria-label="Household bin QR payload"
@@ -305,61 +441,45 @@ export default function QrCollection({
                       void identify();
                     }
                   }}
-                  className="min-w-0 flex-1 rounded-xl border border-slate-200 p-3 text-sm"
-                  placeholder="Scan or paste household bin QR code (SGMS:1:...)"
+                  className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm focus:border-emerald-500 focus:bg-white focus:outline-none"
+                  placeholder="Or paste / scan QR code (SGMS:1:...)"
                 />
                 <button
                   type="button"
                   disabled={busy || !qr.trim()}
                   onClick={() => void identify()}
-                  className="rounded-xl bg-emerald-700 px-4 py-3 text-sm font-black text-white disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-3 text-xs font-black uppercase tracking-wider text-white hover:bg-slate-800 disabled:opacity-50"
                 >
-                  Identify Bin
+                  {busy && !bin ? (
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                  ) : null}
+                  Identify
                 </button>
               </div>
 
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  if (camera) setCamera(false);
-                  else {
-                    changeQr("");
-                    setCamera(true);
-                  }
-                }}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 p-3 text-sm font-black text-white hover:bg-emerald-800 disabled:opacity-50"
-              >
-                <Camera className="h-4 w-4" />
-                {camera ? "Stop Camera Scanner" : "Scan QR with Camera"}
-              </button>
-
-              {camera && (
-                <video
-                  ref={video}
-                  muted
-                  playsInline
-                  className="max-h-64 w-full rounded-2xl bg-black object-cover"
-                />
-              )}
-
+              {/* Identified Household + Check (✓) / X (✗) Action Buttons */}
               {bin && (
-                <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div>
-                    <p className="text-xs font-black uppercase tracking-wider text-emerald-700">
-                      QR {bin.bin_code} · {bin.purok_name}
-                    </p>
-                    <p className="mt-0.5 text-lg font-black text-slate-900">
-                      {bin.full_name}
-                    </p>
+                <div className="space-y-4 rounded-3xl border-2 border-emerald-200 bg-emerald-50/50 p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <span className="inline-flex rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-emerald-800">
+                        QR {bin.bin_code} · {bin.purok_name}
+                      </span>
+                      <p className="mt-1.5 text-xl font-black text-slate-900">
+                        {bin.full_name}
+                      </p>
+                      <p className="text-xs font-bold text-slate-500">
+                        Household ID: HH-{String(bin.resident_id).padStart(4, "0")}
+                      </p>
+                    </div>
                   </div>
 
                   {bin.scanned_today && (
                     <p
                       role="alert"
-                      className="rounded-xl bg-amber-50 p-3 text-xs font-bold text-amber-800"
+                      className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800"
                     >
-                      This bin was already scanned today (
+                      Already scanned today (
                       {bin.scanned_today === "segregated"
                         ? "✓ Segregated"
                         : "✗ Not Segregated"}
@@ -370,7 +490,7 @@ export default function QrCollection({
                   {bin.collection_suspended_until && (
                     <p
                       role="alert"
-                      className="rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-800"
+                      className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-800"
                     >
                       Collection service is suspended until{" "}
                       {new Date(bin.collection_suspended_until).toLocaleDateString(
@@ -381,36 +501,80 @@ export default function QrCollection({
                     </p>
                   )}
 
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <button
-                      type="button"
-                      disabled={busy || Boolean(bin.scanned_today)}
-                      onClick={() => void save("segregated")}
-                      className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-5 text-base font-black text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50"
-                    >
-                      <Check className="h-6 w-6 stroke-[3]" />
-                      ✓ Segregated
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy || Boolean(bin.scanned_today)}
-                      onClick={() => void save("not_segregated")}
-                      className="flex items-center justify-center gap-2 rounded-2xl bg-rose-600 px-4 py-5 text-base font-black text-white shadow-sm transition hover:bg-rose-700 disabled:opacity-50"
-                    >
-                      <X className="h-6 w-6 stroke-[3]" />
-                      ✗ Not Segregated
-                    </button>
+                  <div className="space-y-2">
+                    <p className="text-center text-[11px] font-black uppercase tracking-wider text-slate-500">
+                      Mark Household Segregation Status
+                    </p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        disabled={busy || Boolean(bin.scanned_today)}
+                        onClick={() => void save("segregated")}
+                        className="flex flex-col items-center justify-center gap-1.5 rounded-2xl bg-emerald-600 px-4 py-5 text-white shadow-md transition hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/20">
+                          <Check className="h-7 w-7 stroke-[3]" />
+                        </span>
+                        <span className="text-base font-black">✓ Segregated</span>
+                        <span className="text-[11px] font-semibold text-emerald-100">
+                          Followed Policy
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={busy || Boolean(bin.scanned_today)}
+                        onClick={() => void save("not_segregated")}
+                        className="flex flex-col items-center justify-center gap-1.5 rounded-2xl bg-rose-600 px-4 py-5 text-white shadow-md transition hover:bg-rose-700 disabled:opacity-50"
+                      >
+                        <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/20">
+                          <X className="h-7 w-7 stroke-[3]" />
+                        </span>
+                        <span className="text-base font-black">✗ Not Segregated</span>
+                        <span className="text-[11px] font-semibold text-rose-100">
+                          Report to Purok Leader
+                        </span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
 
               {message && (
-                <p
+                <div
                   role="status"
-                  className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-bold text-slate-800"
+                  className={`flex items-start gap-2.5 rounded-2xl border p-4 text-xs font-bold leading-relaxed ${
+                    messageTone === "success"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                      : messageTone === "error"
+                        ? "border-rose-200 bg-rose-50 text-rose-800"
+                        : "border-slate-200 bg-slate-50 text-slate-700"
+                  }`}
                 >
-                  {message}
-                </p>
+                  {messageTone === "success" ? (
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                  ) : messageTone === "error" ? (
+                    <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
+                  ) : null}
+                  <div className="space-y-2">
+                    <p>{message}</p>
+                    {messageTone === "success" && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMessage("");
+                          if (canUseBarcodeDetector && Boolean(navigator.mediaDevices?.getUserMedia)) {
+                            setCamera(true);
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3 py-1.5 text-[11px] font-black text-white hover:bg-emerald-800"
+                      >
+                        <Camera className="h-3.5 w-3.5" />
+                        Scan Next Household
+                      </button>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
 
@@ -421,7 +585,7 @@ export default function QrCollection({
                 disabled={busy}
                 className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
               >
-                Close
+                Done
               </button>
             </div>
           </div>

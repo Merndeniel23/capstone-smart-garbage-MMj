@@ -72,7 +72,7 @@ export function linkedNotificationPage(
   const isResident = normalizedRole === "resident";
   const isCollector = normalizedRole === "collector";
   if(entity==="household_collection"||type==="collection_result")return normalizedRole==="super_admin"?null:isLeader?"members-list":"collection-records";
-  if(entity==="household_violation"||type==="violation")return isCollector?null:"violations";
+  if(entity==="household_violation"||type==="violation")return isCollector?null:isLeader?"members-list":"violations";
 
   if (entity === "complaint" || ["new_complaint", "complaint_update", "complaint_message"].includes(type)) {
     return "complaints";

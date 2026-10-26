@@ -1,12 +1,10 @@
 import { useEffect, useState } from "react";
 import {
   Award,
-  Bell,
   Building2,
   Calendar,
   ClipboardCheck,
   ClipboardList,
-  CreditCard,
   FileText,
   History,
   LayoutDashboard,
@@ -19,7 +17,6 @@ import {
   Settings,
   Shield,
   ShieldAlert,
-  Truck,
   User,
   UserCog,
   Users,
@@ -73,7 +70,6 @@ export function menuSections(
   counts: AdminActionCounts & { unseenNotifications: number },
   options: { revisions: boolean; residentRestricted: boolean },
 ): MenuSection[] {
-  const notifications: MenuItem = { id: "notifications", icon: Bell, label: "Notifications", count: counts.unseenNotifications };
   const profile: MenuItem = { id: "profile", icon: User, label: "Profile" };
 
   let sections: MenuSection[];
@@ -100,13 +96,11 @@ export function menuSections(
           { id: "violations", icon: ShieldAlert, label: "Violations", revisions: true },
           { id: "complaints", icon: MessageSquare, label: "Complaints", count: counts.unreadComplaints },
         ] },
-        { title: "Payments & Documents", items: [
-          { id: "payments", icon: Wallet, label: "Payment Ledger", count: counts.pendingPayments },
-          { id: "payment-history", icon: Receipt, label: "Payment History", revisions: true },
-          { id: "endorsements", icon: Award, label: "Endorsements" },
+        { title: "Documents", items: [
+          { id: "endorsements", icon: Award, label: "Endorsements", count: counts.pendingEndorsements },
         ] },
         { title: "Records", items: [
-          { id: "activity-logs", icon: History, label: "Activity Logs", revisions: true },
+          { id: "activity-logs", icon: History, label: "Activity Logs", count: counts.pendingScanDecisions, revisions: true },
           { id: "reports", icon: FileText, label: "Reports" },
           { id: "archives", icon: ScrollText, label: "Archives", revisions: true },
         ] },
@@ -123,7 +117,12 @@ export function menuSections(
           { id: "leader-dashboard", icon: LayoutDashboard, label: "Leader Dashboard" },
         ] },
         { title: "My Purok", items: [
-          { id: "members-list", icon: Users, label: "Purok Members", count: counts.pendingPayments },
+          {
+            id: "members-list",
+            icon: Users,
+            label: "Purok Members",
+            count: counts.pendingPayments + counts.pendingScanDecisions,
+          },
           { id: "households", icon: Building2, label: "Households & Bins", revisions: true },
           { id: "garbage-bins", icon: MapPinned, label: "Garbage Bins" },
           { id: "schedule", icon: Calendar, label: "Collection Schedule" },
@@ -133,7 +132,6 @@ export function menuSections(
           { id: "complaints", icon: MessageSquare, label: "Complaints", count: counts.unreadComplaints },
         ] },
         { title: "Records", items: [
-          { id: "activity-logs", icon: History, label: "Activity Logs & History", revisions: true },
           { id: "archives", icon: ScrollText, label: "Archives", revisions: true },
         ] },
         { title: "Account", items: [profile] },
@@ -143,10 +141,10 @@ export function menuSections(
     case "collector":
       sections = [
         { title: "Overview", items: [
-          { id: "collector-tasks", icon: ClipboardList, label: "Collection Tasks", count: counts.pendingCollectionTasks },
+          { id: "collector-tasks", icon: LayoutDashboard, label: "Collector Dashboard" },
         ] },
         { title: "Garbage Collection", items: [
-          { id: "collection-records", icon: QrCode, label: "Scan Bins (QR)", revisions: true },
+          { id: "collection-records", icon: QrCode, label: "QR Bin Scanner", revisions: true },
           { id: "schedule", icon: Calendar, label: "Collection Schedule" },
           { id: "route-map", icon: Map, label: "Route Map" },
         ] },
@@ -154,7 +152,7 @@ export function menuSections(
           { id: "complaints", icon: MessageSquare, label: "Assigned Complaints", count: counts.unreadComplaints },
         ] },
         { title: "Records", items: [
-          { id: "activity-logs", icon: History, label: "Activity Logs", revisions: true },
+          { id: "activity-logs", icon: History, label: "Scan History", revisions: true },
         ] },
         { title: "Account", items: [profile] },
       ];

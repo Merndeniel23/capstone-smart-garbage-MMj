@@ -113,14 +113,13 @@ const ROLE_SCREENS: Record<Role, Screen[]> = {
     "profile",
   ],
   admin: [
-    "households", "puroks", "collection-records", "violations", "activity-logs", "archives", "barangay-policies", "members-list", "payment-history",
+    "households", "puroks", "collection-records", "violations", "activity-logs", "archives", "barangay-policies", "members-list",
     "admin-dashboard",
     "garbage-bins",
     "bin-inspections",
     "user-management",
     "complaints",
     "endorsements",
-    "payments",
     "route-map",
     "schedule",
     "notifications",
@@ -666,7 +665,9 @@ function AppContent() {
 
               {currentScreen === "user-management" && <UserManagement />}
               {currentScreen === "members-list" && <MembersList />}
-              {(["households","puroks","collection-records","violations","activity-logs","archives","barangay-policies","payment-history"] as string[]).includes(currentScreen) && <SgmsRecords key={currentScreen} view={currentScreen as RecordView} />}
+              {userRole === "leader" && (["collection-records", "violations", "activity-logs"] as string[]).includes(currentScreen) && <MembersList key={currentScreen} initialTab="activity" />}
+              {userRole === "leader" && currentScreen === "payment-history" && <MembersList key={currentScreen} initialTab="payments" />}
+              {(["households","puroks","collection-records","violations","activity-logs","archives","barangay-policies","payment-history"] as string[]).includes(currentScreen) && !(userRole === "leader" && ["collection-records", "violations", "activity-logs", "payment-history"].includes(currentScreen)) && <SgmsRecords key={currentScreen} view={currentScreen as RecordView} />}
               {currentScreen === "online-payments" && userRole === "household" && <OnlinePayments />}
               {currentScreen === "bin-inspections" && <BinInspections />}
               {currentScreen === "garbage-bins" && <ManageGarbageBins />}

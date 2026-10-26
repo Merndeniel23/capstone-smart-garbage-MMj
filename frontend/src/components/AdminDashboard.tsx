@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Shield, Users, Activity, Map, CheckCircle, CreditCard, LoaderCircle, XCircle, Trash2, MessageSquare, UserRoundCheck, BarChart3, RefreshCw } from 'lucide-react';
+import { Shield, Users, Activity, Map, CheckCircle, LoaderCircle, XCircle, Trash2, MessageSquare, UserRoundCheck, BarChart3, RefreshCw } from 'lucide-react';
 import { apiRequest } from '../services/api';
 import {
   notifyAdminActionCountsChanged,
@@ -30,23 +30,6 @@ interface EndorsementRecord {
     | 'withdrawn';
   requester_name_snapshot: string;
   purok_name_snapshot: string;
-}
-
-type PaymentStatus =
-  | 'pending_leader_verification'
-  | 'rejected_by_leader'
-  | 'pending_remittance'
-  | 'pending_admin_confirmation'
-  | 'discrepancy'
-  | 'completed';
-
-interface PaymentRecord {
-  id: number;
-  transaction_code: string;
-  resident_name: string;
-  purok_name: string;
-  amount: number | string;
-  status: PaymentStatus;
 }
 
 interface DashboardSummary {
@@ -118,10 +101,8 @@ export default function AdminDashboard({
   const [analyticsUnavailable, setAnalyticsUnavailable] = useState<string[]>([]);
 
   const [endorsements] = useState<EndorsementRecord[]>([]);
-  const [payments, setPayments] = useState<PaymentRecord[]>([]);
-  const [operationalLoading, setOperationalLoading] = useState(true);
+  const operationalLoading = false;
   const endorsementError = '';
-  const [paymentError, setPaymentError] = useState('');
 
   const loadDashboardSummary = useCallback(async () => {
     try {
@@ -245,43 +226,16 @@ export default function AdminDashboard({
   );
   const totalRequests = endorsements.length;
 
-  const loadOperationalQueues = useCallback(async () => {
-    setOperationalLoading(true);
-    setPaymentError('');
-
-    try {
-      const data = await apiRequest<{
-        success: boolean;
-        payments?: PaymentRecord[];
-      }>('/payments');
-
-      setPayments(
-        Array.isArray(data.payments) ? data.payments : [],
-      );
-    } catch (error) {
-      setPayments([]);
-      setPaymentError(
-        error instanceof Error
-          ? error.message
-          : 'Payment ledger is unavailable.',
-      );
-    } finally {
-      setOperationalLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
     void Promise.all([
       loadDashboardSummary(),
       loadAnalytics(),
       loadPendingCollectors(),
-      loadOperationalQueues(),
     ]);
   }, [
     loadDashboardSummary,
     loadAnalytics,
     loadPendingCollectors,
-    loadOperationalQueues,
   ]);
 
   const reviewCollector = async (
@@ -324,35 +278,9 @@ export default function AdminDashboard({
     }
   };
 
-  const pendingPayments = useMemo(
-    () =>
-      payments.filter((payment) =>
-        [
-          'pending_admin_confirmation',
-          'discrepancy',
-        ].includes(payment.status),
-      ),
-    [payments],
-  );
-  const pendingPaymentPreview = useMemo(
-    () => pendingPayments.slice(0, DASHBOARD_QUEUE_PREVIEW_LIMIT),
-    [pendingPayments],
-  );
   const pendingCollectorPreview = useMemo(
     () => pendingCollectors.slice(0, DASHBOARD_QUEUE_PREVIEW_LIMIT),
     [pendingCollectors],
-  );
-
-  const completedRevenue = useMemo(
-    () =>
-      payments
-        .filter((payment) => payment.status === 'completed')
-        .reduce(
-          (total, payment) =>
-            total + Number(payment.amount || 0),
-          0,
-        ),
-    [payments],
   );
 
   const complaintsChart = useMemo(
@@ -453,7 +381,8 @@ export default function AdminDashboard({
         !summaryError &&
         (adminActionCounts.pendingAccounts > 0 ||
           adminActionCounts.pendingComplaints > 0 ||
-          adminActionCounts.pendingPayments > 0) && (
+          adminActionCounts.pendingEndorsements > 0 ||
+          adminActionCounts.pendingScanDecisions > 0) && (
           <section
             aria-live="polite"
             className="sg-admin-attention-card rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm"
@@ -469,6 +398,25 @@ export default function AdminDashboard({
               </div>
 
               <div className="flex flex-wrap gap-2">
+                {adminActionCounts.pendingScanDecisions > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setCurrentScreen('activity-logs')}
+                    className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-black text-white shadow-sm"
+                  >
+                    {adminActionCounts.pendingScanDecisions} ✗ scan{adminActionCounts.pendingScanDecisions === 1 ? '' : 's'} pending decision
+                  </button>
+                )}
+
+                {adminActionCounts.pendingEndorsements > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setCurrentScreen('endorsements')}
+                    className="rounded-xl bg-white px-4 py-2 text-xs font-black text-emerald-800 shadow-sm ring-1 ring-emerald-200"
+                  >
+                    {adminActionCounts.pendingEndorsements} endorsement{adminActionCounts.pendingEndorsements === 1 ? '' : 's'} to approve
+                  </button>
+                )}
                 {adminActionCounts.pendingAccounts > 0 && (
                   <button
                     type="button"
@@ -489,15 +437,6 @@ export default function AdminDashboard({
                   </button>
                 )}
 
-                {adminActionCounts.pendingPayments > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setCurrentScreen('payments')}
-                    className="rounded-xl bg-white px-4 py-2 text-xs font-black text-amber-800 shadow-sm ring-1 ring-amber-200"
-                  >
-                    {adminActionCounts.pendingPayments} payment{adminActionCounts.pendingPayments === 1 ? '' : 's'} to audit
-                  </button>
-                )}
 
               </div>
             </div>
@@ -750,85 +689,6 @@ export default function AdminDashboard({
            </div>
            )}
 
-           {/* ADMIN TREASURY JOURNAL AUDIT CARD */}
-           <div className="bg-[#1E293B] p-6 rounded-[2.5rem] text-white shadow-lg space-y-4">
-              <div className="flex justify-between items-start">
-                <div className="p-2.5 bg-white/10 rounded-2xl">
-                  <CreditCard className="w-5 h-5 text-emerald-400 font-extrabold" />
-                </div>
-                <span className="px-2.5 py-1 bg-white/10 text-white text-[9px] font-black uppercase tracking-wider rounded-lg">
-                  Barangay Auditor
-                </span>
-              </div>
-              <div className="space-y-1">
-                 <h3 className="text-lg font-black tracking-tight leading-none text-white">Treasury Journal Desk</h3>
-                 <p className="text-[10px] text-slate-300">Review barangay payment remittances from the official ledger</p>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-3 bg-black/20 p-3 rounded-2xl text-center">
-                 <div>
-                    <span className="text-2xl font-black block leading-none text-amber-400">
-                      {operationalLoading || paymentError
-                        ? '—'
-                        : pendingPayments.length}
-                    </span>
-                    <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider">Awaiting Audit</span>
-                 </div>
-                 <div className="border-l border-white/10">
-                    <span className="text-2xl font-black block leading-none text-emerald-400">
-                      {operationalLoading || paymentError
-                        ? '—'
-                        : `₱${completedRevenue.toLocaleString('en-PH', {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}`}
-                    </span>
-                    <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider">Total Revenue</span>
-                 </div>
-              </div>
-
-              {operationalLoading && (
-                <div className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-[10px] font-bold text-slate-300">
-                  <LoaderCircle className="h-3 w-3 animate-spin" />
-                  Loading payment ledger...
-                </div>
-              )}
-
-              {paymentError && (
-                <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[10px] font-bold text-slate-200">
-                  Payment data unavailable: {paymentError}
-                </div>
-              )}
-
-              {!operationalLoading && !paymentError && pendingPayments.length > 0 && (
-                <div className="space-y-1.5 border-t border-white/5 pt-1.5">
-                  <span className="text-[8px] font-black uppercase tracking-wider text-slate-400 block">Pending Receipts</span>
-                  <div className="space-y-1">
-                    {pendingPaymentPreview.map((payment) => (
-                      <div key={payment.id} className="flex justify-between items-center text-[10px] bg-white/5 px-2.5 py-1.5 rounded-lg border border-white/5">
-                        <span className="font-extrabold truncate max-w-[120px]">{payment.resident_name}</span>
-                        <span className="font-mono text-[8px] bg-amber-500/10 text-amber-300 px-1 rounded-sm">{payment.purok_name}</span>
-                      </div>
-                    ))}
-                  </div>
-                  {pendingPayments.length > pendingPaymentPreview.length && (
-                    <p className="text-[9px] font-bold text-slate-400">
-                      Showing {pendingPaymentPreview.length} of {pendingPayments.length} pending receipts
-                    </p>
-                  )}
-                </div>
-              )}
-
-              <button 
-                onClick={() => setCurrentScreen('payments')}
-                className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-md flex items-center justify-center gap-2 border-none text-white"
-              >
-                <span>
-                  Audit Financial Ledger ({operationalLoading || paymentError ? '—' : pendingPayments.length}) →
-                </span>
-              </button>
-           </div>
-
            <div className="flex items-center justify-between px-2">
               <h2 className="text-xl font-black text-slate-800">Collector Verification</h2>
               <button
@@ -837,7 +697,6 @@ export default function AdminDashboard({
                   void loadPendingCollectors();
                   void loadDashboardSummary();
                   void loadAnalytics();
-                  void loadOperationalQueues();
                 }}
                 className="text-[10px] font-black uppercase tracking-wider text-emerald-600 hover:text-emerald-700"
               >

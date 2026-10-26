@@ -1,14 +1,20 @@
 import { apiFetch } from "../services/http";
 import {
-  AlertCircle,
+  AlertTriangle,
+  Award,
+  Building2,
+  Calendar,
   CheckCircle2,
-  ClipboardList,
+  ChevronRight,
   Loader2,
   MapPin,
   MessageSquareWarning,
+  QrCode,
   RefreshCw,
   Trash2,
   Users,
+  Wallet,
+  XCircle,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -37,10 +43,22 @@ interface Complaint {
   created_at: string;
 }
 
-interface Inspection {
+interface CollectionScan {
+  id: number;
+  bin_code: string;
+  household_id: number;
+  household_name: string;
+  purok_name?: string;
+  collector_name: string;
+  segregation: "segregated" | "not_segregated";
+  collection_status: "collected" | "not_collected";
+  collected_at: string;
+  decision_action?: "warning" | "fine" | "suspension" | null;
+}
+
+interface PaymentRecord {
   id: number;
   status: string;
-  inspected_at: string;
 }
 
 const API_BASE = "/api";
@@ -77,7 +95,9 @@ async function apiRequest(endpoint: string, options: RequestInit = {}) {
 function formatDate(value?: string | null) {
   if (!value) return "No date";
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleString("en-PH", { timeZone: "Asia/Manila" });
 }
 
 function statusLabel(value: string) {
@@ -97,7 +117,9 @@ const DASHBOARD_PREVIEW_LIMIT = 5;
 export default function LeaderDashboard({ setCurrentScreen }: LeaderDashboardProps) {
   const [profile, setProfile] = useState<ProfileUser | null>(null);
   const [complaints, setComplaints] = useState<Complaint[]>([]);
-  const [inspections, setInspections] = useState<Inspection[]>([]);
+  const [collections, setCollections] = useState<CollectionScan[]>([]);
+  const [pendingPaymentsCount, setPendingPaymentsCount] = useState(0);
+  const [householdsCount, setHouseholdsCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -106,21 +128,54 @@ export default function LeaderDashboard({ setCurrentScreen }: LeaderDashboardPro
     setError("");
 
     try {
-      const [profileData, complaintData, inspectionData] = await Promise.all([
-        apiRequest("/auth/me"),
-        apiRequest("/complaints"),
-        apiRequest("/inspections"),
-      ]);
+      const [profileRes, complaintRes, collectionsRes, paymentsRes, membersRes] =
+        await Promise.allSettled([
+          apiRequest("/auth/me"),
+          apiRequest("/complaints"),
+          apiRequest("/sgms/collections"),
+          apiRequest("/payments"),
+          apiRequest("/admin/purok-members"),
+        ]);
 
-      setProfile(profileData.user || null);
-      setComplaints(Array.isArray(complaintData.complaints) ? complaintData.complaints : []);
-      setInspections(
-        Array.isArray(inspectionData.inspections)
-          ? inspectionData.inspections
-          : Array.isArray(inspectionData)
-            ? inspectionData
+      if (profileRes.status === "rejected") {
+        throw profileRes.reason;
+      }
+
+      setProfile(profileRes.value.user || null);
+      setComplaints(
+        complaintRes.status === "fulfilled" && Array.isArray(complaintRes.value.complaints)
+          ? complaintRes.value.complaints
+          : [],
+      );
+      setCollections(
+        collectionsRes.status === "fulfilled" && Array.isArray(collectionsRes.value.collections)
+          ? collectionsRes.value.collections
+          : membersRes.status === "fulfilled" && Array.isArray(membersRes.value.collections)
+            ? membersRes.value.collections
             : [],
       );
+
+      if (paymentsRes.status === "fulfilled" && Array.isArray(paymentsRes.value.payments)) {
+        const pending = (paymentsRes.value.payments as PaymentRecord[]).filter(
+          (row) => row.status === "pending_leader_verification" || row.status === "pending",
+        ).length;
+        setPendingPaymentsCount(pending);
+      } else if (
+        membersRes.status === "fulfilled" &&
+        Array.isArray(membersRes.value.pendingPayments)
+      ) {
+        setPendingPaymentsCount(membersRes.value.pendingPayments.length);
+      } else {
+        setPendingPaymentsCount(0);
+      }
+
+      if (membersRes.status === "fulfilled" && Array.isArray(membersRes.value.users)) {
+        setHouseholdsCount(
+          membersRes.value.users.filter((u: any) => u.role === "resident").length,
+        );
+      } else {
+        setHouseholdsCount(0);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load Purok Leader dashboard.");
     } finally {
@@ -129,122 +184,390 @@ export default function LeaderDashboard({ setCurrentScreen }: LeaderDashboardPro
   };
 
   useEffect(() => {
-    loadData();
+    void loadData();
   }, []);
+
+  const segregatedCount = useMemo(
+    () => collections.filter((row) => row.segregation === "segregated").length,
+    [collections],
+  );
+
+  const pendingDecisions = useMemo(
+    () =>
+      collections.filter(
+        (row) => row.segregation === "not_segregated" && !row.decision_action,
+      ),
+    [collections],
+  );
 
   const activeComplaints = useMemo(
     () => complaints.filter((complaint) => !["resolved", "cancelled"].includes(complaint.status)),
     [complaints],
   );
 
-  const resolvedComplaints = useMemo(
-    () => complaints.filter((complaint) => complaint.status === "resolved"),
-    [complaints],
-  );
-
-  const urgentInspections = useMemo(
-    () => inspections.filter((inspection) => ["full", "overflowing", "damaged"].includes(String(inspection.status || "").toLowerCase())),
-    [inspections],
-  );
+  const latestScans = useMemo(() => collections.slice(0, 6), [collections]);
   const activeComplaintPreview = activeComplaints.slice(0, DASHBOARD_PREVIEW_LIMIT);
+  const totalLeaderActions = pendingDecisions.length + pendingPaymentsCount;
 
   return (
     <div className="sg-page space-y-6 pb-20 md:pb-0">
       <header className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
-          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">LGU Purok Operations</p>
-          <h1 className="text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">Purok Leader Dashboard</h1>
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">
+            LGU Purok Operations
+          </p>
+          <h1 className="text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">
+            Purok Leader Dashboard
+          </h1>
           <p className="mt-1 text-xs text-slate-500 sm:text-sm">
-            Managing <span className="font-bold text-slate-700">{profile?.purok_name || "Unassigned Purok"}</span>
+            Managing{" "}
+            <span className="font-bold text-slate-700">
+              {profile?.purok_name || "Unassigned Purok"}
+            </span>
             {profile?.barangay_name ? `, ${profile.barangay_name}` : ""}
           </p>
         </div>
 
-        <button type="button" onClick={loadData} className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-black text-slate-700">
-          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setCurrentScreen("members-list")}
+            className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-black text-white shadow-sm transition hover:bg-emerald-800"
+          >
+            <Users className="h-4 w-4" />
+            Open Purok Members &amp; Activity Log
+            {totalLeaderActions > 0 && (
+              <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-black text-emerald-800">
+                {totalLeaderActions}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => void loadData()}
+            className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-black text-slate-700 hover:bg-slate-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+        </div>
       </header>
 
-      {error && <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</div>}
+      {error && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">
+          {error}
+        </div>
+      )}
+
+      {totalLeaderActions > 0 && (
+        <div className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50/90 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="rounded-xl bg-amber-100 p-2.5 text-amber-700">
+              <AlertTriangle className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-sm font-black text-slate-900">
+                Action Needed in Purok Members
+              </p>
+              <p className="mt-0.5 text-xs text-slate-600">
+                {pendingDecisions.length > 0 && (
+                  <span className="font-bold text-rose-700">
+                    {pendingDecisions.length} ✗ Not Segregated scan
+                    {pendingDecisions.length === 1 ? "" : "s"} waiting for your decision
+                  </span>
+                )}
+                {pendingDecisions.length > 0 && pendingPaymentsCount > 0 ? " · " : ""}
+                {pendingPaymentsCount > 0 && (
+                  <span className="font-bold text-amber-800">
+                    {pendingPaymentsCount} resident payment
+                    {pendingPaymentsCount === 1 ? "" : "s"} waiting for verification
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCurrentScreen("members-list")}
+            className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-black text-white transition hover:bg-slate-800"
+          >
+            Review Now
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard label="Active Complaints" value={activeComplaints.length} icon={MessageSquareWarning} />
-        <SummaryCard label="Resolved Complaints" value={resolvedComplaints.length} icon={CheckCircle2} />
-        <SummaryCard label="Total Inspections" value={inspections.length} icon={ClipboardList} />
-        <SummaryCard label="Urgent Bin Conditions" value={urgentInspections.length} icon={AlertCircle} />
+        <SummaryCard
+          label="Purok Households"
+          value={householdsCount}
+          icon={Users}
+          tone="slate"
+          onClick={() => setCurrentScreen("members-list")}
+        />
+        <SummaryCard
+          label="✓ Segregated Scans"
+          value={segregatedCount}
+          icon={CheckCircle2}
+          tone="emerald"
+          onClick={() => setCurrentScreen("members-list")}
+        />
+        <SummaryCard
+          label="✗ Needs Decision"
+          value={pendingDecisions.length}
+          icon={XCircle}
+          tone={pendingDecisions.length > 0 ? "rose" : "slate"}
+          onClick={() => setCurrentScreen("members-list")}
+        />
+        <SummaryCard
+          label="Verify Payments"
+          value={pendingPaymentsCount}
+          icon={Wallet}
+          tone={pendingPaymentsCount > 0 ? "amber" : "slate"}
+          onClick={() => setCurrentScreen("members-list")}
+        />
       </div>
 
       <div className="grid gap-5 lg:grid-cols-3">
-        <section className="space-y-3 lg:col-span-2">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-lg font-black text-slate-900">Complaints in My Purok</h2>
-              <p className="text-xs text-slate-500">Showing the latest {Math.min(activeComplaints.length, DASHBOARD_PREVIEW_LIMIT)} of {activeComplaints.length} active records.</p>
+        <div className="space-y-5 lg:col-span-2">
+          <section className="space-y-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-black text-slate-900">
+                  Latest Collector QR Scans (Activity Log)
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Live results from the Collector&apos;s household QR scanner (✓ Segregated / ✗ Not Segregated).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCurrentScreen("members-list")}
+                className="self-start rounded-xl bg-emerald-700 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-white transition hover:bg-emerald-800 sm:self-auto"
+              >
+                Open Activity Log &amp; History
+              </button>
             </div>
-            <button type="button" onClick={() => setCurrentScreen("complaints")} className="self-start rounded-xl bg-slate-900 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-white sm:self-auto">
-              Open Complaints
-            </button>
-          </div>
 
-          <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-            {loading ? (
-              <div className="p-8 text-center">
-                <Loader2 className="mx-auto h-6 w-6 animate-spin text-emerald-600" />
-                <p className="mt-2 text-xs font-bold text-slate-500">Loading complaints...</p>
-              </div>
-            ) : activeComplaints.length === 0 ? (
-              <div className="p-8 text-center">
-                <CheckCircle2 className="mx-auto h-7 w-7 text-emerald-400" />
-                <p className="mt-2 font-black text-slate-700">No active complaints</p>
-                <p className="mt-1 text-xs text-slate-500">New resident complaints from your purok will appear here.</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-slate-100">
-                {activeComplaintPreview.map((complaint) => (
-                  <article key={complaint.id} className="p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="font-black text-slate-900">{complaint.complaint_type}</h3>
-                          <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${statusClass(complaint.status)}`}>
-                            {statusLabel(complaint.status)}
-                          </span>
+            <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+              {loading ? (
+                <div className="p-8 text-center">
+                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-emerald-600" />
+                  <p className="mt-2 text-xs font-bold text-slate-500">
+                    Loading QR scan activity...
+                  </p>
+                </div>
+              ) : latestScans.length === 0 ? (
+                <div className="p-8 text-center">
+                  <QrCode className="mx-auto h-7 w-7 text-slate-300" />
+                  <p className="mt-2 font-black text-slate-700">No QR scans recorded yet</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    When the Collector scans household QR codes in your purok, results will appear here immediately.
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {latestScans.map((scan) => {
+                    const isSegregated = scan.segregation === "segregated";
+                    const needsDecision = !isSegregated && !scan.decision_action;
+                    return (
+                      <article
+                        key={scan.id}
+                        className={`flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between ${
+                          needsDecision ? "bg-rose-50/40" : ""
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${
+                                isSegregated
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : "bg-rose-100 text-rose-800"
+                              }`}
+                            >
+                              {isSegregated ? "✓ Segregated" : "✗ Not Segregated"}
+                            </span>
+                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 font-mono text-xs font-bold text-slate-700">
+                              {scan.bin_code}
+                            </span>
+                            <h3 className="font-black text-slate-900">{scan.household_name}</h3>
+                          </div>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Scanned by <span className="font-semibold text-slate-700">{scan.collector_name}</span> ·{" "}
+                            {formatDate(scan.collected_at)}
+                          </p>
                         </div>
-                        <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-slate-600">{complaint.description}</p>
-                        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-500">
-                          <span className="flex items-center gap-1"><Users className="h-3.5 w-3.5" />{complaint.reporter_name}</span>
-                          <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{[complaint.purok_name, complaint.barangay_name].filter(Boolean).join(", ")}</span>
+
+                        <div className="flex items-center gap-2 sm:shrink-0">
+                          {needsDecision ? (
+                            <button
+                              type="button"
+                              onClick={() => setCurrentScreen("members-list")}
+                              className="rounded-xl bg-rose-600 px-3 py-2 text-xs font-black text-white shadow-xs transition hover:bg-rose-700"
+                            >
+                              Decide Action →
+                            </button>
+                          ) : scan.decision_action ? (
+                            <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-black uppercase text-slate-700">
+                              {scan.decision_action === "fine"
+                                ? "Fine Issued"
+                                : scan.decision_action === "suspension"
+                                  ? "Suspended"
+                                  : "Warning Issued"}
+                            </span>
+                          ) : (
+                            <span className="text-xs font-bold text-emerald-700">Compliant</span>
+                          )}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-black text-slate-900">Complaints in My Purok</h2>
+                <p className="text-xs text-slate-500">
+                  Showing the latest {Math.min(activeComplaints.length, DASHBOARD_PREVIEW_LIMIT)} of{" "}
+                  {activeComplaints.length} active records.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCurrentScreen("complaints")}
+                className="self-start rounded-xl bg-slate-900 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-white sm:self-auto"
+              >
+                Open Complaints
+              </button>
+            </div>
+
+            <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+              {loading ? (
+                <div className="p-8 text-center">
+                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-emerald-600" />
+                  <p className="mt-2 text-xs font-bold text-slate-500">Loading complaints...</p>
+                </div>
+              ) : activeComplaints.length === 0 ? (
+                <div className="p-8 text-center">
+                  <CheckCircle2 className="mx-auto h-7 w-7 text-emerald-400" />
+                  <p className="mt-2 font-black text-slate-700">No active complaints</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    New resident complaints from your purok will appear here.
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {activeComplaintPreview.map((complaint) => (
+                    <article key={complaint.id} className="p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="font-black text-slate-900">{complaint.complaint_type}</h3>
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${statusClass(
+                                complaint.status,
+                              )}`}
+                            >
+                              {statusLabel(complaint.status)}
+                            </span>
+                          </div>
+                          <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-slate-600">
+                            {complaint.description}
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-500">
+                            <span className="flex items-center gap-1">
+                              <Users className="h-3.5 w-3.5" />
+                              {complaint.reporter_name}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <MapPin className="h-3.5 w-3.5" />
+                              {[complaint.purok_name, complaint.barangay_name].filter(Boolean).join(", ")}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-[10px] text-slate-400 sm:text-right">
+                          {formatDate(complaint.created_at)}
+                          {complaint.assigned_collector_name && (
+                            <p className="mt-1 font-bold text-blue-600">
+                              Assigned to {complaint.assigned_collector_name}
+                            </p>
+                          )}
                         </div>
                       </div>
-                      <div className="text-[10px] text-slate-400 sm:text-right">
-                        {formatDate(complaint.created_at)}
-                        {complaint.assigned_collector_name && <p className="mt-1 font-bold text-blue-600">Assigned to {complaint.assigned_collector_name}</p>}
-                      </div>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
 
         <section className="space-y-4">
           <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
             <h2 className="text-base font-black text-slate-900">Quick Actions</h2>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Jump directly to purok management tools
+            </p>
             <div className="mt-3 space-y-2">
-              <QuickAction label="Manage Garbage Bins" icon={Trash2} onClick={() => setCurrentScreen("garbage-bins")} />
-              <QuickAction label="Record Bin Inspection" icon={ClipboardList} onClick={() => setCurrentScreen("bin-inspections")} />
-              <QuickAction label="View Complaints" icon={MessageSquareWarning} onClick={() => setCurrentScreen("complaints")} />
-              <QuickAction label="Open Route Map" icon={MapPin} onClick={() => setCurrentScreen("route-map")} />
+              <QuickAction
+                label="Purok Members & Activity Log"
+                subtitle="Verify payments, QR results & history"
+                badge={totalLeaderActions}
+                icon={Users}
+                onClick={() => setCurrentScreen("members-list")}
+              />
+              <QuickAction
+                label="Households & Bin QRs"
+                subtitle="Generate or print household QR labels"
+                icon={Building2}
+                onClick={() => setCurrentScreen("households")}
+              />
+              <QuickAction
+                label="Collection Schedule"
+                subtitle="Check scheduled pickup days"
+                icon={Calendar}
+                onClick={() => setCurrentScreen("schedule")}
+              />
+              <QuickAction
+                label="Resident Endorsements"
+                subtitle="Review & release endorsements"
+                icon={Award}
+                onClick={() => setCurrentScreen("endorsements")}
+              />
+              <QuickAction
+                label="View Complaints"
+                subtitle="Monitor resident reports"
+                badge={activeComplaints.length}
+                icon={MessageSquareWarning}
+                onClick={() => setCurrentScreen("complaints")}
+              />
+              <QuickAction
+                label="Communal Garbage Bins"
+                subtitle="Manage purok bin stations"
+                icon={Trash2}
+                onClick={() => setCurrentScreen("garbage-bins")}
+              />
             </div>
           </div>
 
-          <div className="rounded-2xl bg-slate-900 p-4 text-white shadow-lg">
-            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Logged-in Purok Leader</p>
+          <div className="rounded-2xl bg-slate-900 p-5 text-white shadow-lg">
+            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-400">
+              Logged-in Purok Leader
+            </p>
             <h3 className="mt-2 text-xl font-black">{profile?.full_name || "Purok Leader"}</h3>
-            <p className="mt-1 text-sm text-slate-300">{profile?.purok_name || "No purok"} · {profile?.barangay_name || "No barangay"}</p>
-            <p className="mt-4 text-xs leading-relaxed text-slate-400">Complaints, inspections, and bin records shown here are now loaded from the real backend rather than AppState dummy data.</p>
+            <p className="mt-1 text-sm text-slate-300">
+              {profile?.purok_name || "No purok"} · {profile?.barangay_name || "No barangay"}
+            </p>
+            <p className="mt-4 text-xs leading-relaxed text-slate-400">
+              Payment verification, Collector QR scan results (✓ Segregated / ✗ Not Segregated),
+              violation decisions (Warning, Fine, Suspend), and full purok history are all unified
+              inside <strong className="text-white">Purok Members</strong>.
+            </p>
           </div>
         </section>
       </div>
@@ -252,25 +575,87 @@ export default function LeaderDashboard({ setCurrentScreen }: LeaderDashboardPro
   );
 }
 
-function SummaryCard({ label, value, icon: Icon }: { label: string; value: number; icon: any }) {
+function SummaryCard({
+  label,
+  value,
+  icon: Icon,
+  tone = "slate",
+  onClick,
+}: {
+  label: string;
+  value: number;
+  icon: any;
+  tone?: "slate" | "emerald" | "rose" | "amber";
+  onClick?: () => void;
+}) {
+  const toneStyles = {
+    slate: "border-slate-100 bg-white text-slate-900",
+    emerald: "border-emerald-100 bg-white text-slate-900",
+    rose: "border-rose-200 bg-rose-50/60 text-rose-900",
+    amber: "border-amber-200 bg-amber-50/60 text-amber-900",
+  }[tone];
+
+  const iconStyles = {
+    slate: "bg-slate-100 text-slate-700",
+    emerald: "bg-emerald-50 text-emerald-700",
+    rose: "bg-rose-100 text-rose-700",
+    amber: "bg-amber-100 text-amber-700",
+  }[tone];
+
   return (
-    <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full rounded-2xl border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${toneStyles}`}
+    >
       <div className="flex items-center justify-between">
         <div>
           <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</p>
-          <p className="mt-1.5 text-2xl font-black text-slate-900">{value}</p>
+          <p className="mt-1.5 text-2xl font-black">{value}</p>
         </div>
-        <div className="rounded-xl bg-emerald-50 p-2.5 text-emerald-700"><Icon className="h-5 w-5" /></div>
+        <div className={`rounded-xl p-2.5 ${iconStyles}`}>
+          <Icon className="h-5 w-5" />
+        </div>
       </div>
-    </div>
+    </button>
   );
 }
 
-function QuickAction({ label, icon: Icon, onClick }: { label: string; icon: any; onClick: () => void }) {
+function QuickAction({
+  label,
+  subtitle,
+  badge,
+  icon: Icon,
+  onClick,
+}: {
+  label: string;
+  subtitle?: string;
+  badge?: number;
+  icon: any;
+  onClick: () => void;
+}) {
   return (
-    <button type="button" onClick={onClick} className="flex w-full items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-left transition hover:bg-slate-100">
-      <div className="rounded-xl bg-white p-2 text-emerald-700 shadow-sm"><Icon className="h-5 w-5" /></div>
-      <span className="text-sm font-black text-slate-800">{label}</span>
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-left transition hover:border-emerald-200 hover:bg-emerald-50/40"
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="rounded-xl bg-white p-2 text-emerald-700 shadow-sm">
+          <Icon className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-black text-slate-800">{label}</p>
+          {subtitle && <p className="truncate text-[11px] text-slate-500">{subtitle}</p>}
+        </div>
+      </div>
+      {badge && badge > 0 ? (
+        <span className="shrink-0 rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-black text-white">
+          {badge}
+        </span>
+      ) : (
+        <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
+      )}
     </button>
   );
 }

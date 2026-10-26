@@ -9,14 +9,16 @@ export const ADMIN_ACTION_COUNTS_CHANGED_EVENT =
 const ADMIN_ROLES: AppRole[] = ["admin", "super_admin"];
 const PAYMENT_ACTION_ROLES: AppRole[] = [
   "leader",
-  "admin",
   "super_admin",
 ];
 const ENDORSEMENT_ACTION_ROLES: AppRole[] = [
   "leader",
   "admin",
 ];
-const COLLECTION_ACTION_ROLES: AppRole[] = ["collector"];
+const SCAN_DECISION_ROLES: AppRole[] = [
+  "leader",
+  "admin",
+];
 const ACCOUNT_NOTIFICATION_TYPES = new Set([
   "account_approval_request",
 ]);
@@ -36,6 +38,7 @@ export interface AdminActionCounts {
   pendingPayments: number;
   pendingEndorsements: number;
   pendingCollectionTasks: number;
+  pendingScanDecisions: number;
   unreadAccounts: number;
   unreadComplaints: number;
 }
@@ -46,6 +49,7 @@ const EMPTY_COUNTS: AdminActionCounts = {
   pendingPayments: 0,
   pendingEndorsements: 0,
   pendingCollectionTasks: 0,
+  pendingScanDecisions: 0,
   unreadAccounts: 0,
   unreadComplaints: 0,
 };
@@ -97,7 +101,7 @@ export function useAdminActionCounts(
   const isAdminRole = ADMIN_ROLES.includes(role);
   const canReviewPayments = PAYMENT_ACTION_ROLES.includes(role);
   const canReviewEndorsements = ENDORSEMENT_ACTION_ROLES.includes(role);
-  const canManageCollectionTasks = COLLECTION_ACTION_ROLES.includes(role);
+  const canDecideScans = SCAN_DECISION_ROLES.includes(role);
 
   useEffect(() => {
     setCounts(EMPTY_COUNTS);
@@ -137,7 +141,7 @@ export function useAdminActionCounts(
 
       try {
         const options = { signal: requestController.signal };
-        const [summaryResult, paymentResult, endorsementResult, collectionResult] =
+        const [summaryResult, paymentResult, endorsementResult, scansResult] =
           await Promise.allSettled([
             isAdminRole
               ? apiRequest<{
@@ -154,10 +158,13 @@ export function useAdminActionCounts(
                   endorsements?: Array<{ status?: string }>;
                 }>("/endorsements", options)
               : Promise.resolve(null),
-            canManageCollectionTasks
+            canDecideScans
               ? apiRequest<{
-                  requests?: Array<{ status?: string }>;
-                }>("/collection-requests", options)
+                  collections?: Array<{
+                    segregation?: string;
+                    decision_action?: string | null;
+                  }>;
+                }>("/sgms/collections", options)
               : Promise.resolve(null),
           ]);
 
@@ -182,10 +189,10 @@ export function useAdminActionCounts(
           Array.isArray(endorsementResult.value?.endorsements)
             ? endorsementResult.value.endorsements
             : null;
-        const collectionRows =
-          collectionResult.status === "fulfilled" &&
-          Array.isArray(collectionResult.value?.requests)
-            ? collectionResult.value.requests
+        const scanRows =
+          scansResult.status === "fulfilled" &&
+          Array.isArray(scansResult.value?.collections)
+            ? scansResult.value.collections
             : null;
 
         const pendingPayments = !canReviewPayments
@@ -207,14 +214,14 @@ export function useAdminActionCounts(
                   ? endorsement.status === "pending_leader_review"
                   : endorsement.status === "leader_endorsed",
               ).length;
-        const pendingCollectionTasks = !canManageCollectionTasks
+        const pendingScanDecisions = !canDecideScans
           ? 0
-          : collectionRows === null
+          : scanRows === null
             ? null
-            : collectionRows.filter((request) =>
-                ["pending", "approved", "assigned", "in_progress"].includes(
-                  String(request.status || "").toLowerCase(),
-                ),
+            : scanRows.filter(
+                (scan) =>
+                  scan.segregation === "not_segregated" &&
+                  !scan.decision_action,
               ).length;
 
         setCounts((previous) => ({
@@ -227,8 +234,9 @@ export function useAdminActionCounts(
             : previous.pendingComplaints,
           pendingPayments: pendingPayments ?? previous.pendingPayments,
           pendingEndorsements: pendingEndorsements ?? previous.pendingEndorsements,
-          pendingCollectionTasks:
-            pendingCollectionTasks ?? previous.pendingCollectionTasks,
+          pendingCollectionTasks: 0,
+          pendingScanDecisions:
+            pendingScanDecisions ?? previous.pendingScanDecisions,
         }));
       } finally {
         window.clearTimeout(timeout);
@@ -290,7 +298,7 @@ export function useAdminActionCounts(
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("auth-session-expired", pauseForExpiredSession);
     };
-  }, [canManageCollectionTasks, canReviewEndorsements, canReviewPayments, enabled, isAdminRole, role, userId]);
+  }, [canDecideScans, canReviewEndorsements, canReviewPayments, enabled, isAdminRole, role, userId]);
 
   return useMemo(() => {
     if (!enabled || !userId) return EMPTY_COUNTS;

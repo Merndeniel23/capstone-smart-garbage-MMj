@@ -72,6 +72,7 @@ interface EndorsementRequest {
   certificateNumber?: string;
   verificationCode?: string;
   outstandingPaymentCount: number;
+  violationCount: number;
 }
 
 interface EndorsementManagerProps {
@@ -199,6 +200,7 @@ function mapEndorsement(row: any): EndorsementRequest {
     outstandingPaymentCount: Number(
       row.outstanding_payment_count || 0,
     ),
+    violationCount: Number(row.violation_count || 0),
   };
 }
 
@@ -999,6 +1001,11 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                           Approval blocked: this resident has {selectedRequest.outstandingPaymentCount} unresolved payment record{selectedRequest.outstandingPaymentCount === 1 ? '' : 's'}. Complete verification in Purok Members first.
                         </div>
                       )}
+                      {role === 'leader' && selectedRequest.violationCount > 0 && (
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[10px] font-black leading-relaxed text-amber-800">
+                          Notice: this resident has {selectedRequest.violationCount} violation record{selectedRequest.violationCount === 1 ? '' : 's'} (warning, fine or suspension). Review their history in Purok Members, then decide whether to approve or reject this endorsement.
+                        </div>
+                      )}
                     </div>
 
                    {/* Operational workflow form based on status & role */}
@@ -1262,6 +1269,11 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                   {role === 'leader' && item.outstandingPaymentCount > 0 && (
                     <p className="mt-2 text-[10px] font-black uppercase text-rose-600">
                       {item.outstandingPaymentCount} unresolved payment record{item.outstandingPaymentCount === 1 ? '' : 's'} — release blocked
+                    </p>
+                  )}
+                  {role === 'leader' && item.violationCount > 0 && (
+                    <p className="mt-2 text-[10px] font-black uppercase text-amber-700">
+                      ⚠ {item.violationCount} violation record{item.violationCount === 1 ? '' : 's'} — leader decides
                     </p>
                   )}
 

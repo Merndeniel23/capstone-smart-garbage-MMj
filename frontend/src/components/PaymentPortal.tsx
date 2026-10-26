@@ -60,6 +60,7 @@ interface PaymentRecord {
   category:
     | "weekly_fee"
     | "special_heavy_trash"
+    | "violation_fine"
     | "hazardous_disposal";
   billing_period: string;
   amount: number | string;

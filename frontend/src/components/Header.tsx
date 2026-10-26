@@ -64,7 +64,14 @@ function formatPageTitle(
     activeTab ===
     "collector-tasks"
   ) {
-    return "Collection Tasks";
+    return "Collector Dashboard";
+  }
+
+  if (
+    activeTab ===
+    "members-list"
+  ) {
+    return "Purok Members";
   }
 
   return String(

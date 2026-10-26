@@ -1685,7 +1685,7 @@ export default function MapView({
             className="mt-1 min-h-10 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal"
           >
             <option value="all">All active bins</option>
-            <option value="active_tasks">Active tasks</option>
+
             <option value="needs_collection">Needs collection</option>
             <option value="scheduled_today">Scheduled today</option>
             <option value="urgent">Overflowing</option>
@@ -1734,7 +1734,7 @@ export default function MapView({
               bin={selectedBin}
               busy={updatingId === selectedBin.id}
               viewOnly={!canManageCollectionTasks}
-              onCreateTask={() => createTask(selectedBin)}
+              onCreateTask={() => setCurrentScreen("collection-records")}
               onUpdateStatus={(status) =>
                 updateStatus(selectedBin, status)
               }
@@ -2074,6 +2074,17 @@ function BinDetails({
       )}
 
       {!viewOnly && (
+        <button
+          type="button"
+          onClick={onCreateTask}
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-800"
+        >
+          <CheckCircle2 className="h-4 w-4" />
+          Open QR Bin Scanner
+        </button>
+      )}
+
+      {false && !viewOnly && (
         <div className="space-y-2">
           {!request &&
             getStoredRole() === "collector" &&
