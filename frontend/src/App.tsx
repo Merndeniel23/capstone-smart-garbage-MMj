@@ -113,7 +113,7 @@ const ROLE_SCREENS: Record<Role, Screen[]> = {
     "profile",
   ],
   admin: [
-    "households", "collection-records", "violations", "activity-logs", "members-list",
+    "households", "collection-records", "activity-logs", "members-list",
     "admin-dashboard",
     "garbage-bins",
     "bin-inspections",

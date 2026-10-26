@@ -91,7 +91,6 @@ export function menuSections(
           { id: "bin-inspections", icon: ClipboardCheck, label: "Inspection Records" },
         ] },
         { title: "Monitoring", items: [
-          { id: "violations", icon: ShieldAlert, label: "Violations", revisions: true },
           { id: "complaints", icon: MessageSquare, label: "Complaints", count: counts.unreadComplaints },
         ] },
         { title: "Documents", items: [
