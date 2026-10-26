@@ -17,7 +17,6 @@ const ENDORSEMENT_ACTION_ROLES: AppRole[] = [
 ];
 const SCAN_DECISION_ROLES: AppRole[] = [
   "leader",
-  "admin",
 ];
 const ACCOUNT_NOTIFICATION_TYPES = new Set([
   "account_approval_request",

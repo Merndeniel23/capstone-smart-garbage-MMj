@@ -82,7 +82,6 @@ export function menuSections(
         ] },
         { title: "Users & Areas", items: [
           { id: "user-management", icon: UserCog, label: "Manage Users", count: counts.unreadAccounts },
-          { id: "puroks", icon: Building2, label: "Puroks", revisions: true },
           { id: "households", icon: Users, label: "Households & Members", revisions: true },
         ] },
         { title: "Garbage Collection", items: [
@@ -90,7 +89,6 @@ export function menuSections(
           { id: "garbage-bins", icon: MapPinned, label: "Garbage Bins" },
           { id: "collection-records", icon: ClipboardList, label: "Segregation Records", revisions: true },
           { id: "bin-inspections", icon: ClipboardCheck, label: "Inspection Records" },
-          { id: "route-map", icon: Map, label: "Route Map" },
         ] },
         { title: "Monitoring", items: [
           { id: "violations", icon: ShieldAlert, label: "Violations", revisions: true },

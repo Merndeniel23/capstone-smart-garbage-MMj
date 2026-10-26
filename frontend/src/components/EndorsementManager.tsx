@@ -1016,7 +1016,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                         {['pending_leader_review', 'leader_endorsed'].includes(selectedRequest.rawStatus)
                           ? 'Waiting for the Purok Leader to release or reject this request. The Barangay Captain has view-only access.'
                           : selectedRequest.rawStatus === 'approved'
-                            ? `Released by Purok Leader ${selectedRequest.approvedBy || selectedRequest.endorsedBy || ''}. Use View / Print or Export PDF in the list.`
+                            ? `Released by Purok Leader ${selectedRequest.approvedBy || selectedRequest.endorsedBy || ''}. Use View Letter in the list.`
                             : 'This request is closed. The Barangay Captain has view-only access.'}
                       </p>
                     )}
@@ -1336,10 +1336,10 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                         }`}
                       >
                         <Printer className="w-3 h-3" />
-                        {item.rawStatus === 'approved' ? 'View / Print' : 'Preview Endorsement'}
+                        {role === 'admin' ? 'View Letter' : item.rawStatus === 'approved' ? 'View / Print' : 'Preview Endorsement'}
                       </button>
                     )}
-                    {item.rawStatus === 'approved' && panelRevisionsEnabled && (
+                    {role !== 'admin' && item.rawStatus === 'approved' && panelRevisionsEnabled && (
                       <button
                         type="button"
                         disabled={actionLoading}
@@ -1492,7 +1492,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       </div>
                     </div>
 
-                    {activeCertificate.rawStatus === 'approved' ? (
+                    {role === 'admin' ? null : activeCertificate.rawStatus === 'approved' ? (
                       <button
                         onClick={() => window.print()}
                         className="w-full mt-auto py-3 bg-[#05BC8F] hover:bg-[#049a75] active:scale-95 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer focus:outline-none font-sans"
@@ -1614,7 +1614,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                       )}
                     </div>
 
-                    {activeCertificate.rawStatus === 'approved' ? (
+                    {role === 'admin' ? null : activeCertificate.rawStatus === 'approved' ? (
                       <button
                         onClick={() => window.print()}
                         className="mt-auto flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-xs font-extrabold uppercase tracking-wider text-white transition hover:bg-emerald-700"
@@ -1811,7 +1811,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
                 >
                   ✕ Close
                 </button>
-                {activeCertificate.rawStatus === 'approved' ? (
+                {role === 'admin' ? null : activeCertificate.rawStatus === 'approved' ? (
                   <button
                     onClick={() => window.print()}
                     className="px-5 py-2.5 bg-[#05BC8F] hover:bg-[#049a75] text-white text-xs font-black rounded-lg shadow-md transition-all flex items-center gap-1.5"
@@ -1834,6 +1834,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
       {approvedDocument && <ApprovedEndorsementDocument
         id={approvedDocument.databaseId}
         onClose={() => setApprovedDocument(null)}
+        viewOnly={role === 'admin'}
         onLegacyCopy={() => { setActiveCertificate(approvedDocument); setApprovedDocument(null); }}
       />}
     </div>

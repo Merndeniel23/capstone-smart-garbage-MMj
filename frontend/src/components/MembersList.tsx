@@ -1401,7 +1401,7 @@ export default function MembersList({
                                 </p>
                               )}
 
-                              {(isPurokLeader || canManageUsers) && (
+                              {isPurokLeader && (
                                 <div className="space-y-2 border-t border-slate-200 pt-3">
                                   <p className="text-[11px] font-black text-slate-700">
                                     {undecided
@@ -1744,7 +1744,7 @@ export default function MembersList({
                       </div>
                     </div>
 
-                    <QuickDecisionForm
+                    {isPurokLeader && <QuickDecisionForm
                       busy={submittingViolation}
                       onSubmit={(vals) =>
                         submitViolationDecision({
@@ -1753,7 +1753,7 @@ export default function MembersList({
                           residentId: scan.resident_id,
                         })
                       }
-                    />
+                    />}
                   </article>
                 ))}
               </div>

@@ -5,8 +5,8 @@ import { printDocument } from "../services/printDocument";
 
 type ApprovedDocument = { text: string; certificateNumber?: string; directPdfAvailable: boolean };
 
-export default function ApprovedEndorsementDocument({ id, onClose, onLegacyCopy }: {
-  id: number; onClose: () => void; onLegacyCopy: () => void;
+export default function ApprovedEndorsementDocument({ id, onClose, onLegacyCopy, viewOnly = false }: {
+  id: number; onClose: () => void; onLegacyCopy: () => void; viewOnly?: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const text = useRef<HTMLPreElement>(null);
@@ -47,8 +47,8 @@ export default function ApprovedEndorsementDocument({ id, onClose, onLegacyCopy 
     {document && <>
       <p className="mb-3 text-xs text-slate-600">Saved at final approval. This view does not replace the text with a newer template or editable resident data.</p>
       <pre ref={text} dir="auto" className="whitespace-pre-wrap break-words rounded-xl border bg-white p-5 font-sans text-sm leading-relaxed" style={{ unicodeBidi: "plaintext" }}>{document.text}</pre>
-      <div className="mt-4 flex flex-wrap gap-3"><button type="button" disabled={busy} onClick={() => void action(async () => { if (text.current) await printDocument(`Endorsement ${document.certificateNumber || id}`, text.current); })} className="rounded-xl bg-emerald-700 px-4 py-3 font-bold text-white disabled:opacity-50">Print / Save as PDF</button>{document.directPdfAvailable && <button type="button" disabled={busy} onClick={() => void action(() => downloadEndorsement(id))} className="rounded-xl border px-4 py-3 font-bold disabled:opacity-50">Download PDF</button>}</div>
-      {!document.directPdfAvailable && <p className="mt-3 text-sm text-slate-600">This document contains Unicode text. Use Print / Save as PDF and check the preview for correct characters. The direct PDF generator will not replace names or unsupported characters.</p>}
+      {!viewOnly && <div className="mt-4 flex flex-wrap gap-3"><button type="button" disabled={busy} onClick={() => void action(async () => { if (text.current) await printDocument(`Endorsement ${document.certificateNumber || id}`, text.current); })} className="rounded-xl bg-emerald-700 px-4 py-3 font-bold text-white disabled:opacity-50">Print / Save as PDF</button>{document.directPdfAvailable && <button type="button" disabled={busy} onClick={() => void action(() => downloadEndorsement(id))} className="rounded-xl border px-4 py-3 font-bold disabled:opacity-50">Download PDF</button>}</div>}
+      {!viewOnly && !document.directPdfAvailable && <p className="mt-3 text-sm text-slate-600">This document contains Unicode text. Use Print / Save as PDF and check the preview for correct characters. The direct PDF generator will not replace names or unsupported characters.</p>}
     </>}
   </dialog>;
 }
