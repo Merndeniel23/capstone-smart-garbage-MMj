@@ -410,6 +410,21 @@ export default function PaymentPortal({
     setAmount(String(CATEGORY_OPTIONS.find(item => item.value === category)?.amount ?? ''));
   }, [CATEGORY_OPTIONS, category]);
 
+  const selectedCategoryOption = useMemo(
+    () => CATEGORY_OPTIONS.find((item) => item.value === category) || null,
+    [CATEGORY_OPTIONS, category],
+  );
+  const minimumAmount = Number(selectedCategoryOption?.amount ?? 0);
+  const parsedAmount = Number(amount);
+  const hasAmountInput = amount.trim().length > 0;
+  const isAmountInvalid =
+    !hasAmountInput || !Number.isFinite(parsedAmount) || parsedAmount <= 0;
+  const isBelowMinimum =
+    minimumAmount > 0 &&
+    (!hasAmountInput ||
+      !Number.isFinite(parsedAmount) ||
+      Math.round(parsedAmount * 100) < Math.round(minimumAmount * 100));
+
   const isResident = role === "household";
   const isLeader = role === "leader";
   const isSuperAdmin =
@@ -822,6 +837,19 @@ export default function PaymentPortal({
     setMessage(null);
 
     const enteredAmount = Number(amount);
+
+    if (
+      Number.isFinite(enteredAmount) &&
+      enteredAmount > 0 &&
+      minimumAmount > 0 &&
+      Math.round(enteredAmount * 100) < Math.round(minimumAmount * 100)
+    ) {
+      setMessage({
+        type: "error",
+        text: `Payment amount cannot be below the minimum of PHP ${minimumAmount.toFixed(2)}.`,
+      });
+      return;
+    }
 
     if (
       !Number.isFinite(enteredAmount) ||
@@ -1422,7 +1450,7 @@ export default function PaymentPortal({
                   Weekly fee
                   <input
                     type="number"
-                    min="0.01"
+                    min={0.01}
                     step="0.01"
                     value={weeklyFeeInput}
                     onChange={(event) =>
@@ -2672,6 +2700,14 @@ export default function PaymentPortal({
           >
             <fieldset className="sg-form-section">
               <legend>Payment details</legend>
+              {message?.type === "error" && (
+                <div
+                  role="alert"
+                  className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs font-bold text-rose-700"
+                >
+                  {message.text}
+                </div>
+              )}
               <div className="sg-form-grid sg-form-grid--two">
             <select
               aria-label="Payment category"
@@ -2702,7 +2738,7 @@ export default function PaymentPortal({
                     key={item.value}
                     value={item.value}
                   >
-                    {item.label}
+                    {item.label} (Min. ₱{Number(item.amount).toFixed(2)})
                   </option>
                 ),
               )}
@@ -2724,7 +2760,7 @@ export default function PaymentPortal({
             <input
               aria-label="Amount in Philippine pesos"
               type="number"
-              min="0.01"
+              min={minimumAmount > 0 ? minimumAmount.toFixed(2) : "0.01"}
               step="0.01"
               value={amount}
               onChange={(event) =>
@@ -2732,13 +2768,24 @@ export default function PaymentPortal({
                   event.target.value,
                 )
               }
-              placeholder="Enter any payment amount"
+              placeholder={minimumAmount > 0 ? `Minimum ₱${minimumAmount.toFixed(2)}` : "Enter payment amount"}
+              aria-invalid={hasAmountInput && isBelowMinimum}
               className="min-h-11 w-full rounded-xl border px-3 py-2 text-sm"
               required
             />
               </div>
               <p className="mt-2 text-[11px] font-medium text-slate-500">
-                Enter the amount you are paying. Any positive amount is accepted.
+                {hasAmountInput && (isAmountInvalid || isBelowMinimum) ? (
+                  <span role="alert" className="font-bold text-rose-600">
+                    {isAmountInvalid
+                      ? "Enter a valid payment amount greater than ₱0.00."
+                      : `Amount cannot be below the minimum of ₱${minimumAmount.toFixed(2)} for ${selectedCategoryOption?.label || "this category"}.`}
+                  </span>
+                ) : (
+                  <span>
+                    Minimum required amount: ₱{minimumAmount > 0 ? minimumAmount.toFixed(2) : "0.00"}. Payments below the minimum cannot be submitted.
+                  </span>
+                )}
               </p>
             </fieldset>
 
@@ -2825,6 +2872,8 @@ export default function PaymentPortal({
               type="submit"
               disabled={
                 submitting ||
+                isAmountInvalid ||
+                isBelowMinimum ||
                 (method !== "xendit" && !receiptProof)
               }
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-4 text-xs font-black uppercase text-white disabled:opacity-50"

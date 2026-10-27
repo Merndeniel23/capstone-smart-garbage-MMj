@@ -179,6 +179,19 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
     setPayAmount(String(PAYMENT_CATEGORY_OPTIONS.find(item => item.value === payCategory)?.amount ?? ''));
   }, [PAYMENT_CATEGORY_OPTIONS, payCategory]);
 
+  const selectedPayOption =
+    PAYMENT_CATEGORY_OPTIONS.find((item) => item.value === payCategory) || null;
+  const minPayAmount = Number(selectedPayOption?.amount ?? 0);
+  const parsedPayAmount = Number(payAmount);
+  const hasPayAmountInput = payAmount.trim().length > 0;
+  const isPayAmountInvalid =
+    !hasPayAmountInput || !Number.isFinite(parsedPayAmount) || parsedPayAmount <= 0;
+  const isPayBelowMinimum =
+    minPayAmount > 0 &&
+    (!hasPayAmountInput ||
+      !Number.isFinite(parsedPayAmount) ||
+      Math.round(parsedPayAmount * 100) < Math.round(minPayAmount * 100));
+
   // Notification banners
   const [alertText, setAlertText] = useState('');
 
@@ -278,6 +291,16 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
 
   const submitPayment = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isPayAmountInvalid) {
+      setModalError('Enter a valid payment amount greater than PHP 0.00.');
+      return;
+    }
+    if (isPayBelowMinimum) {
+      setModalError(
+        `Payment amount cannot be below the minimum of PHP ${minPayAmount.toFixed(2)}.`,
+      );
+      return;
+    }
     if (!payRefNo.trim() || !receiptProof) {
       setModalError('Enter the payment reference and upload its receipt image.');
       return;
@@ -750,7 +773,7 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
                   >
                     {PAYMENT_CATEGORY_OPTIONS.map((option) => (
                       <option key={option.value} value={option.value}>
-                        {option.label} (₱{option.amount})
+                        {option.label} (Min. ₱{Number(option.amount).toFixed(2)})
                       </option>
                     ))}
                   </select>
@@ -769,14 +792,34 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-slate-450 font-black uppercase tracking-widest block">Amount Due (PHP)</label>
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-slate-450 font-black uppercase tracking-widest block">Amount Due (PHP)</label>
+                    {minPayAmount > 0 && (
+                      <span className="text-[10px] font-black text-emerald-700">
+                        Min. ₱{minPayAmount.toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                  {hasPayAmountInput && (isPayAmountInvalid || isPayBelowMinimum) && (
+                    <p role="alert" className="text-[10px] font-bold text-rose-600">
+                      {isPayAmountInvalid
+                        ? 'Enter a valid payment amount greater than ₱0.00.'
+                        : `Amount cannot be below the minimum of ₱${minPayAmount.toFixed(2)}.`}
+                    </p>
+                  )}
                   <input 
                     type="number"
-                    min="0.01"
+                    min={minPayAmount > 0 ? minPayAmount.toFixed(2) : "0.01"}
                     step="0.01"
                     value={payAmount}
                     onChange={(e) => setPayAmount(e.target.value)}
-                    className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-2xl font-black text-slate-850"
+                    placeholder={minPayAmount > 0 ? `Minimum ₱${minPayAmount.toFixed(2)}` : "0.00"}
+                    aria-invalid={hasPayAmountInput && (isPayAmountInvalid || isPayBelowMinimum)}
+                    className={`w-full p-3.5 rounded-2xl font-black border ${
+                      hasPayAmountInput && (isPayAmountInvalid || isPayBelowMinimum)
+                        ? 'bg-rose-50/50 border-rose-400 text-rose-900'
+                        : 'bg-slate-50 border-slate-200 text-slate-850'
+                    }`}
                     required
                   />
                 </div>
@@ -848,7 +891,12 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
 
                 <button 
                   type="submit"
-                  disabled={submittingPayment || !receiptProof}
+                  disabled={
+                    submittingPayment ||
+                    !receiptProof ||
+                    isPayAmountInvalid ||
+                    isPayBelowMinimum
+                  }
                   className="w-full py-4 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold uppercase tracking-widest rounded-2xl shadow-lg shadow-emerald-500/10 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {submittingPayment ? 'Submitting Payment...' : 'Submit Reference Slip'}

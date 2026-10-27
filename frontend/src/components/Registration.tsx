@@ -30,6 +30,7 @@ export default function Registration() {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginSubmitting, setLoginSubmitting] = useState(false);
+  const [loginSlowNotice, setLoginSlowNotice] = useState('');
   
   // Registration fields
   const [regFullName, setRegFullName] = useState('');
@@ -91,6 +92,10 @@ const [resendCountdown, setResendCountdown] = useState(0);
   useEffect(() => {
     if (forgotError) forgotFeedbackRef.current?.scrollIntoView({ block: 'nearest' });
   }, [forgotError]);
+
+  useEffect(() => {
+    void apiFetch('/api/health').catch(() => {});
+  }, []);
 
 
   useEffect(() => {
@@ -290,10 +295,21 @@ const [resendCountdown, setResendCountdown] = useState(0);
 
     // Stays on after a successful login until the dashboard replaces this screen.
     setLoginSubmitting(true);
+    setLoginSlowNotice('');
     let signedIn = false;
+    const controller = new AbortController();
+    const slowTimer = window.setTimeout(() => {
+      setLoginSlowNotice(
+        'Waking up server... Free cloud hosting can take 30–60 seconds after being idle.',
+      );
+    }, 5000);
+    const timeoutTimer = window.setTimeout(() => {
+      controller.abort();
+    }, 65000);
 
     try {
       const response = await apiFetch('/api/auth/login', {
+        signal: controller.signal,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -304,7 +320,7 @@ const [resendCountdown, setResendCountdown] = useState(0);
         }),
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
         if (data.requiresEmailVerification && data.email) {
@@ -315,7 +331,12 @@ const [resendCountdown, setResendCountdown] = useState(0);
           setLoginPassword('');
           return;
         }
-        setError(data.message || 'Login failed.');
+        setError(
+          data.message ||
+            (response.status >= 500
+              ? 'Server or database is currently unavailable (check Render & Aiven status).'
+              : 'Login failed.'),
+        );
         return;
       }
 
@@ -326,9 +347,18 @@ const [resendCountdown, setResendCountdown] = useState(0);
         completeLogin(data, rememberMe);
       }, 300);
     } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        setError(
+          'Sign-in timed out. Make sure the Render backend is Live and the Aiven database is Running, then try again.',
+        );
+        return;
+      }
       console.error('Login error:', error);
       setError('Cannot connect to the server.');
     } finally {
+      window.clearTimeout(slowTimer);
+      window.clearTimeout(timeoutTimer);
+      setLoginSlowNotice('');
       if (!signedIn) setLoginSubmitting(false);
     }
   };
@@ -400,7 +430,7 @@ const [resendCountdown, setResendCountdown] = useState(0);
         }),
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
         setError(data.message || 'Registration failed.');
@@ -445,7 +475,7 @@ const [resendCountdown, setResendCountdown] = useState(0);
             : {}),
         }),
       });
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
 
       if (data.requiresPolicyAcceptance && !pendingGoogleRegistration) {
         setPendingGoogleRegistration({
@@ -859,6 +889,14 @@ const handleResetPasswordSubmit = async (
     {loginSubmitting ? 'Signing in...' : 'Authenticate & Enter Console'}
   </button>
 
+  {loginSlowNotice && (
+    <p
+      role="status"
+      className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-center text-[11px] font-semibold text-amber-800"
+    >
+      {loginSlowNotice}
+    </p>
+  )}
   {googleSignInEnabled && (
     <>
   <div className="auth-divider flex items-center">
