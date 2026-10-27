@@ -771,16 +771,6 @@ const handleResetPasswordSubmit = async (
           </div>
         </div>
 
-        {/* Desktop card heading */}
-        <div className="hidden lg:block">
-          <h1 className="font-[family-name:var(--font-display)] text-2xl font-bold text-stone-900">
-            {activeTab === 'login' ? 'Welcome back' : 'Create your account'}
-          </h1>
-          <p className="mt-1 text-sm text-stone-500">
-            {activeTab === 'login' ? 'Sign in to continue to your dashboard.' : 'Register to start using resident services.'}
-          </p>
-        </div>
-
         {/* MAIN AUTH CONTAINER */}
         <div className="auth-card overflow-hidden rounded-3xl border border-stone-200/60 bg-white p-6 shadow-xl transition-all sm:p-8">
           

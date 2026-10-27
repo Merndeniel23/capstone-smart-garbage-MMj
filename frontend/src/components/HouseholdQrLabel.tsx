@@ -22,23 +22,23 @@ export default function HouseholdQrLabel({ label, owner = false }: { label: Hous
     document.body.appendChild(anchor); anchor.click(); anchor.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  return <section className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4" aria-label="Registered household bin QR label">
+  return <section className="flex flex-col items-center space-y-3 rounded-xl border border-emerald-200 bg-emerald-50 p-5 text-center" aria-label="Registered household bin QR label">
     <h3 className="font-bold">{owner ? `My household bin QR · ${label.binCode}` : "Save the newly registered QR label"}</h3>
     <p className="text-sm">{owner ? "Show this QR to the Garbage Collector when they scan your bin. The Collector marks it Segregated or Not Segregated, and your Purok Leader handles any warning, fine or suspension." : "This label is also available to the resident in My Household. Rotating the QR invalidates the previous label."}</p>
-    <svg ref={svg} xmlns="http://www.w3.org/2000/svg" viewBox={`0 0 ${qr.size} ${qr.size + 9}`} width="328" height="400" role="img" aria-labelledby={titleId} className="max-w-full bg-white" shapeRendering="crispEdges">
+    <svg ref={svg} xmlns="http://www.w3.org/2000/svg" viewBox={`0 0 ${qr.size} ${qr.size + 9}`} width="328" height="400" role="img" aria-labelledby={titleId} className="mx-auto block max-w-full rounded-xl bg-white shadow-sm" shapeRendering="crispEdges">
       <title id={titleId}>SGMS bin {label.binCode}, household HH-{label.householdId}</title>
       <rect width={qr.size} height={qr.size + 9} fill="white" />
       <path d={qr.path} fill="black" />
       <text x={qr.size / 2} y={qr.size + 3} textAnchor="middle" fontFamily="Arial, sans-serif" fontSize="2" fill="black" shapeRendering="auto">{label.binCode.slice(0, 35)}</text>
       <text x={qr.size / 2} y={qr.size + 6} textAnchor="middle" fontFamily="Arial, sans-serif" fontSize="2" fill="black" shapeRendering="auto">SGMS · HH-{label.householdId} · Bin #{label.binId}</text>
     </svg>
-    <div className="rounded-lg border border-emerald-200 bg-white p-2.5 text-xs font-mono break-all text-slate-700">
+    <div className="w-full rounded-lg border border-emerald-200 bg-white p-2.5 text-center text-xs font-mono break-all text-slate-700">
       {label.payload}
     </div>
-    <div className="flex flex-wrap gap-2">
-      <button type="button" onClick={() => { void navigator.clipboard?.writeText(label.payload).then(() => setMessage("QR code payload copied! Paste it into the Collector QR Scanner.")); }} className="rounded-xl bg-emerald-700 px-4 py-2 font-bold text-white">Copy QR Code</button>
-      <button type="button" onClick={download} className="rounded-xl border bg-white px-4 py-2 font-bold">Download QR label</button>
-      <button type="button" onClick={() => { if (svg.current) void printDocument(`SGMS household ${label.householdId} bin ${label.binId}`, svg.current).catch(error => setMessage(error instanceof Error ? error.message : "Unable to print.")); }} className="rounded-xl border bg-white px-4 py-2 font-bold">Print label</button>
+    <div className="flex flex-wrap items-center justify-center gap-2">
+      <button type="button" onClick={() => { void navigator.clipboard?.writeText(label.payload).then(() => setMessage("QR code payload copied! Paste it into the Collector QR Scanner.")); }} className="rounded-xl bg-emerald-700 px-3.5 py-2 text-xs font-bold text-white">Copy QR Code</button>
+      <button type="button" onClick={download} className="rounded-xl border bg-white px-3.5 py-2 text-xs font-bold">Download QR label</button>
+      <button type="button" onClick={() => { if (svg.current) void printDocument(`SGMS household ${label.householdId} bin ${label.binId}`, svg.current).catch(error => setMessage(error instanceof Error ? error.message : "Unable to print.")); }} className="rounded-xl border bg-white px-3.5 py-2 text-xs font-bold">Print label</button>
     </div>
     <p className="text-xs">Generated locally. The label contains a random bin token, not household names, contact details or passwords.</p>
     <p role="status" className="text-sm">{message}</p>
