@@ -14,6 +14,7 @@ import {
 import type { AdminActionCounts } from "../hooks/useAdminActionCounts";
 import { useNotifications } from "../context/NotificationsContext";
 import { menuSections, roleLabel, useSgmsFlags } from "./navigation";
+import UserAvatar from "./UserAvatar";
 
 interface SidebarProps {
   activeTab: string;
@@ -85,7 +86,7 @@ export default function Sidebar({
 
   return (
     <aside
-      className={`sticky top-0 hidden h-screen min-h-0 shrink-0 flex-col self-start text-white shadow-xl transition-all duration-300 md:flex ${
+      className={`sticky top-0 hidden h-screen min-h-0 shrink-0 flex-col self-start text-white shadow-xl transition-all duration-300 lg:flex ${
         collapsed
           ? "w-20"
           : "w-64"
@@ -105,18 +106,17 @@ export default function Sidebar({
               : "gap-3"
           }`}
         >
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/10 shadow-inner ring-1 ring-white/5 dark:bg-emerald-300/10">
-            <RoleIcon className="h-5 w-5 text-emerald-100 dark:text-emerald-200" />
-          </div>
+          <UserAvatar tone="dark" className="h-11 w-11" />
 
           {!collapsed && (
             <div className="min-w-0">
-              <p className="text-[9px] font-black uppercase tracking-widest text-emerald-300 dark:text-emerald-300/80">
+              <p className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-200 dark:text-emerald-300/80">
+                <RoleIcon className="h-3.5 w-3.5" />
                 {roleLabel(role)}
               </p>
 
               <p
-                className="mt-0.5 max-w-[132px] truncate text-sm font-extrabold text-white"
+                className="mt-0.5 max-w-[132px] truncate text-sm font-semibold text-white"
                 title={username}
               >
                 {username}
@@ -165,7 +165,7 @@ export default function Sidebar({
             {collapsed ? (
               sectionIndex > 0 && <hr className="my-3 border-white/15" />
             ) : (
-              <p className="px-3 pb-1 pt-4 text-[10px] font-black uppercase tracking-widest text-white/50">
+              <p className="px-3 pb-1 pt-4 text-[11px] font-semibold text-white/50">
                 {section.title}
               </p>
             )}
@@ -242,7 +242,7 @@ export default function Sidebar({
         }`}
       >
         {!collapsed ? (
-          <p className="text-center text-[9px] font-bold uppercase tracking-[0.18em] text-white/35 dark:text-emerald-100/30">
+          <p className="text-center text-[11px] font-medium text-white/40 dark:text-emerald-100/30">
             Smart Garbage Monitoring
           </p>
         ) : (

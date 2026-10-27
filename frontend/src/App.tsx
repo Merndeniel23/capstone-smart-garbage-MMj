@@ -388,6 +388,7 @@ export default function App() {
 function AppContent() {
   // Navigate to the exact complaint when opening a complaint notification.
   const [notificationComplaintId, setNotificationComplaintId] = useState<number | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const {
     isLoggedIn,
     isAuthLoading,
@@ -606,7 +607,7 @@ function AppContent() {
   }
 
   return (
-    <div className="sg-app-shell flex min-h-screen min-w-0 flex-col overflow-x-clip bg-[#F8FAFC] font-sans text-slate-900 md:flex-row">
+    <div className="sg-app-shell flex min-h-screen min-w-0 flex-col overflow-x-clip bg-[#F8FAFC] font-sans text-slate-900 lg:flex-row">
       <EmergencyAlertOverlay />
       {userRole === "collector" && (
         <PersistentCollectorLocationTracker />
@@ -625,10 +626,10 @@ function AppContent() {
           onLogout={handleLogout}
           userRole={userRole as any}
           onNavigate={openNotificationDestination}
-          profilePhoto={currentUser?.profilePhoto}
+          onOpenMenu={() => setMobileMenuOpen(true)}
         />
 
-        <main id="main-content" tabIndex={-1} className="mx-auto min-w-0 w-full max-w-7xl flex-1 overflow-x-clip p-4 md:p-8">
+        <main id="main-content" tabIndex={-1} className="mx-auto min-w-0 w-full max-w-7xl flex-1 overflow-x-clip p-4 pb-24 md:px-8 md:pt-8 lg:p-8">
           <AnimatePresence mode="wait">
             <motion.div
               key={currentScreen}
@@ -701,12 +702,15 @@ function AppContent() {
         </main>
       </div>
 
-      <div className="md:hidden">
+      <div className="lg:hidden">
         <BottomNav
           activeTab={currentScreen as any}
           onTabChange={(tab: any) => setCurrentScreen(tab)}
           role={userRole}
           adminActionCounts={adminActionCounts}
+          menuOpen={mobileMenuOpen}
+          onMenuOpenChange={setMobileMenuOpen}
+          onLogout={handleLogout}
         />
       </div>
 

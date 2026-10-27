@@ -442,13 +442,13 @@ export default function QrCollection({
                     }
                   }}
                   className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm focus:border-emerald-500 focus:bg-white focus:outline-none"
-                  placeholder="Or paste / scan QR code (SGMS:1:...)"
+                  placeholder="Enter or paste QR code"
                 />
                 <button
                   type="button"
                   disabled={busy || !qr.trim()}
                   onClick={() => void identify()}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-3 text-xs font-black uppercase tracking-wider text-white hover:bg-slate-800 disabled:opacity-50"
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 disabled:bg-slate-300 disabled:text-slate-600"
                 >
                   {busy && !bin ? (
                     <RefreshCw className="h-4 w-4 animate-spin" />
@@ -576,17 +576,6 @@ export default function QrCollection({
                   </div>
                 </div>
               )}
-            </div>
-
-            <div className="flex justify-end border-t border-slate-100 pt-3">
-              <button
-                type="button"
-                onClick={closeModal}
-                disabled={busy}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-black text-slate-700 hover:bg-slate-50"
-              >
-                Done
-              </button>
             </div>
           </div>
         </div>

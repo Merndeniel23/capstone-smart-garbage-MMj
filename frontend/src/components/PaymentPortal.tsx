@@ -838,6 +838,15 @@ export default function PaymentPortal({
 
     const enteredAmount = Number(amount);
 
+    // Without the category option the minimum is unknown, so never submit.
+    if (!selectedCategoryOption) {
+      setMessage({
+        type: "error",
+        text: "Payment categories are still loading. Please wait and try again.",
+      });
+      return;
+    }
+
     if (
       Number.isFinite(enteredAmount) &&
       enteredAmount > 0 &&
@@ -2209,14 +2218,17 @@ export default function PaymentPortal({
             setBarangayFilter("");
             setPurokFilter("");
           }}
-          className="h-10 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-500"
+          className="sg-btn-secondary h-10"
         >
           Clear
         </button>
       </section>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2" aria-label="Payment status filters">
-          {(["all", "pending_leader_verification", "pending_remittance", "pending_admin_confirmation", "completed", "rejected_by_leader", "discrepancy"] as const).map(status => <button key={status} type="button" aria-pressed={statusFilter === status} onClick={() => setStatusFilter(status)} className={`rounded-full border px-3 py-2 text-[10px] font-semibold transition ${statusFilter === status ? "border-emerald-500 bg-emerald-500/15 text-emerald-600" : "border-slate-200 text-slate-500 hover:border-emerald-500"}`}>{status === "all" ? "All" : ({pending_leader_verification:"To verify",pending_remittance:"To remit",pending_admin_confirmation:"To confirm",completed:"Completed",rejected_by_leader:"Rejected",discrepancy:"Discrepancy"}[status])} ({payments.filter(p => status === "all" || p.status === status).length.toLocaleString()})</button>)}
+          {(["all", "pending_leader_verification", "pending_remittance", "pending_admin_confirmation", "completed", "rejected_by_leader", "discrepancy"] as const)
+            // Remittance and captain confirmation are internal LGU accounting steps.
+            .filter(status => !isResident || (status !== "pending_remittance" && status !== "pending_admin_confirmation"))
+            .map(status => <button key={status} type="button" aria-pressed={statusFilter === status} onClick={() => setStatusFilter(status)} className={`rounded-full border px-3 py-2 text-[10px] font-semibold transition ${statusFilter === status ? "border-emerald-500 bg-emerald-500/15 text-emerald-600" : "border-slate-200 text-slate-500 hover:border-emerald-500"}`}>{status === "all" ? "All" : ({pending_leader_verification:"To verify",pending_remittance:"To remit",pending_admin_confirmation:"To confirm",completed:"Completed",rejected_by_leader:"Rejected",discrepancy:"Discrepancy"}[status])} ({payments.filter(p => status === "all" || p.status === status).length.toLocaleString()})</button>)}
         </div>
         <button type="button" disabled={!filteredPayments.length} onClick={() => {
           const cell = (value: unknown) => '"' + String(value ?? "").replace(/^[\s]*[=+@-]/, "'$&").replace(/"/g, '""') + '"';
@@ -2227,12 +2239,12 @@ export default function PaymentPortal({
       </div>
 
       {loading ? (
-        <div className="flex min-h-[300px] items-center justify-center rounded-[2rem] border bg-white">
+        <div className="flex min-h-[300px] items-center justify-center rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
         </div>
       ) : (
-        <div className="space-y-1">
-          <div className="sg-desktop-table overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="space-y-2">
+          <div className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 md:block">
             <table className="w-full table-fixed text-left text-[11px] xl:text-xs">
               <colgroup>
                 <col className="w-[10%]" />
@@ -2278,9 +2290,9 @@ export default function PaymentPortal({
               </tr>)}</tbody>
             </table>
           </div>
-          <div className="sg-mobile-list-card space-y-2">
+          <div className="space-y-2 md:hidden">
             {visiblePayments.map((payment) => (
-              <article key={payment.id} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+              <article key={payment.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate font-mono text-[10px] font-bold text-slate-700">{payment.transaction_code}</p>
@@ -2872,6 +2884,7 @@ export default function PaymentPortal({
               type="submit"
               disabled={
                 submitting ||
+                !selectedCategoryOption ||
                 isAmountInvalid ||
                 isBelowMinimum ||
                 (method !== "xendit" && !receiptProof)

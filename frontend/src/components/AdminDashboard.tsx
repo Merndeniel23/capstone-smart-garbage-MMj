@@ -464,7 +464,7 @@ export default function AdminDashboard({
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* Live Analytics */}
           <div className="space-y-5 lg:col-span-2">
-           <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
              <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
               <div>
                 <div className="flex items-center gap-2 text-emerald-600">
@@ -520,7 +520,7 @@ export default function AdminDashboard({
                         ? 'Complaint analytics are currently unavailable.'
                         : 'No complaint records yet.'
                     }
-                    barClass="bg-rose-400"
+                    barClass="bg-slate-400"
                   />
 
                   <AnalyticsBarChart
@@ -531,7 +531,7 @@ export default function AdminDashboard({
                         ? 'Registration analytics are currently unavailable.'
                         : 'No registration records yet.'
                     }
-                    barClass="bg-blue-500"
+                    barClass="bg-emerald-400"
                   />
 
                   <AnalyticsBarChart
@@ -542,7 +542,7 @@ export default function AdminDashboard({
                         ? 'Collection analytics are currently unavailable.'
                         : 'No collection records yet.'
                     }
-                    barClass="bg-emerald-500"
+                    barClass="bg-emerald-700"
                   />
                 </div>
               )}
@@ -837,19 +837,20 @@ function AnalyticsBarChart({
 
   return (
     <section>
-      <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-lg font-black text-slate-800">{title}</h3>
-        <span className="text-[10px] font-black uppercase tracking-wide text-slate-400">
-          {hasAdditionalItems ? `Latest ${visibleItems.length} periods` : 'Database Records'}
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-base font-semibold text-slate-800">{title}</h3>
+        <span className="text-xs text-slate-500">
+          {hasAdditionalItems ? `Latest ${visibleItems.length} periods` : 'Database records'}
         </span>
       </div>
 
       {items.length === 0 ? (
-        <div className="rounded-2xl bg-slate-50 p-5 text-center text-xs font-bold text-slate-400">
-          {emptyMessage}
+        <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-white px-5 py-8 text-center">
+          <BarChart3 className="h-6 w-6 text-slate-300" aria-hidden="true" />
+          <p className="text-sm text-slate-500">{emptyMessage}</p>
         </div>
       ) : (
-        <div className="rounded-2xl border border-slate-200/80 bg-slate-50 p-3 sm:p-4">
+        <div className="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
           <div className="grid grid-cols-4 gap-x-2 gap-y-4 sm:grid-cols-8 sm:gap-x-3">
             {visibleItems.map((item) => {
               const height = Math.max(
@@ -862,19 +863,20 @@ function AnalyticsBarChart({
                   key={`${title}-${item.label}`}
                   className="flex h-32 min-w-0 flex-col items-center sm:h-40"
                 >
-                  <span className="mb-1.5 flex-none text-sm font-black text-slate-700">
+                  <span className="mb-1.5 flex-none text-xs font-semibold tabular-nums text-slate-700">
                     {item.value}
                   </span>
 
-                  <div className="flex min-h-0 w-full flex-1 items-end justify-center border-b border-slate-200/80">
+                  {/* Subtle quarter gridlines behind each bar track. */}
+                  <div className="flex min-h-0 w-full flex-1 items-end justify-center border-b border-slate-300 bg-[linear-gradient(to_top,rgb(148_163_184/0.18)_1px,transparent_1px)] bg-[length:100%_25%]">
                     <div
-                      className={`w-full max-w-8 rounded-t-lg shadow-sm transition-all duration-500 ${barClass}`}
+                      className={`w-full max-w-8 rounded-t-md transition-[height] duration-500 ${barClass}`}
                       style={{ height: `${height}%` }}
                       title={`${item.label}: ${item.value}`}
                     />
                   </div>
 
-                  <span className="mt-2 flex-none truncate text-center text-[9px] font-bold text-slate-400" title={item.label}>
+                  <span className="mt-2 w-full flex-none truncate text-center text-[10px] font-medium text-slate-500" title={item.label}>
                     {item.label}
                   </span>
                 </div>

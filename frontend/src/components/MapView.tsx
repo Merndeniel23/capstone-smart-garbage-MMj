@@ -471,8 +471,10 @@ export default function MapView({
   const [collectorPage, setCollectorPage] = useState(1);
   const [collectorPageSize, setCollectorPageSize] = useState(DEFAULT_PAGE_SIZE);
 
-  const loadData = async () => {
-    setLoading(true);
+  // `silent` reloads (the 5s poll) skip the loading state so the list and
+  // map controls do not flicker; the fetched data is identical.
+  const loadData = async (silent = false) => {
+    if (!silent) setLoading(true);
     setErrorMessage("");
     setCollectorLocationError("");
 
@@ -1366,7 +1368,7 @@ export default function MapView({
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      void loadData();
+      void loadData(true);
     }, 5000);
 
     return () => window.clearInterval(timer);
@@ -1542,8 +1544,8 @@ export default function MapView({
 
           <button
             type="button"
-            onClick={loadData}
-            className="flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-black text-slate-700"
+            onClick={() => void loadData()}
+            className="sg-btn-secondary"
           >
             <RefreshCw
               className={`h-4 w-4 ${
@@ -1891,10 +1893,14 @@ export default function MapView({
             </div>
           )}
 
-          {loading && (
-            <div className="p-10 text-center text-slate-500">
-              <RefreshCw className="mx-auto mb-2 h-6 w-6 animate-spin" />
-              Loading garbage bins...
+          {loading && filteredBins.length === 0 && (
+            <div aria-hidden="true" className="animate-pulse space-y-3 p-4">
+              {[0, 1, 2].map((row) => (
+                <div key={row} className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <span className="sg-skeleton block h-4 w-1/3" />
+                  <span className="sg-skeleton mt-3 block h-3 w-2/3" />
+                </div>
+              ))}
             </div>
           )}
         </div>

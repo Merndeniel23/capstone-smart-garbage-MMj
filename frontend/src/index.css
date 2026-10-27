@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+/* Fonts (Inter, Plus Jakarta Sans, JetBrains Mono) are loaded in index.html. */
 @import "tailwindcss";
 
 /* The dashboard toggle, rather than the OS preference, owns dark mode.
@@ -20,6 +20,7 @@
 :root {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-display: "Plus Jakarta Sans", "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
 @layer base {
@@ -28,11 +29,35 @@
     font-family: var(--font-sans);
   }
 
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+
+  code, kbd, samp, pre {
+    font-family: var(--font-mono);
+  }
+
+  /* Tailwind v4 defaults a bare `border` to currentColor, which drew black
+     wireframe borders on cards, filters and tables. Default to slate-200;
+     the dark-mode rule below (same specificity, later) maps it to slate. */
+  *, ::after, ::before, ::backdrop, ::file-selector-button {
+    border-color: var(--color-slate-200, #e2e8f0);
+  }
+
   /* A neutral fallback for borders without a color utility. Explicit border
      colors and focus/error states remain in the higher-priority utility layer. */
   :where(html.sg-dark .sg-app-shell, html.sg-dark .sg-app-shell *) {
     border-color: #334155;
   }
+}
+
+/* Calm label style: wide-tracked all-caps eyebrow labels render in the
+   Sentence/Title case written in source. Unlayered so it wins over utilities. */
+.sg-app-shell .uppercase:is(.tracking-widest, .tracking-wider, [class*="tracking-[0.1"], [class*="tracking-[0.2"]) {
+  text-transform: none;
+  letter-spacing: 0.005em;
+  font-weight: 600;
 }
 
 /* Keep native modal dimming viewport-wide, including below tall dialogs. */
@@ -564,6 +589,50 @@ html.sg-dark .sg-app-shell .sg-form-section-title {
     padding: 1rem;
     box-shadow: 0 1px 2px rgb(15 23 42 / .04);
   }
+
+  /* One outline style for secondary actions (Refresh, Clear, Cancel). */
+  .sg-btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: .5rem;
+    min-height: 2.5rem;
+    border: 1px solid rgb(226 232 240);
+    border-radius: .75rem;
+    background: #ffffff;
+    padding: .5rem 1rem;
+    font-size: .875rem;
+    font-weight: 600;
+    color: rgb(51 65 85);
+    box-shadow: 0 1px 2px rgb(15 23 42 / .04);
+    transition: background-color .15s, border-color .15s;
+  }
+  .sg-btn-secondary:hover:not(:disabled) {
+    background: rgb(248 250 252);
+    border-color: rgb(203 213 225);
+  }
+  .sg-btn-secondary:disabled {
+    cursor: not-allowed;
+    opacity: .6;
+  }
+
+  /* Placeholder block for first-load skeletons. */
+  .sg-skeleton {
+    border-radius: .5rem;
+    background: rgb(226 232 240);
+  }
+}
+
+html.sg-dark .sg-app-shell .sg-btn-secondary {
+  border-color: #334155;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+html.sg-dark .sg-app-shell .sg-btn-secondary:hover:not(:disabled) {
+  background: #1e293b;
+}
+html.sg-dark .sg-app-shell .sg-skeleton {
+  background: #1e293b;
 }
 
 /* Shared card defaults; colored actions and child utilities retain their colors. */

@@ -14,8 +14,18 @@ import {
   Leaf, 
   CheckCircle,
   HelpCircle,
-  Loader2
+  Loader2,
+  QrCode,
+  Truck,
+  ShieldCheck
 } from 'lucide-react';
+
+// Branding highlights for the desktop split layout (presentation only).
+const AUTH_HIGHLIGHTS = [
+  { icon: QrCode, title: 'QR bin scanning', text: 'Collectors scan each household bin and record segregation on the spot.' },
+  { icon: Truck, title: 'Schedules and routes', text: 'Residents see pickup days while collectors follow their assigned purok routes.' },
+  { icon: ShieldCheck, title: 'Transparent records', text: 'Warnings, fines and fees are logged so every decision can be verified.' },
+];
 
 
 export default function Registration() {
@@ -24,6 +34,10 @@ export default function Registration() {
   // Tab state: 'login' | 'register'
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  // Size the Google button to its container so it never clips on narrow screens.
+  const googleWrapRef = useRef<HTMLDivElement>(null);
+  const [googleButtonWidth, setGoogleButtonWidth] = useState(320);
   const [rememberMe, setRememberMe] = useState(false);
   
   // Login fields
@@ -686,31 +700,85 @@ const handleResetPasswordSubmit = async (
   }
 };
 
+  useEffect(() => {
+    const element = googleWrapRef.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    // Google's button accepts 200–400px; keep it within the card width.
+    const observer = new ResizeObserver(([entry]) => {
+      const width = Math.floor(entry.contentRect.width);
+      if (width > 0) setGoogleButtonWidth(Math.max(200, Math.min(400, width)));
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [activeTab, registrationVerificationStep, googleSignInEnabled]);
+
   return (
-    <div className="auth-page auth-shell auth-entry-page relative flex min-h-[100dvh] w-full flex-col items-center justify-center bg-[#FAFBF9] px-4 font-sans text-stone-900 sm:px-6 lg:px-8">
-      {/* Absolute top decoration */}
-      <div className="absolute top-0 inset-x-0 h-2 bg-emerald-700" />
-      
-      {/* Decorative blurred spots */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute top-[15%] left-[10%] w-[350px] h-[350px] bg-emerald-700/5 rounded-full blur-[100px]" />
-        <div className="absolute bottom-[15%] right-[10%] w-[350px] h-[350px] bg-emerald-700/5 rounded-full blur-[100px]" />
-      </div>
+    <div className="auth-page auth-shell relative grid min-h-[100dvh] w-full bg-[#FAFBF9] font-sans text-stone-900 lg:grid-cols-2">
+      {/* DESKTOP BRANDING PANEL */}
+      <aside className="relative hidden flex-col justify-between overflow-hidden bg-[#14532d] p-12 text-white lg:flex xl:p-16">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15">
+            <Leaf className="h-5 w-5 text-emerald-100" />
+          </div>
+          <div>
+            <p className="font-[family-name:var(--font-display)] text-base font-bold leading-tight">Smart Garbage Monitoring System</p>
+            <p className="text-sm text-emerald-200">Barangay Bangbang</p>
+          </div>
+        </div>
+
+        <div className="max-w-md">
+          <h2 className="font-[family-name:var(--font-display)] text-3xl font-bold leading-tight xl:text-4xl">
+            Cleaner puroks, tracked from bin to barangay.
+          </h2>
+          <p className="mt-4 text-base leading-relaxed text-emerald-100/80">
+            One place for residents, collectors, purok leaders and the barangay to follow waste collection and segregation.
+          </p>
+          <ul className="mt-10 space-y-6">
+            {AUTH_HIGHLIGHTS.map(({ icon: Icon, title, text }) => (
+              <li key={title} className="flex gap-4">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/10">
+                  <Icon className="h-5 w-5 text-emerald-200" />
+                </span>
+                <div>
+                  <p className="text-sm font-semibold">{title}</p>
+                  <p className="mt-1 text-sm leading-relaxed text-emerald-100/70">{text}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <p className="text-xs text-emerald-100/50">© 2026 MMJ group · All rights reserved</p>
+      </aside>
+
+      <div className="auth-entry-page relative flex flex-col items-center justify-center px-4 sm:px-6 lg:px-12">
+      {/* Top accent (mobile only; desktop uses the branding panel) */}
+      <div className="absolute top-0 inset-x-0 h-1.5 bg-emerald-700 lg:hidden" />
 
       <div className="auth-container z-10 w-full max-w-[30rem]">
-        {/* APP LOGO & HEADER */}
-        <div className="auth-brand flex flex-col items-center gap-3 text-center">
+        {/* APP LOGO & HEADER (mobile/tablet) */}
+        <div className="auth-brand flex flex-col items-center gap-3 text-center lg:hidden">
           <div className="auth-logo w-14 h-14 bg-emerald-700 rounded-2xl flex items-center justify-center shadow-md shadow-emerald-700/20">
             <Leaf className="w-7 h-7 text-white" />
           </div>
           <div>
-            <h1 className="text-xl font-black text-stone-850 tracking-tight leading-none uppercase">
+            <h1 className="font-[family-name:var(--font-display)] text-xl font-bold text-stone-850 leading-tight">
               Smart Garbage
             </h1>
-            <p className="auth-accent mt-1 text-[10px] font-extrabold uppercase tracking-[0.25em] text-emerald-700">
+            <p className="auth-accent mt-0.5 text-sm font-medium text-emerald-700">
               Monitoring System
             </p>
           </div>
+        </div>
+
+        {/* Desktop card heading */}
+        <div className="hidden lg:block">
+          <h1 className="font-[family-name:var(--font-display)] text-2xl font-bold text-stone-900">
+            {activeTab === 'login' ? 'Welcome back' : 'Create your account'}
+          </h1>
+          <p className="mt-1 text-sm text-stone-500">
+            {activeTab === 'login' ? 'Sign in to continue to your dashboard.' : 'Register to start using resident services.'}
+          </p>
         </div>
 
         {/* MAIN AUTH CONTAINER */}
@@ -813,7 +881,7 @@ const handleResetPasswordSubmit = async (
                     type="text"
                     required
                     maxLength={150}
-                    placeholder="enter email or household ID"
+                    placeholder="Enter email or household ID"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
                     className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] py-3 pl-11 pr-4 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
@@ -830,7 +898,7 @@ const handleResetPasswordSubmit = async (
                   <input
                     type={showPassword ? 'text' : 'password'}
                     required
-                    placeholder="Enter account password"
+                    placeholder="Enter password"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] py-3 pl-11 pr-11 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
@@ -838,6 +906,7 @@ const handleResetPasswordSubmit = async (
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
                     className="absolute right-3.5 p-1 text-stone-400 hover:text-stone-600 transition-colors"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -883,10 +952,10 @@ const handleResetPasswordSubmit = async (
   <button
     type="submit"
     disabled={loginSubmitting}
-    className="auth-primary-action mt-1 flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl border-none bg-emerald-700 py-3 text-[10px] font-extrabold uppercase tracking-widest text-white shadow-lg shadow-emerald-800/10 transition-all hover:bg-emerald-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
+    className="auth-primary-action mt-1 flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl border-none bg-emerald-700 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-70"
   >
     {loginSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-    {loginSubmitting ? 'Signing in...' : 'Authenticate & Enter Console'}
+    {loginSubmitting ? 'Signing in...' : 'Sign In'}
   </button>
 
   {loginSlowNotice && (
@@ -905,8 +974,9 @@ const handleResetPasswordSubmit = async (
     <div className="flex-1 border-t border-gray-300"></div>
   </div>
 
-  <div className="auth-google">
+  <div ref={googleWrapRef} className="auth-google w-full min-w-0 justify-center overflow-hidden">
     <GoogleLogin
+      width={googleButtonWidth}
       onSuccess={(credentialResponse) => {
         if (!credentialResponse.credential) {
           setError('Google did not return a valid credential.');
@@ -937,31 +1007,36 @@ const handleResetPasswordSubmit = async (
                     {[
                       { label: 'SGMS Account Password', value: googlePassword, onChange: setGooglePassword, placeholder: '8+ chars, upper/lower/number' },
                       { label: 'Confirm SGMS Password', value: googleConfirmPassword, onChange: setGoogleConfirmPassword, placeholder: 'Confirm SGMS password' },
-                    ].map((field) => (
+                    ].map((field, index) => {
+                      const visible = index === 0 ? showPassword : showConfirmPassword;
+                      const toggle = index === 0 ? () => setShowPassword(!showPassword) : () => setShowConfirmPassword(!showConfirmPassword);
+                      return (
                       <label key={field.label} className="block text-[11px] font-bold uppercase tracking-widest text-stone-500">
                         {field.label}
                         <div className="relative mt-1 flex items-center">
                           <Lock className="absolute left-4 h-4 w-4 text-stone-400" />
                           <input
-                            type={showPassword ? 'text' : 'password'}
+                            type={visible ? 'text' : 'password'}
                             minLength={8}
                             maxLength={72}
                             autoComplete="new-password"
                             placeholder={field.placeholder}
                             value={field.value}
                             onChange={(event) => field.onChange(event.target.value)}
-                            className="auth-input w-full rounded-2xl border border-stone-200 bg-white py-3 pl-11 pr-4 text-xs font-semibold normal-case tracking-normal text-stone-800 focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
+                            className="auth-input w-full rounded-2xl border border-stone-200 bg-white py-3 pl-11 pr-11 text-xs font-semibold normal-case tracking-normal text-stone-800 focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
                           />
+                          <button
+                            type="button"
+                            onClick={toggle}
+                            aria-label={visible ? 'Hide password' : 'Show password'}
+                            className="absolute right-3.5 p-1 text-stone-400 transition-colors hover:text-stone-600"
+                          >
+                            {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </button>
                         </div>
                       </label>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="text-[10px] font-bold text-emerald-700 hover:underline"
-                    >
-                      {showPassword ? 'Hide passwords' : 'Show passwords'}
-                    </button>
+                      );
+                    })}
                   </fieldset>
                   <button
                     type="button"
@@ -973,7 +1048,7 @@ const handleResetPasswordSubmit = async (
                   </button>
                 </section>
               ) : (
-              <fieldset className="auth-form-section" disabled={registrationSubmitting}>
+              <fieldset className="m-0 min-w-0 space-y-4 border-0 p-0" disabled={registrationSubmitting}>
                 <legend className="auth-form-section-title">Create your account</legend>
                 <p className="auth-form-section-intro text-[11px] font-semibold leading-relaxed text-stone-400">
                   Start with your basic login details. After your first sign-in, you will complete your mobile number, barangay, purok, and address.
@@ -1038,6 +1113,14 @@ const handleResetPasswordSubmit = async (
                         onChange={(e) => setRegPassword(e.target.value)}
                         className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] py-3 pl-11 pr-11 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        className="absolute right-3.5 p-1 text-stone-400 transition-colors hover:text-stone-600"
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
                     </div>
                   </div>
 
@@ -1048,7 +1131,7 @@ const handleResetPasswordSubmit = async (
                     <div className="relative flex items-center">
                       <Lock className="absolute left-4 h-4 w-4 text-stone-400" />
                       <input
-                        type={showPassword ? 'text' : 'password'}
+                        type={showConfirmPassword ? 'text' : 'password'}
                         required
                         minLength={8}
                         maxLength={72}
@@ -1058,22 +1141,21 @@ const handleResetPasswordSubmit = async (
                         onChange={(e) => setRegConfirmPassword(e.target.value)}
                         className="auth-input w-full rounded-2xl border border-stone-200 bg-[#FAFBF9] py-3 pl-11 pr-11 text-xs font-semibold text-stone-800 transition-all focus:border-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/10"
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                        className="absolute right-3.5 p-1 text-stone-400 transition-colors hover:text-stone-600"
+                      >
+                        {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
                     </div>
                   </div>
                 </div>
 
-                <div className="mt-2 flex items-center justify-between gap-3 rounded-2xl border border-emerald-100 bg-emerald-50/70 px-4 py-3">
-                  <p className="text-[10px] font-semibold leading-relaxed text-emerald-800">
-                    After verification and first login, complete your phone number, barangay, purok, and full address before using resident features.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="shrink-0 text-[10px] font-bold text-emerald-700 hover:underline"
-                  >
-                    {showPassword ? 'Hide passwords' : 'Show passwords'}
-                  </button>
-                </div>
+                <p className="rounded-2xl border border-emerald-100 bg-emerald-50/70 px-4 py-3 text-[11px] font-medium leading-relaxed text-emerald-800">
+                  After verification and first login, complete your phone number, barangay, purok, and full address before using resident features.
+                </p>
               </fieldset>
               )}
 
@@ -1146,8 +1228,9 @@ const handleResetPasswordSubmit = async (
 
         {/* FOOTER */}
         <p className="auth-footer text-center text-[9px] font-extrabold uppercase tracking-widest text-stone-400">
-          Barangay Environmental Sinks System • MMJ group • 2026 • All Rights Reserved
+          Smart Garbage Monitoring System • MMJ group • 2026 • All Rights Reserved
         </p>
+      </div>
       </div>
 
       <RegistrationLegalDialog document={legalDocument} onClose={() => setLegalDocument(null)} />

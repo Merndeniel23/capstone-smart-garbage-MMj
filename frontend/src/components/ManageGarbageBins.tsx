@@ -440,6 +440,9 @@ export default function ManageGarbageBins() {
         )
       : [];
 
+  // Skeletons show only before the first rows arrive; later reloads keep rows visible.
+  const initialLoading = loading && bins.length === 0;
+
   const loadData = async () => {
     setLoading(true);
     setErrorMessage("");
@@ -1029,12 +1032,12 @@ export default function ManageGarbageBins() {
             type="button"
             onClick={loadData}
             disabled={loading}
-            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+            className="sg-btn-secondary"
           >
             <RefreshCw
               className={`h-4 w-4 ${loading ? "opacity-60" : ""}`}
             />
-            {loading ? "Refreshing..." : "Refresh"}
+            Refresh
           </button>
 
           {canAddBins && (
@@ -1124,7 +1127,7 @@ export default function ManageGarbageBins() {
         <div className="relative flex min-h-[360px] flex-col overflow-hidden rounded-2xl border bg-white shadow-sm sm:min-h-[520px]">
           {isSuperAdmin && (
             <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3 text-xs text-slate-500">
-              <span aria-live="polite">{loading ? "Loading bin locations..." : `${mappedBinCount} of ${visibleBins.length} matching bins have coordinates`}</span>
+              <span aria-live="polite">{initialLoading ? <span aria-hidden="true" className="sg-skeleton inline-block h-3 w-48 animate-pulse align-middle" /> : `${mappedBinCount} of ${visibleBins.length} matching bins have coordinates`}</span>
               <span className="flex gap-3"><span className="text-rose-700">● Overflowing</span><span className="text-amber-700">● Full</span></span>
             </div>
           )}
@@ -1171,16 +1174,16 @@ export default function ManageGarbageBins() {
                   ) : <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">This bin has no valid coordinates. Its record is available in the list.</p>}
                 </div>
               ) : (
-                <div className="flex min-h-56 flex-col items-center justify-center text-center">
+                <div className="hidden min-h-56 flex-col items-center justify-center text-center lg:flex">
                   <MapPin className="mb-3 h-10 w-10 text-emerald-700" />
-                  <h3 className="font-bold text-slate-900">{loading ? "Loading bins..." : "Select a bin to inspect"}</h3>
+                  <h3 className="font-bold text-slate-900">Select a bin to inspect</h3>
                   <p className="mt-2 max-w-xs text-sm text-slate-500">Choose a marker on the map or a bin from the list to view its status, location and collection schedule.</p>
                 </div>
               )}
               <p className="border-t pt-3 text-xs leading-relaxed text-slate-500">Municipal Administrators monitor bins. Barangay Captains can register bins in their barangay; assigned Purok Leaders maintain their bins.</p>
             </div>
           ) : !canAddBins ? (
-            <div className="flex h-full min-h-[420px] flex-col items-center justify-center text-center">
+            <div className="flex h-full flex-col items-center justify-center text-center lg:min-h-[420px]">
               <MapPin className="mb-3 h-10 w-10 text-emerald-700" />
 
               <h2 className="font-black text-slate-900">
@@ -1193,7 +1196,7 @@ export default function ManageGarbageBins() {
               </p>
             </div>
           ) : !showForm ? (
-            <div className="flex h-full min-h-[420px] flex-col items-center justify-center text-center">
+            <div className="flex h-full flex-col items-center justify-center text-center lg:min-h-[420px]">
               <MapPin className="mb-3 h-10 w-10 text-emerald-700" />
 
               <h2 className="font-black text-slate-900">
@@ -1401,7 +1404,7 @@ export default function ManageGarbageBins() {
                 ? "Garbage Bins in My Barangay"
                 : "Garbage Bins in My Purok"}
           </h2>
-          {isSuperAdmin && <p className="mt-1 text-xs text-slate-500" aria-live="polite">{loading ? "Loading records..." : `${visibleBins.length} active bins shown`}. Select a bin to view details and focus its marker.</p>}
+          {isSuperAdmin && <p className="mt-1 text-xs text-slate-500" aria-live="polite">{initialLoading ? "Fetching bins" : `${visibleBins.length} active bins shown`}. Select a bin to view details and focus its marker.</p>}
         </div>
 
         <div className="sg-desktop-table overflow-hidden">
@@ -1510,21 +1513,21 @@ export default function ManageGarbageBins() {
                         : "No garbage bins found in your assigned purok. Click the map to add the first one."}
                       {isSuperAdmin && !errorMessage && (binFilter !== "all" || barangayFilter || search) && <button type="button"
                         onClick={() => { setBinFilter("all"); setBarangayFilter(""); setSearch(""); setSelectedBinId(null); }}
-                        className="mx-auto mt-3 block rounded-lg border px-4 py-2 text-sm font-bold text-emerald-700">Clear filters</button>}
+                        className="sg-btn-secondary mx-auto mt-3">Clear filters</button>}
                     </td>
                   </tr>
                 )}
 
-              {loading && (
-                <tr>
-                  <td
-                    colSpan={canEditBins ? 6 : 5}
-                    className="p-8 text-center text-slate-500"
-                  >
-                    Loading garbage bins...
-                  </td>
-                </tr>
-              )}
+              {initialLoading &&
+                [0, 1, 2, 3].map((row) => (
+                  <tr key={`skeleton-${row}`} aria-hidden="true" className="animate-pulse border-t border-slate-100">
+                    {Array.from({ length: canEditBins ? 6 : 5 }, (_, cell) => (
+                      <td key={cell} className="p-4">
+                        <span className="sg-skeleton block h-3 w-3/4" />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
             </tbody>
           </table>
         </div>
@@ -1557,7 +1560,12 @@ export default function ManageGarbageBins() {
             </article>
           ))}
           {!loading && visibleBins.length === 0 && <p className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs text-slate-500">{errorMessage ? "Bins could not be loaded. Use Refresh to try again." : "No garbage bins match the current filters."}</p>}
-          {loading && <p className="rounded-xl border border-slate-200 p-6 text-center text-xs text-slate-500">Loading garbage bins...</p>}
+          {initialLoading && [0, 1, 2].map((card) => (
+            <div key={`skeleton-${card}`} aria-hidden="true" className="animate-pulse rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <span className="sg-skeleton block h-4 w-1/3" />
+              <span className="sg-skeleton mt-3 block h-3 w-2/3" />
+            </div>
+          ))}
         </div>
         {!loading && visibleBins.length > 0 && (
           <div className="px-5 pb-4">

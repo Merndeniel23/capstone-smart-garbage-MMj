@@ -31,6 +31,7 @@ import { apiRequest } from "../services/api";
 import { notifyAdminActionCountsChanged } from "../hooks/useAdminActionCounts";
 import ConfirmDialog from "./ConfirmDialog";
 import Pagination, { DEFAULT_PAGE_SIZE } from "./Pagination";
+import MobileDetailSheet from "./MobileDetailSheet";
 
 export type PurokMembersTab = "members" | "activity" | "payments" | "history";
 
@@ -447,6 +448,9 @@ export default function MembersList({
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedMemberId, setSelectedMemberId] = useState<number | null>(null);
+  // Mobile-only: the first member is auto-selected for desktop, so the sheet
+  // opens only when the leader actually taps a household.
+  const [memberSheetOpen, setMemberSheetOpen] = useState(false);
   const [memberPage, setMemberPage] = useState(1);
   const [memberPageSize, setMemberPageSize] = useState(DEFAULT_PAGE_SIZE);
 
@@ -1075,8 +1079,9 @@ export default function MembersList({
         </button>
       </section>
 
-      {/* Main Unified Navigation Bar inside Purok Members */}
-      <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-xs">
+      {/* Main Unified Navigation Bar inside Purok Members (tabs + member filters in one card) */}
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-xs">
+      <div className="flex gap-1.5 overflow-x-auto p-2">
         {(
           [
             {
@@ -1112,7 +1117,7 @@ export default function MembersList({
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
-              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black transition ${
+              className={`inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-4 py-2.5 text-xs font-semibold transition ${
                 active
                   ? "bg-emerald-700 text-white shadow-xs"
                   : "text-slate-600 hover:bg-slate-100"
@@ -1135,12 +1140,9 @@ export default function MembersList({
           );
         })}
       </div>
-
-      {/* TAB 1: PUROK MEMBERS DIRECTORY + UNIFIED SIDE DRAWER */}
       {activeTab === "members" && (
-        <div className="space-y-4">
-          <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-col gap-3 border-t border-slate-100 p-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap gap-1.5" aria-label="Member filters">
               {(
                 [
                   ["all", "All Members"],
@@ -1154,10 +1156,11 @@ export default function MembersList({
                   key={filterKey}
                   type="button"
                   onClick={() => setMemberQuickFilter(filterKey)}
-                  className={`rounded-xl border px-3 py-1.5 text-xs font-black transition ${
+                  aria-pressed={memberQuickFilter === filterKey}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
                     memberQuickFilter === filterKey
-                      ? "border-slate-900 bg-slate-900 text-white"
-                      : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                      ? "border-emerald-600 bg-emerald-50 text-emerald-800"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
                   }`}
                 >
                   {label}
@@ -1176,7 +1179,12 @@ export default function MembersList({
               />
             </div>
           </div>
+      )}
+      </div>
 
+      {/* TAB 1: PUROK MEMBERS DIRECTORY + UNIFIED SIDE DRAWER */}
+      {activeTab === "members" && (
+        <div className="space-y-4">
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
             <div className="space-y-3 xl:col-span-2">
               {!loading && members.length > 0 && (
@@ -1222,7 +1230,10 @@ export default function MembersList({
                       type="button"
                       key={member.id}
                       whileHover={{ scale: 1.003 }}
-                      onClick={() => setSelectedMemberId(member.id)}
+                      onClick={() => {
+                        setSelectedMemberId(member.id);
+                        setMemberSheetOpen(true);
+                      }}
                       className={`flex w-full flex-col gap-3 rounded-2xl border bg-white p-4 text-left transition sm:flex-row sm:items-center ${
                         isSelected
                           ? "border-emerald-600 ring-2 ring-emerald-500/15"
@@ -1311,8 +1322,14 @@ export default function MembersList({
               )}
             </div>
 
-            {/* Right Column: Selected Household All-in-One Card */}
-            <div className="xl:col-span-1">
+            {/* Right Column: Selected Household All-in-One Card
+                (below lg: a slide-up sheet opened by tapping a household) */}
+            <MobileDetailSheet
+              open={memberSheetOpen && Boolean(selectedMember)}
+              onClose={() => setMemberSheetOpen(false)}
+              title={selectedMember ? `${selectedMember.name} · ${selectedMember.householdId}` : "Household"}
+              className="xl:col-span-1"
+            >
               <AnimatePresence mode="wait">
                 {selectedMember ? (
                   <motion.aside
@@ -1690,7 +1707,7 @@ export default function MembersList({
                   </div>
                 )}
               </AnimatePresence>
-            </div>
+            </MobileDetailSheet>
           </div>
         </div>
       )}

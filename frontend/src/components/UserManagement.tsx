@@ -567,6 +567,12 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
     });
   }, [users, searchTerm, activeTab, roleFilter, barangayFilter, purokFilter, isBarangayCaptain, statusFilter, sortBy, sortDirection]);
 
+  // The role tabs are the only role control, so highlight follows the role filter.
+  const activeRoleTab =
+    activeTab === "pending"
+      ? "pending"
+      : ({ admin: "captains", resident: "residents", collector: "collectors", purok_leader: "leaders" } as Record<string, string>)[roleFilter] ?? "all";
+
   const viewedUser = detailsUser
     ? users.find((user) => user.id === detailsUser.id) ?? detailsUser
     : null;
@@ -1209,7 +1215,8 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
         )}
       </div>
 
-      <div className="flex w-fit max-w-full gap-2 overflow-x-auto rounded-2xl bg-slate-100 p-1">
+      <section aria-label="Filter user directory" className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex gap-1 overflow-x-auto border-b border-slate-100 p-2" aria-label="Filter by role">
         {[
           { id: "all", label: "All Users" },
           { id: "pending", label: `Pending (${pendingCount})` },
@@ -1221,7 +1228,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
           <button
             key={tab.id}
             type="button"
-            aria-pressed={activeTab === tab.id}
+            aria-pressed={activeRoleTab === tab.id}
             onClick={() => {
               const nextRole =
                 tab.id === "captains"
@@ -1238,10 +1245,10 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
               onRoleFilterChange?.(nextRole);
               setStatusFilter("all");
             }}
-            className={`rounded-xl px-4 py-2.5 text-xs font-bold transition-all ${
-              activeTab === tab.id
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700"
+            className={`shrink-0 whitespace-nowrap rounded-xl px-3.5 py-2 text-xs font-semibold transition-colors ${
+              activeRoleTab === tab.id
+                ? "bg-emerald-700 text-white shadow-sm"
+                : "text-slate-600 hover:bg-slate-100"
             }`}
           >
             {tab.label}
@@ -1249,53 +1256,47 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
         ))}
       </div>
 
-      <section aria-label="Filter user directory" className="rounded-2xl border border-slate-200 bg-white p-4">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <label className="text-xs font-bold text-slate-600">Role
-            <select value={roleFilter} onChange={(event) => { setRoleFilter(event.target.value); onRoleFilterChange?.(event.target.value); setActiveTab("all"); }} className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm">
-              <option value="all">All roles</option>
-              {isSuperAdmin && <><option value="super_admin">Municipal Administrator</option><option value="admin">Barangay Captain</option></>}
-              <option value="purok_leader">Purok Leader</option><option value="collector">Collector</option><option value="resident">Resident</option>
-            </select>
-          </label>
+      <div className="p-3">
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
           {isBarangayCaptain ? (
-            <label className="text-xs font-bold text-slate-600">Purok
-              <select value={purokFilter} onChange={(event) => setPurokFilter(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm">
+            <label className="min-w-0 text-[11px] font-medium text-slate-500">Purok
+              <select value={purokFilter} onChange={(event) => setPurokFilter(event.target.value)} className="mt-1 w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm">
                 <option value="all">All puroks / assignments</option>
                 {staffPuroks.map((purok) => <option key={purok.id} value={purok.id}>{purok.name}</option>)}
                 <option value="unassigned">No purok / barangay-wide</option>
               </select>
             </label>
           ) : (
-            <label className="text-xs font-bold text-slate-600">Barangay
-              <select value={barangayFilter} onChange={(event) => setBarangayFilter(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm">
+            <label className="min-w-0 text-[11px] font-medium text-slate-500">Barangay
+              <select value={barangayFilter} onChange={(event) => setBarangayFilter(event.target.value)} className="mt-1 w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm">
                 <option value="all">All barangays</option>
                 {barangays.map((barangay) => <option key={barangay.id} value={barangay.id}>{barangay.name}</option>)}
               </select>
             </label>
           )}
-          <label className="text-xs font-bold text-slate-600">Account status
-            <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setActiveTab("all"); }} className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm">
+          <label className="min-w-0 text-[11px] font-medium text-slate-500">Account status
+            <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setActiveTab("all"); }} className="mt-1 w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm">
               <option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive / suspended</option><option value="pending">Pending</option>
             </select>
           </label>
-          <label className="text-xs font-bold text-slate-600">Sort by
-            <select value={sortBy} onChange={(event) => setSortBy(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm">
+          <label className="min-w-0 text-[11px] font-medium text-slate-500">Sort by
+            <select value={sortBy} onChange={(event) => setSortBy(event.target.value)} className="mt-1 w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm">
               <option value="priority">Pending approval first</option><option value="name">Name</option><option value="role">Role</option>
               {isBarangayCaptain ? <option value="purok">Purok</option> : <option value="barangay">Barangay</option>}
               <option value="status">Status</option>
             </select>
           </label>
-          <label className="text-xs font-bold text-slate-600">Order
-            <select value={sortDirection} disabled={sortBy === "priority"} onChange={(event) => setSortDirection(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm disabled:opacity-50">
+          <label className="min-w-0 text-[11px] font-medium text-slate-500">Order
+            <select value={sortDirection} disabled={sortBy === "priority"} onChange={(event) => setSortDirection(event.target.value)} className="mt-1 w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm disabled:opacity-50">
               <option value="asc">A to Z</option><option value="desc">Z to A</option>
             </select>
           </label>
         </div>
-        <div className="mt-3 flex items-center justify-between gap-3 text-xs text-slate-500">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
           <span role="status">{loading ? "Loading accounts..." : `${filteredUsers.length} of ${users.length} accounts${assignedBarangay ? ` in ${assignedBarangay.name}` : ""}`}</span>
-          <button type="button" onClick={resetFilters} className="rounded-lg px-3 py-2 font-bold text-emerald-700 hover:bg-emerald-50">Clear filters</button>
+          <button type="button" onClick={resetFilters} className="sg-btn-secondary min-h-0 px-3 py-1.5 text-xs">Clear filters</button>
         </div>
+      </div>
       </section>
 
       <div className="hidden overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm md:block">
@@ -1488,10 +1489,10 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
           visibleUsers.map((user) => (
             <article
               key={user.id}
-              className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm"
+              className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="flex min-w-0 flex-1 items-center gap-3">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
                     <User className="h-5 w-5" />
                   </div>
@@ -1516,7 +1517,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
               </div>
 
               <div className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 text-xs">
-                <div>
+                <div className="min-w-0">
                   <p className="text-[9px] font-black uppercase tracking-wide text-slate-400">
                     {isBarangayCaptain ? "Purok" : "Assignment"}
                   </p>

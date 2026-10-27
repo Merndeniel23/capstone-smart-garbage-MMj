@@ -25,6 +25,7 @@ import cordovaSeal from '../assets/images/Municipality_of_Cordova_Official_Seal.
 import ConfirmDialog from './ConfirmDialog';
 import { portalOverlays } from './PortalOverlays';
 import RecordActions from './RecordActions';
+import MobileDetailSheet from './MobileDetailSheet';
 import ApprovedEndorsementDocument from './ApprovedEndorsementDocument';
 import { downloadEndorsement } from '../services/endorsementDownload';
 import FeedbackToast from './FeedbackToast';
@@ -854,8 +855,8 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
         {/* LEFT COLUMN: 
             - If HOUSEHOLD: Show Request Form
             - If ADMIN or LEADER: Show "Received & Issuance Processor Panel" for high-fidelity review of household applications */}
-        <div className="lg:col-span-5 space-y-6">
-          
+        <div className={`lg:col-span-5 space-y-6 ${role === 'household' ? '' : 'max-lg:contents'}`}>
+
           {role === 'household' ? (
             /* HOUSEHOLD: REQUEST FORM */
             <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-6">
@@ -950,8 +951,10 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
               </form>
             </div>
           ) : (
-            /* ADMIN or LEADER: RECEIVED PROCESSING WORKSTATION */
-            <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-6">
+            /* ADMIN or LEADER: RECEIVED PROCESSING WORKSTATION
+               (below lg it opens as a slide-up sheet once a request is selected) */
+            <MobileDetailSheet open={Boolean(selectedRequest)} onClose={() => setSelectedRequest(null)} title={selectedRequest ? `${selectedRequest.householdName} · ${selectedRequest.type}` : 'Request details'}>
+            <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-6 max-lg:rounded-none max-lg:border-0 max-lg:shadow-none">
               <div className="flex items-center gap-3 border-b border-slate-50 pb-4">
                 <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl">
                   <BadgeCheck className="w-5 h-5 text-indigo-500" />
@@ -1077,6 +1080,7 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
               )}
 
             </div>
+            </MobileDetailSheet>
           )}
 
 

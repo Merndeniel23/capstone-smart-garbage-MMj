@@ -197,13 +197,14 @@ export default function ChatbotWidget() {
   return (
     <>
       {/* Floating Action Button */}
-      <div className="fixed bottom-20 right-4 z-40 md:bottom-6 md:right-6">
+      {/* bottom-20 clears the fixed 64px mobile tab bar; lg has no bottom bar. */}
+      <div className="fixed bottom-20 right-4 z-40 lg:bottom-6 lg:right-6">
         <motion.button
           id="btn-chatbot-float"
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
           onClick={() => setIsOpen(prev => !prev)}
-          className={`flex items-center justify-center p-4 rounded-full shadow-2xl transition-colors cursor-pointer border focus:outline-none ${
+          className={`flex items-center justify-center p-3 lg:p-4 rounded-full shadow-2xl transition-colors cursor-pointer border focus:outline-none ${
             isOpen 
               ? 'bg-slate-900 border-slate-700 text-slate-200' 
               : 'bg-emerald-600 border-emerald-500 text-white hover:bg-emerald-500'
@@ -214,7 +215,6 @@ export default function ChatbotWidget() {
           {/* Subtle AI sparkle notify badge */}
           {!isOpen && (
             <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500 border border-white"></span>
             </span>
           )}
@@ -230,7 +230,7 @@ export default function ChatbotWidget() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 30, scale: 0.95 }}
             transition={{ type: 'spring', damping: 25, stiffness: 220 }}
-            className="fixed bottom-36 right-4 left-4 md:left-auto md:w-96 h-[500px] bg-slate-950/95 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl z-50 flex flex-col backdrop-blur-md"
+            className="fixed bottom-36 right-4 left-4 lg:bottom-24 lg:right-6 lg:left-auto lg:w-96 h-[500px] max-h-[calc(100dvh-10rem)]bg-slate-950/95 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl z-50 flex flex-col backdrop-blur-md"
           >
             {/* Header portion */}
             <div className="px-5 py-4 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between">

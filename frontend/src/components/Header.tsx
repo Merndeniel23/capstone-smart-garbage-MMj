@@ -1,22 +1,22 @@
 import {
   Bell,
-  Building2,
   CheckCheck,
+  ChevronDown,
   ChevronRight,
   LogOut,
+  Menu,
   Moon,
-  Shield,
   Sun,
-  Truck,
-  User,
 } from "lucide-react";
 import {
   useEffect,
   useRef,
   useState,
 } from "react";
-import type { AppRole } from "../context/AppStateContext";
+import { useAppState, type AppRole } from "../context/AppStateContext";
 import { useNotifications } from "../context/NotificationsContext";
+import { menuSections, roleLabel, useSgmsFlags } from "./navigation";
+import UserAvatar from "./UserAvatar";
 import { apiRequest } from "../services/api";
 import type { NotificationItem } from "../services/notificationFeed";
 import { linkedNotificationPage, type NotificationPage } from "./NotificationsPanel";
@@ -29,8 +29,11 @@ interface HeaderProps {
     role: AppRole,
   ) => void;
   onNavigate?: (page: NotificationPage | "notifications", relatedId?: number) => void;
+  /** @deprecated The avatar now reads the shared app state (see UserAvatar). */
   profilePhoto?: string | null;
   pageTitle?: string;
+  /** Opens the mobile navigation drawer. */
+  onOpenMenu?: () => void;
 }
 
 const THEME_STORAGE_KEY =
@@ -87,38 +90,6 @@ function formatPageTitle(
     .join(" ");
 }
 
-function getRoleLabel(
-  role: AppRole,
-) {
-  switch (role) {
-    case "super_admin":
-      return "MUNICIPAL ADMINISTRATOR";
-    case "admin":
-      return "BARANGAY CAPTAIN";
-    case "leader":
-      return "PUROK LEADER";
-    case "collector":
-      return "GARBAGE COLLECTOR";
-    default:
-      return "RESIDENT";
-  }
-}
-
-function getRoleIcon(
-  role: AppRole,
-) {
-  switch (role) {
-    case "super_admin":
-      return Building2;
-    case "admin":
-      return Shield;
-    case "collector":
-      return Truck;
-    default:
-      return User;
-  }
-}
-
 function readInitialDarkMode() {
   return (
     localStorage.getItem(
@@ -146,18 +117,46 @@ export default function Header({
   onLogout,
   userRole,
   onNavigate,
-  profilePhoto,
   pageTitle,
+  onOpenMenu,
 }: HeaderProps) {
-  const RoleIcon =
-    getRoleIcon(userRole);
-
   const [isDarkMode, setIsDarkMode] =
     useState(readInitialDarkMode);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const [notifFilter, setNotifFilter] = useState<"all" | "unread">("all");
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const { notifications, update } = useNotifications();
+  const accountRef = useRef<HTMLDivElement>(null);
+  const { notifications, update, enabled } = useNotifications();
+  const { userProfile, currentUser } = useAppState();
+  const { revisions } = useSgmsFlags();
+  const username = userProfile.name || currentUser?.name || "System User";
+  const title = pageTitle || formatPageTitle(activeTab);
+  // Breadcrumb section comes from the same hierarchy as the sidebar (counts are irrelevant here).
+  const section = menuSections(
+    userRole,
+    { unseenNotifications: 0 } as Parameters<typeof menuSections>[1],
+    { revisions, residentRestricted: userRole === "household" && !enabled },
+  ).find((group) => group.items.some((item) => item.id === activeTab));
+  const sectionTitle = section && section.title !== "Overview" ? section.title : null;
+
+  useEffect(() => {
+    if (!accountOpen) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (accountRef.current && !accountRef.current.contains(event.target as Node)) {
+        setAccountOpen(false);
+      }
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAccountOpen(false);
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [accountOpen]);
 
   const unreadCount = notifications.filter((item) => !Boolean(Number(item.is_read))).length;
   const displayedNotifications = (
@@ -265,33 +264,44 @@ export default function Header({
   }, [isDarkMode]);
 
   return (
-      <header className={`sticky top-0 z-30 flex shrink-0 flex-col gap-3 border-b border-slate-200 bg-white px-4 py-4 shadow-sm md:flex-row md:items-center md:justify-between md:px-6 ${userRole === "super_admin" ? "md:flex-wrap xl:flex-nowrap" : ""}`}>
-        <div className="flex w-full items-center justify-between md:hidden">
-          <h1 className="whitespace-nowrap text-base font-black text-slate-800">
-            {pageTitle || formatPageTitle(
-              activeTab,
-            )}
-          </h1>
+      <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-3 lg:h-16 lg:px-6">
+        {/* Mobile: [Menu + Title]. The page's own <h1> stays the only heading. */}
+        <div className="flex min-w-0 flex-1 items-center gap-2 lg:hidden">
+          <button
+            type="button"
+            onClick={onOpenMenu}
+            aria-label="Open navigation menu"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-600 hover:bg-slate-100"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <p className="truncate text-base font-semibold text-slate-800">{title}</p>
         </div>
 
-        <div className="hidden flex-1 md:block">
-          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">
-            Smart Garbage Monitoring System
-          </p>
-
-          <h2 className="mt-0.5 text-lg font-black tracking-tight text-slate-800">
-            {pageTitle || formatPageTitle(
-              activeTab,
+        {/* Desktop: subtle breadcrumb instead of a second page title. */}
+        <nav aria-label="Breadcrumb" className="hidden min-w-0 flex-1 lg:block">
+          <ol className="flex items-center gap-1.5 text-sm text-slate-500">
+            <li>Smart Garbage Monitoring</li>
+            {sectionTitle && (
+              <>
+                <li aria-hidden="true"><ChevronRight className="h-3.5 w-3.5 text-slate-400" /></li>
+                <li>{sectionTitle}</li>
+              </>
             )}
-          </h2>
-        </div>
+            <li aria-hidden="true"><ChevronRight className="h-3.5 w-3.5 text-slate-400" /></li>
+            <li aria-current="page" className="truncate font-medium text-slate-800">{title}</li>
+          </ol>
+        </nav>
 
-        <div className="ml-auto flex w-full items-center justify-between gap-3 md:w-auto md:justify-end">
+        <div className="flex shrink-0 items-center gap-2 lg:gap-3">
           {/* FACEBOOK-STYLE TOP NOTIFICATION BELL DROPDOWN */}
           <div ref={dropdownRef} className="relative">
             <button
               type="button"
-              onClick={() => setNotifOpen((prev) => !prev)}
+              onClick={() => {
+                setAccountOpen(false);
+                setNotifOpen((prev) => !prev);
+              }}
               aria-label="Open notifications"
               aria-expanded={notifOpen}
               title="Notifications"
@@ -460,7 +470,7 @@ export default function Header({
                 ? "Light Mode"
                 : "Dark Mode"
             }
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition-all hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700"
+            className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition-colors hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 lg:flex"
           >
             {isDarkMode ? (
               <Sun className="h-4 w-4" />
@@ -469,43 +479,83 @@ export default function Header({
             )}
           </button>
 
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl bg-emerald-50 text-emerald-700">
-              {profilePhoto ? (
-                <img
-                  src={profilePhoto}
-                  alt="Profile"
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <RoleIcon className="h-4 w-4" />
-              )}
-            </div>
+          <div className="hidden items-center gap-3 lg:flex">
+            <UserAvatar className="h-9 w-9" />
 
             <div>
-              <div className="flex items-center gap-2">
-                <div className="h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-emerald-500" />
-
-                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">
-                  Account Active
-                </span>
-              </div>
-
-              <p className="mt-0.5 text-xs font-black text-emerald-700">
-                {getRoleLabel(
-                  userRole,
-                )}
+              <p className="max-w-[160px] truncate text-sm font-semibold text-slate-800" title={username}>
+                {username}
+              </p>
+              <p className="flex items-center gap-1.5 text-xs text-slate-500">
+                <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" aria-hidden="true" />
+                {roleLabel(userRole)} · Active
               </p>
             </div>
+          </div>
+
+          {/* Mobile: avatar dropdown holds status, theme toggle and sign out. */}
+          <div ref={accountRef} className="relative lg:hidden">
+            <button
+              type="button"
+              onClick={() => {
+                setNotifOpen(false);
+                setAccountOpen((open) => !open);
+              }}
+              aria-label="Open account menu"
+              aria-expanded={accountOpen}
+              aria-haspopup="menu"
+              className="flex h-10 items-center gap-1 rounded-full pl-0.5 pr-1.5 text-slate-500 hover:bg-slate-100"
+            >
+              <UserAvatar className="h-9 w-9" />
+              <ChevronDown className="h-3.5 w-3.5" />
+            </button>
+
+            {accountOpen && (
+              <div role="menu" aria-label="Account menu" className="absolute right-0 top-12 z-50 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
+                <div className="flex items-center gap-3 border-b border-slate-100 p-4">
+                  <UserAvatar className="h-10 w-10" />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-900">{username}</p>
+                    <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500">
+                      <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" aria-hidden="true" />
+                      Account active · {roleLabel(userRole)}
+                    </p>
+                  </div>
+                </div>
+                <div className="p-1.5">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => setIsDarkMode((current) => !current)}
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50"
+                  >
+                    {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                    {isDarkMode ? "Light mode" : "Dark mode"}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setAccountOpen(false);
+                      onLogout();
+                    }}
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-rose-600 hover:bg-rose-50"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Sign out
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <button
             type="button"
             onClick={onLogout}
-            className={`flex cursor-pointer items-center gap-1.5 rounded-xl border border-slate-200 px-3.5 py-2 text-xs font-black text-slate-600 transition-all hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 ${userRole === "super_admin" ? "shrink-0 whitespace-nowrap" : ""}`}
+            className="hidden shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-xl border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-600 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 lg:flex"
           >
             <LogOut className="h-3.5 w-3.5" />
-            <span>Sign Out</span>
+            <span>Sign out</span>
           </button>
         </div>
       </header>

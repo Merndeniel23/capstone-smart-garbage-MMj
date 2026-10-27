@@ -34,6 +34,7 @@ import { portalOverlays } from './PortalOverlays';
 import RecordActions from './RecordActions';
 import FeedbackToast from "./FeedbackToast";
 import Pagination, { DEFAULT_PAGE_SIZE } from "./Pagination";
+import MobileDetailSheet from "./MobileDetailSheet";
 
 type AppRole =
   | "household"
@@ -1502,7 +1503,13 @@ export default function ComplaintsPanel({
           )}
         </div>
 
-        <div ref={detailsRef} className="scroll-mt-6 lg:col-span-7">
+        <MobileDetailSheet
+          open={Boolean(selectedComplaint)}
+          onClose={() => setSelectedId(null)}
+          title={selectedComplaint ? `Complaint #${selectedComplaint.id}` : "Complaint details"}
+          className="lg:col-span-7"
+        >
+        <div ref={detailsRef} className="scroll-mt-6 max-lg:p-3">
           {!selectedComplaint ? (
             <div className="flex min-h-[250px] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/50 p-6 text-center">
               <MessageSquare className="h-10 w-10 text-slate-300" />
@@ -1935,6 +1942,7 @@ export default function ComplaintsPanel({
             </div>
           )}
         </div>
+        </MobileDetailSheet>
       </div>
 
       <ConfirmDialog

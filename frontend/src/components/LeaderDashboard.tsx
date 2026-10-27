@@ -554,21 +554,6 @@ export default function LeaderDashboard({ setCurrentScreen }: LeaderDashboardPro
               />
             </div>
           </div>
-
-          <div className="rounded-2xl bg-slate-900 p-5 text-white shadow-lg">
-            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-400">
-              Logged-in Purok Leader
-            </p>
-            <h3 className="mt-2 text-xl font-black">{profile?.full_name || "Purok Leader"}</h3>
-            <p className="mt-1 text-sm text-slate-300">
-              {profile?.purok_name || "No purok"} · {profile?.barangay_name || "No barangay"}
-            </p>
-            <p className="mt-4 text-xs leading-relaxed text-slate-400">
-              Payment verification, Collector QR scan results (✓ Segregated / ✗ Not Segregated),
-              violation decisions (Warning, Fine, Suspend), and full purok history are all unified
-              inside <strong className="text-white">Purok Members</strong>.
-            </p>
-          </div>
         </section>
       </div>
     </div>

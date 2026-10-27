@@ -291,6 +291,10 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
 
   const submitPayment = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedPayOption) {
+      setModalError('Payment categories are still loading. Please wait and try again.');
+      return;
+    }
     if (isPayAmountInvalid) {
       setModalError('Enter a valid payment amount greater than PHP 0.00.');
       return;
@@ -419,10 +423,12 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
         
         {/* Recent Schedules Panel */}
-        <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-          <div className="flex items-center gap-2 bg-[#05BC8F] p-4 text-xs font-black uppercase tracking-wider text-white">
-            <CalendarIcon className="w-5 h-5" />
-            Official Weekly Collection Schedule
+        <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+              <CalendarIcon className="h-4 w-4" />
+            </span>
+            <h2 className="text-sm font-semibold text-slate-800">Official Weekly Collection Schedule</h2>
           </div>
           <div className="flex flex-1 flex-col justify-between p-4">
             <div className="space-y-2">
@@ -467,16 +473,18 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
         </div>
 
         {/* Recent Complaints Tracker Panel */}
-        <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-          <div className="flex items-center justify-between gap-2 bg-[#A18105] p-4 text-xs font-black uppercase tracking-wider text-white">
-            <span className="flex items-center gap-2">
-              <MessageSquare className="w-5 h-5" />
-              Recent Sanitation Issues
+        <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+            <span className="flex items-center gap-3">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+                <MessageSquare className="h-4 w-4" />
+              </span>
+              <h2 className="text-sm font-semibold text-slate-800">Recent Sanitation Issues</h2>
             </span>
             {setCurrentScreen && (
-              <button 
+              <button
                 onClick={() => setCurrentScreen('complaints')}
-                className="text-[10px] uppercase font-black tracking-wider hover:underline text-white/90 cursor-pointer"
+                className="cursor-pointer text-xs font-medium text-emerald-700 hover:underline"
               >
                 Go to Logs →
               </button>
@@ -565,15 +573,17 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
         </div>
 
         {/* Recent Payments Panel */}
-        <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm lg:col-span-2">
-          <div className="flex items-center justify-between gap-2 bg-indigo-600 p-4 text-xs font-black uppercase tracking-wider text-white">
-            <span className="flex items-center gap-2">
-              <CreditCard className="w-5 h-5" />
-              Recent Payment Submissions
+        <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 lg:col-span-2">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+            <span className="flex items-center gap-3">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+                <CreditCard className="h-4 w-4" />
+              </span>
+              <h2 className="text-sm font-semibold text-slate-800">Recent Payment Submissions</h2>
             </span>
             <button
               onClick={() => handleAction('payments')}
-              className="text-[10px] uppercase font-black tracking-wider hover:underline text-white/90 cursor-pointer"
+              className="cursor-pointer text-xs font-medium text-emerald-700 hover:underline"
             >
               Full History →
             </button>
@@ -893,6 +903,7 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
                   type="submit"
                   disabled={
                     submittingPayment ||
+                    !selectedPayOption ||
                     !receiptProof ||
                     isPayAmountInvalid ||
                     isPayBelowMinimum
