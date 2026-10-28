@@ -45,6 +45,7 @@ interface ProfileUser {
   purok_id: number | null;
   purok_name: string | null;
   profile_photo: string | null;
+  has_password?: boolean | number;
   created_at?: string;
 }
 
@@ -659,8 +660,15 @@ export default function UserProfilePanel() {
     setPasswordError("");
     setPasswordMessage("");
 
+    const hasAccountPassword = Boolean(profile?.has_password);
+
+    if (hasAccountPassword && !currentPassword) {
+      setPasswordError("Enter your current password.");
+      return;
+    }
+
     if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,72}$/.test(nextPassword)) {
-      setPasswordError("New password needs 8-72 characters with uppercase, lowercase, and a number.");
+      setPasswordError("Password needs 8-72 characters with uppercase, lowercase, and a number.");
       return;
     }
     if (nextPassword !== confirmNextPassword) {
@@ -673,12 +681,13 @@ export default function UserProfilePanel() {
         method: "PUT",
         body: JSON.stringify({ currentPassword, newPassword: nextPassword, confirmPassword: confirmNextPassword }),
       });
-      setPasswordMessage(data.message || "Password updated.");
+      setPasswordMessage(data.message || (hasAccountPassword ? "Password updated." : "Password set successfully."));
       setCurrentPassword("");
       setNextPassword("");
       setConfirmNextPassword("");
+      setProfile((prev) => prev ? { ...prev, has_password: true } : prev);
     } catch (err) {
-      setPasswordError(err instanceof Error ? err.message : "Unable to update password.");
+      setPasswordError(err instanceof Error ? err.message : "Unable to save password.");
     } finally {
       setPasswordSaving(false);
     }
@@ -1353,26 +1362,32 @@ export default function UserProfilePanel() {
           <form onSubmit={handleChangePassword} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
             <div className="flex items-center gap-2 text-slate-900">
               <Lock className="h-4 w-4 text-emerald-600" />
-              <h4 className="text-sm font-black">Change Password</h4>
+              <h4 className="text-sm font-black">{profile?.has_password ? "Change Password" : "Set Password"}</h4>
             </div>
-            <p className="text-[11px] text-slate-500">Enter your current password before setting a new one.</p>
+            <p className="text-[11px] text-slate-500">
+              {profile?.has_password
+                ? "Enter your current password before setting a new one."
+                : "Set a password for your account so you can also sign in with email and password."}
+            </p>
             {passwordError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-800">{passwordError}</p>}
             {passwordMessage && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800">{passwordMessage}</p>}
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block text-xs font-bold text-slate-700 sm:col-span-2">
-                Current Password
-                <input type={showPassword ? "text" : "password"} value={currentPassword} onChange={e => setCurrentPassword(e.target.value)}
-                  autoComplete="current-password" required maxLength={72}
-                  className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 focus:border-emerald-500 focus:outline-none" />
-              </label>
+            <div className={`grid gap-3 ${profile?.has_password ? "sm:grid-cols-2" : "grid-cols-1"}`}>
+              {Boolean(profile?.has_password) && (
+                <label className="block text-xs font-bold text-slate-700 sm:col-span-2">
+                  Current Password
+                  <input type={showPassword ? "text" : "password"} value={currentPassword} onChange={e => setCurrentPassword(e.target.value)}
+                    autoComplete="current-password" required maxLength={72}
+                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 focus:border-emerald-500 focus:outline-none" />
+                </label>
+              )}
               <label className="block text-xs font-bold text-slate-700">
-                New Password
+                {profile?.has_password ? "New Password" : "Password"}
                 <input type={showPassword ? "text" : "password"} value={nextPassword} onChange={e => setNextPassword(e.target.value)}
                   autoComplete="new-password" required minLength={8} maxLength={72}
                   className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 focus:border-emerald-500 focus:outline-none" />
               </label>
               <label className="block text-xs font-bold text-slate-700">
-                Confirm New Password
+                {profile?.has_password ? "Confirm New Password" : "Confirm Password"}
                 <input type={showPassword ? "text" : "password"} value={confirmNextPassword} onChange={e => setConfirmNextPassword(e.target.value)}
                   autoComplete="new-password" required minLength={8} maxLength={72}
                   className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 focus:border-emerald-500 focus:outline-none" />
@@ -1388,7 +1403,7 @@ export default function UserProfilePanel() {
               <button type="submit" disabled={passwordSaving}
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-xs font-black text-white hover:bg-emerald-800 disabled:opacity-50">
                 {passwordSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-                Update Password
+                {profile?.has_password ? "Update Password" : "Set Password"}
               </button>
             </div>
           </form>
@@ -1544,7 +1559,7 @@ export default function UserProfilePanel() {
                 </div>
               </form>
             )}
-            <p className="text-[11px] text-slate-500">The code expires in 10 minutes (maximum 5 attempts). If your account uses Google Sign-In and you do not have a password, use the Email OTP Reset tab first, without logging out.</p>
+            <p className="text-[11px] text-slate-500">The code expires in 10 minutes (maximum 5 attempts). Password changes can also be set directly in the Password tab.</p>
           </div>
           )}
         </section>

@@ -531,10 +531,13 @@ export default function ComplaintsPanel({
 
   const availableCollectors = collectors.filter((collector) =>
     collector.status === "active" &&
-    Boolean(selectedComplaint?.barangay_id) &&
-    Number(collector.barangay_id) === Number(selectedComplaint?.barangay_id),
+    (
+      !selectedComplaint?.barangay_id ||
+      Number(collector.barangay_id) === Number(selectedComplaint?.barangay_id) ||
+      (currentUser?.barangay_id && Number(collector.barangay_id) === Number(currentUser.barangay_id))
+    ),
   );
-  const canAssign = canManage && !directReview && Boolean(selectedComplaint && ["pending", "assigned"].includes(selectedComplaint.status));
+  const canAssign = canManage && Boolean(selectedComplaint && ["pending", "assigned", "in_progress"].includes(selectedComplaint.status));
   const canResolve = canManage && Boolean(selectedComplaint && (selectedComplaint.status === "completed" || (directReview && ["pending","assigned","in_progress"].includes(selectedComplaint.status))));
   const canCancel = Boolean(
     selectedComplaint &&
@@ -1661,7 +1664,7 @@ export default function ComplaintsPanel({
                   <p className="text-sm leading-relaxed text-slate-300">{
                     selectedComplaint.status === "pending" ? "Assign an active collector from this barangay to begin handling the complaint." :
                     selectedComplaint.status === "assigned" ? "The assigned collector can start work. You can reassign this complaint until work begins." :
-                    selectedComplaint.status === "in_progress" ? "The assigned collector is handling this complaint. Resolution becomes available after the collector marks the task completed." :
+                    selectedComplaint.status === "in_progress" ? (selectedComplaint.assigned_collector_name ? `Collector ${selectedComplaint.assigned_collector_name} is currently handling this complaint. You can reassign or verify resolution below.` : "Investigation in progress. You can assign a collector or verify resolution below.") :
                     selectedComplaint.status === "completed" ? "Review the collector's messages and completed work, then add an official resolution note." :
                     selectedComplaint.status === "resolved" ? "This complaint is resolved. Its resolution and messages remain available below." :
                     "This complaint was cancelled. Its history remains available below."

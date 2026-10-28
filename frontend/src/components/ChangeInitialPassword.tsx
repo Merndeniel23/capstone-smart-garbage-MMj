@@ -9,11 +9,9 @@ import {
 } from "lucide-react";
 
 export default function ChangeInitialPassword() {
-  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
-  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
@@ -63,7 +61,7 @@ export default function ChangeInitialPassword() {
     setError("");
     setSuccessMessage("");
 
-    if (!currentPassword || !newPassword || !confirmPassword) {
+    if (!newPassword || !confirmPassword) {
       setError("Please complete all password fields.");
       return;
     }
@@ -81,12 +79,7 @@ export default function ChangeInitialPassword() {
     }
 
     if (newPassword !== confirmPassword) {
-      setError("New passwords do not match.");
-      return;
-    }
-
-    if (currentPassword === newPassword) {
-      setError("Choose a password different from the temporary password.");
+      setError("Passwords do not match.");
       return;
     }
 
@@ -111,7 +104,6 @@ export default function ChangeInitialPassword() {
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            currentPassword,
             newPassword,
             confirmPassword,
           }),
@@ -122,7 +114,7 @@ export default function ChangeInitialPassword() {
 
       if (!response.ok) {
         throw new Error(
-          data.message || "Unable to change the temporary password.",
+          data.message || "Unable to set your password.",
         );
       }
 
@@ -136,7 +128,7 @@ export default function ChangeInitialPassword() {
 
       setSuccessMessage(
         data.message ||
-          "Password changed successfully. Opening your dashboard...",
+          "Password set successfully. Opening your dashboard...",
       );
 
       window.setTimeout(() => {
@@ -146,7 +138,7 @@ export default function ChangeInitialPassword() {
       setError(
         err instanceof Error
           ? err.message
-          : "Unable to change the temporary password.",
+          : "Unable to set your password.",
       );
     } finally {
       setLoading(false);
@@ -168,12 +160,11 @@ export default function ChangeInitialPassword() {
           </p>
 
           <h1 className="mt-2 text-2xl font-black text-slate-900 sm:text-[1.7rem]">
-            Change Temporary Password
+            Set Your Password
           </h1>
 
           <p className="mt-3 text-sm leading-relaxed text-slate-500">
-            You must replace your temporary password before accessing your
-            dashboard.
+            Set a secure password for your account to access your dashboard.
           </p>
         </div>
 
@@ -192,45 +183,7 @@ export default function ChangeInitialPassword() {
         <form onSubmit={handleSubmit} className="auth-form mt-8">
           <label className="auth-field">
             <span className="text-xs font-bold text-slate-600">
-              Temporary Password
-            </span>
-
-            <div className="relative">
-              <Lock className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-
-              <input
-                type={showCurrentPassword ? "text" : "password"}
-                value={currentPassword}
-                onChange={(event) => setCurrentPassword(event.target.value)}
-                autoComplete="current-password"
-                className="auth-input h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-11 text-sm font-semibold text-slate-800 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/10"
-                placeholder="Enter temporary password"
-              />
-
-              <button
-                type="button"
-                onClick={() =>
-                  setShowCurrentPassword((current) => !current)
-                }
-                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-1 text-slate-400 hover:text-slate-700"
-                aria-label={
-                  showCurrentPassword
-                    ? "Hide temporary password"
-                    : "Show temporary password"
-                }
-              >
-                {showCurrentPassword ? (
-                  <EyeOff className="h-4 w-4" />
-                ) : (
-                  <Eye className="h-4 w-4" />
-                )}
-              </button>
-            </div>
-          </label>
-
-          <label className="auth-field">
-            <span className="text-xs font-bold text-slate-600">
-              New Password
+              Password
             </span>
 
             <div className="relative">
@@ -251,7 +204,7 @@ export default function ChangeInitialPassword() {
                 onClick={() => setShowNewPassword((current) => !current)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-1 text-slate-400 hover:text-slate-700"
                 aria-label={
-                  showNewPassword ? "Hide new password" : "Show new password"
+                  showNewPassword ? "Hide password" : "Show password"
                 }
               >
                 {showNewPassword ? (
@@ -265,7 +218,7 @@ export default function ChangeInitialPassword() {
 
           <label className="auth-field">
             <span className="text-xs font-bold text-slate-600">
-              Confirm New Password
+              Confirm Password
             </span>
 
             <div className="relative">
@@ -278,7 +231,7 @@ export default function ChangeInitialPassword() {
                 autoComplete="new-password"
                 minLength={8}
                 className="auth-input h-12 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-11 text-sm font-semibold text-slate-800 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/10"
-                placeholder="Repeat new password"
+                placeholder="Repeat password"
               />
 
               <button
@@ -308,7 +261,7 @@ export default function ChangeInitialPassword() {
               disabled={loading}
               className="h-12 w-full rounded-xl bg-emerald-700 px-4 text-sm font-black text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {loading ? "Changing Password..." : "Change Password"}
+              {loading ? "Setting Password..." : "Set Password"}
             </button>
 
             <button
