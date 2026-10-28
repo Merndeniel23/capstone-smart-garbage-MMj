@@ -303,28 +303,24 @@ export default function LeaderDashboard({ setCurrentScreen }: LeaderDashboardPro
           value={householdsCount}
           icon={Users}
           tone="slate"
-          onClick={() => setCurrentScreen("members-list")}
         />
         <SummaryCard
           label="✓ Segregated Scans"
           value={segregatedCount}
           icon={CheckCircle2}
           tone="emerald"
-          onClick={() => setCurrentScreen("members-list")}
         />
         <SummaryCard
           label="✗ Needs Decision"
           value={pendingDecisions.length}
           icon={XCircle}
           tone={pendingDecisions.length > 0 ? "rose" : "slate"}
-          onClick={() => setCurrentScreen("members-list")}
         />
         <SummaryCard
           label="Verify Payments"
           value={pendingPaymentsCount}
           icon={Wallet}
           tone={pendingPaymentsCount > 0 ? "amber" : "slate"}
-          onClick={() => setCurrentScreen("members-list")}
         />
       </div>
 
@@ -565,13 +561,11 @@ function SummaryCard({
   value,
   icon: Icon,
   tone = "slate",
-  onClick,
 }: {
   label: string;
   value: number;
   icon: any;
   tone?: "slate" | "emerald" | "rose" | "amber";
-  onClick?: () => void;
 }) {
   const toneStyles = {
     slate: "border-slate-100 bg-white text-slate-900",
@@ -588,10 +582,8 @@ function SummaryCard({
   }[tone];
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`w-full rounded-2xl border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${toneStyles}`}
+    <div
+      className={`w-full rounded-2xl border p-4 text-left shadow-sm select-none ${toneStyles}`}
     >
       <div className="flex items-center justify-between">
         <div>
@@ -602,7 +594,7 @@ function SummaryCard({
           <Icon className="h-5 w-5" />
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 
