@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { GoogleLogin } from '@react-oauth/google';
 import EmailVerificationForm from './EmailVerificationForm';
 import RegistrationLegalDialog from './RegistrationLegalDialog';
+import barangaySeal from '../assets/images/Barangay_Bangbang_Official_Seal.png';
 import {
   User, 
   Mail, 
@@ -716,17 +717,29 @@ const handleResetPasswordSubmit = async (
     <div className="auth-page auth-shell relative grid min-h-[100dvh] w-full bg-[#FAFBF9] font-sans text-stone-900 lg:grid-cols-2">
       {/* DESKTOP BRANDING PANEL */}
       <aside className="relative hidden flex-col justify-between overflow-hidden bg-[#14532d] p-12 text-white lg:flex xl:p-16">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15">
-            <Leaf className="h-5 w-5 text-emerald-100" />
-          </div>
+        {/* Official seal as a faded overlay behind the branding content. The PNG has a
+            white background: multiply blends the white into the panel green and
+            rounded-full clips the square corners. */}
+        <img
+          src={barangaySeal}
+          alt=""
+          aria-hidden="true"
+          className="pointer-events-none absolute -right-24 top-1/2 w-[34rem] max-w-none -translate-y-1/2 select-none rounded-full opacity-30 grayscale mix-blend-multiply"
+        />
+
+        <div className="relative flex items-center gap-3">
+          <img
+            src={barangaySeal}
+            alt="Barangay Bangbang official seal"
+            className="h-12 w-12 shrink-0 rounded-full bg-white object-contain p-0.5 ring-2 ring-white/20"
+          />
           <div>
             <p className="font-[family-name:var(--font-display)] text-base font-bold leading-tight">Smart Garbage Monitoring System</p>
             <p className="text-sm text-emerald-200">Barangay Bangbang</p>
           </div>
         </div>
 
-        <div className="max-w-md">
+        <div className="relative max-w-md">
           <h2 className="font-[family-name:var(--font-display)] text-3xl font-bold leading-tight xl:text-4xl">
             Cleaner puroks, tracked from bin to barangay.
           </h2>
@@ -748,7 +761,7 @@ const handleResetPasswordSubmit = async (
           </ul>
         </div>
 
-        <p className="text-xs text-emerald-100/50">© 2026 MMJ group · All rights reserved</p>
+        <p className="relative text-xs text-emerald-100/50">© 2026 MMJ group · All rights reserved</p>
       </aside>
 
       <div className="auth-entry-page relative flex flex-col items-center justify-center px-4 sm:px-6 lg:px-12">
