@@ -252,8 +252,8 @@ export default function SgmsRecords({view}: {view:RecordView}) {
         const [colRes,hhRes,payRes,vioRes]=await Promise.allSettled([
           apiRequest<any>("/sgms/collections"),
           apiRequest<any>("/sgms/households"),
-          collector?Promise.resolve({payments:[]}):apiRequest<any>("/sgms/payment-history"),
-          collector?Promise.resolve({violations:[]}):apiRequest<any>("/sgms/violations"),
+          apiRequest<any>("/sgms/payment-history"),
+          apiRequest<any>("/sgms/violations"),
         ]);
         const cols=colRes.status==="fulfilled"?colRes.value.collections||[]:[];
         setAllCollections(cols);

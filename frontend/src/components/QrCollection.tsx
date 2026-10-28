@@ -49,7 +49,7 @@ export default function QrCollection({
     if (
       canUseBarcodeDetector &&
       typeof navigator !== "undefined" &&
-      Boolean(navigator.mediaDevices?.getUserMedia) &&
+      typeof navigator.mediaDevices?.getUserMedia === "function" &&
       !identifiedRef.current
     ) {
       setCamera(true);
@@ -77,7 +77,7 @@ export default function QrCollection({
   }
 
   useEffect(() => {
-    if (defaultOpen && canUseBarcodeDetector && Boolean(navigator.mediaDevices?.getUserMedia)) {
+    if (defaultOpen && canUseBarcodeDetector && typeof navigator?.mediaDevices?.getUserMedia === "function") {
       setCamera(true);
     }
     return () => {
@@ -92,7 +92,7 @@ export default function QrCollection({
     let cancelled = false,
       timer: number | undefined;
     const Detector = (window as any).BarcodeDetector;
-    if (!Detector || !navigator.mediaDevices?.getUserMedia) {
+    if (!Detector || typeof navigator?.mediaDevices?.getUserMedia !== "function") {
       setMessageTone("info");
       setMessage(
         "Live camera QR detection is not supported on this browser. Paste the QR code below or use Scan QR Photo.",
@@ -563,7 +563,7 @@ export default function QrCollection({
                         type="button"
                         onClick={() => {
                           setMessage("");
-                          if (canUseBarcodeDetector && Boolean(navigator.mediaDevices?.getUserMedia)) {
+                          if (canUseBarcodeDetector && typeof navigator?.mediaDevices?.getUserMedia === "function") {
                             setCamera(true);
                           }
                         }}

@@ -1023,13 +1023,16 @@ export default function Schedule() {
               <CalendarDay
                 type="button"
                 key={`${visibleMonth.getFullYear()}-${visibleMonth.getMonth()}-${day}`}
+                disabled={!scheduledCell}
                 onClick={() => {
+                  if (!scheduledCell) return;
                   const clickedDate = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day);
-                  setSelectedDate(clickedDate);
                   const daySchedules = getPublishedSchedulesForWeekday(
                     visibleSchedules,
                     DAYS[(clickedDate.getDay() + 6) % 7],
                   );
+                  if (daySchedules.length === 0) return;
+                  setSelectedDate(clickedDate);
                   if (daySchedules.length === 1) {
                     setSelectedSchedule(daySchedules[0]);
                   } else {
@@ -1039,12 +1042,20 @@ export default function Schedule() {
                 aria-label={`${dayLabel}${scheduledCell ? `, ${scheduleCount} active collection ${scheduleCount === 1 ? "window" : "windows"}` : ", no active collection scheduled"}`}
                 aria-pressed={selectedCell}
                 aria-current={todayCell ? "date" : undefined}
-                className={`relative min-h-11 rounded-xl py-2 text-center text-xs font-medium transition-colors ${selectedCell ? "outline-2 outline-offset-2 outline-emerald-500" : ""} ${
+                className={`relative min-h-11 rounded-xl py-2 text-center text-xs font-medium transition-colors ${
+                  !scheduledCell
+                    ? "cursor-default text-slate-300"
+                    : selectedCell
+                      ? "cursor-pointer outline-2 outline-offset-2 outline-emerald-500"
+                      : "cursor-pointer"
+                } ${
                   todayCell
                     ? "bg-emerald-500 font-bold text-white shadow-sm ring-2 ring-emerald-100"
                     : scheduledCell && !isAllBarangaysView
-                      ? "sg-calendar-scheduled-day bg-emerald-50 font-bold text-emerald-700"
-                      : "text-slate-600 hover:bg-slate-50"
+                      ? "sg-calendar-scheduled-day bg-emerald-50 font-bold text-emerald-700 hover:bg-emerald-100"
+                      : scheduledCell
+                        ? "text-slate-700 hover:bg-slate-100"
+                        : "text-slate-400"
                 }`}
                 title={
                   scheduledCell
@@ -1073,7 +1084,7 @@ export default function Schedule() {
         </p>
       </div>
 
-      {dateModalOpen && (
+      {dateModalOpen && selectedDateSchedules.length > 0 && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/75 p-4 backdrop-blur-sm"
           role="dialog"
