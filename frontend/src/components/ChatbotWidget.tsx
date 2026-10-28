@@ -18,7 +18,7 @@ export default function ChatbotWidget() {
     {
       id: 'greeting',
       role: 'assistant',
-      text: "Hello! I am the Smart Garbage Monitoring Assistant. 👋\n\nI can help with this system's login, registration, profiles, bin inspections, collection requests, complaints, notifications, payments, reports, and role-based dashboards. Pwede pud ka mangutana sa Cebuano.",
+      text: "Hello! I am the Smart Garbage Monitoring Assistant. 👋\n\nI can help with this system's login, registration, profiles, waste collection, segregation monitoring, complaints, notifications, payments, reports, and role-based dashboards. Pwede pud ka mangutana sa Cebuano.",
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
   ]);
@@ -32,8 +32,8 @@ export default function ChatbotWidget() {
       text: "Summarize payments",
     },
     {
-      label: "Manual Inspection",
-      text: "How do I submit a manual garbage bin inspection?",
+      label: "Segregation Records",
+      text: "How does bin segregation tracking work?",
     },
     {
       label: "Collection Request",

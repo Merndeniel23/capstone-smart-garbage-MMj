@@ -443,8 +443,8 @@ export default function ManageGarbageBins() {
   // Skeletons show only before the first rows arrive; later reloads keep rows visible.
   const initialLoading = loading && bins.length === 0;
 
-  const loadData = async () => {
-    setLoading(true);
+  const loadData = async (silent = false) => {
+    if (!silent) setLoading(true);
     setErrorMessage("");
 
     try {
@@ -799,7 +799,6 @@ export default function ManageGarbageBins() {
 
     setSuccessMessage("");
     setErrorMessage("");
-    setDeactivating(true);
 
     photoRequest.current++;
     setPhotoLoading(false);
@@ -948,28 +947,32 @@ export default function ManageGarbageBins() {
 
     setSuccessMessage("");
     setErrorMessage("");
+    setDeactivating(true);
 
     try {
       const result =
-        await apiRequest(
+        await apiRequest<{ success?: boolean; message?: string }>(
           `/api/garbage-bins/${binId}`,
           { method: "DELETE" },
         );
 
+      setPendingDeactivateId(null);
+      setDeactivating(false);
+      setBins((current) => current.map((bin) => (bin.id === binId ? { ...bin, is_active: 0 } : bin)));
+      if (form.id === binId) {
+        resetForm();
+      }
       setSuccessMessage(
-        result.message ||
+        result?.message ||
           "Garbage bin deactivated.",
       );
-
-      resetForm();
-      await loadData();
+      void loadData(true);
     } catch (error) {
       setErrorMessage(
         error instanceof Error
           ? error.message
           : "Failed to deactivate garbage bin.",
       );
-    } finally {
       setDeactivating(false);
       setPendingDeactivateId(null);
     }

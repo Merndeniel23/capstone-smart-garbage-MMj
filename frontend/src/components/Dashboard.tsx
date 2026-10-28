@@ -1024,7 +1024,7 @@ export default function Dashboard({ setCurrentScreen }: DashboardProps) {
               <div className="bg-slate-50 p-4 border border-slate-150 rounded-2xl flex items-start gap-2.5">
                 <Info className="w-4 h-4 text-slate-450 shrink-0 mt-0.5" />
                 <p className="text-[10px] text-slate-550 leading-relaxed font-semibold">
-                  This timeline records collection updates and physical bin inspections submitted by Purok Leaders.
+                  This timeline records collection and segregation updates.
                 </p>
               </div>
 

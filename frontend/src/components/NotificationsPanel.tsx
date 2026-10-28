@@ -35,7 +35,6 @@ export type NotificationPage =
   | "endorsements"
   | "user-management"
   | "collector-tasks"
-  | "bin-inspections"
   | "garbage-bins"
   | "schedule";
 
@@ -95,14 +94,14 @@ export function linkedNotificationPage(
     return "schedule";
   }
   if (["bin_inspection", "inspection"].includes(entity)) {
-    return (isLeader || normalizedRole === "admin") ? "bin-inspections" : null;
+    return (isLeader || normalizedRole === "admin") ? "garbage-bins" : null;
   }
   if (["garbage_bin", "bin"].includes(entity)) {
     return (isManager || isLeader) ? "garbage-bins" : null;
   }
   if (["collection_request", "collection_run"].includes(entity)) {
     return isCollector ? "collector-tasks" :
-      isLeader ? "bin-inspections" :
+      isLeader ? "garbage-bins" :
       isManager ? "garbage-bins" : null;
   }
   return null;

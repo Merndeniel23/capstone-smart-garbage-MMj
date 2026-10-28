@@ -3,7 +3,6 @@ import {
   Award,
   Building2,
   Calendar,
-  ClipboardCheck,
   ClipboardList,
   FileText,
   History,
@@ -88,7 +87,6 @@ export function menuSections(
           { id: "schedule", icon: Calendar, label: "Collection Schedule" },
           { id: "garbage-bins", icon: MapPinned, label: "Garbage Bins" },
           { id: "collection-records", icon: ClipboardList, label: "Segregation Records", revisions: true },
-          { id: "bin-inspections", icon: ClipboardCheck, label: "Inspection Records" },
         ] },
         { title: "Monitoring", items: [
           { id: "complaints", icon: MessageSquare, label: "Complaints", count: counts.unreadComplaints },

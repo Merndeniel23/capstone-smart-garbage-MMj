@@ -25,7 +25,6 @@ import ChatbotWidget from "./components/ChatbotWidget";
 import UserProfilePanel from "./components/UserProfilePanel";
 import ComplaintsPanel from "./components/ComplaintsPanel";
 import NotificationsPanel from "./components/NotificationsPanel";
-import BinInspections from "./components/BinInspections";
 import ManageGarbageBins from "./components/ManageGarbageBins";
 import ChangeInitialPassword from "./components/ChangeInitialPassword";
 import Reports from "./components/Reports";
@@ -65,7 +64,6 @@ export type Screen =
   | "notifications"
   | "profile"
   | "endorsements"
-  | "bin-inspections"
   | "garbage-bins"
   | "change-initial-password"
   | "reports"
@@ -104,7 +102,6 @@ const ROLE_SCREENS: Record<Role, Screen[]> = {
     "households", "collection-records", "violations", "activity-logs", "archives", "payment-history",
     "leader-dashboard",
     "garbage-bins",
-    "bin-inspections",
     "members-list",
     "complaints",
     "endorsements",
@@ -116,7 +113,6 @@ const ROLE_SCREENS: Record<Role, Screen[]> = {
     "households", "collection-records", "activity-logs", "members-list",
     "admin-dashboard",
     "garbage-bins",
-    "bin-inspections",
     "user-management",
     "complaints",
     "endorsements",
@@ -668,7 +664,6 @@ function AppContent() {
               {userRole === "leader" && currentScreen === "payment-history" && <MembersList key={currentScreen} initialTab="payments" />}
               {(["households","puroks","collection-records","violations","activity-logs","archives","barangay-policies","payment-history"] as string[]).includes(currentScreen) && !(userRole === "leader" && ["collection-records", "violations", "activity-logs", "payment-history"].includes(currentScreen)) && <SgmsRecords key={currentScreen} view={currentScreen as RecordView} />}
               {currentScreen === "online-payments" && userRole === "household" && <OnlinePayments />}
-              {currentScreen === "bin-inspections" && <BinInspections />}
               {currentScreen === "garbage-bins" && <ManageGarbageBins />}
               {currentScreen === "route-map" && <MapView />}
               {currentScreen === "schedule" && <Schedule />}

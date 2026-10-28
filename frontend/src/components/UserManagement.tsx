@@ -2249,7 +2249,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
 
               <div className="rounded-2xl bg-slate-50 p-4 text-xs text-slate-600">
                 {selectedRole === "purok_leader" &&
-                  "The Purok Leader will manage the selected purok's bins, inspections, members, and complaints."}
+                  "The Purok Leader will manage the selected purok's bins, members, and complaints."}
                 {selectedRole === "collector" &&
                   "This selects the Collector's barangay only. An authorized Barangay Admin must separately assign collection Puroks; this edit does not grant barangay-wide collection access."}
                 {selectedRole === "resident" &&
@@ -2304,7 +2304,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
               The account will disappear from normal user lists and can no longer sign in.
             </p>
             <p className="mt-2 text-xs font-semibold text-slate-500">
-              Historical records such as payments, complaints, inspections, endorsements, and audit history will remain linked to the original name.
+              Historical records such as payments, complaints, endorsements, and audit history will remain linked to the original name.
             </p>
             {error && <p role="alert" className="mt-3 rounded-xl bg-rose-50 p-3 font-bold text-rose-700">{error}</p>}
           </>
