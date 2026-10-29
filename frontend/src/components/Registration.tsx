@@ -1,7 +1,7 @@
 import { apiFetch } from "../services/http";
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { GoogleLogin } from '@react-oauth/google';
+import { useGoogleOAuth } from '@react-oauth/google';
 import EmailVerificationForm from './EmailVerificationForm';
 import RegistrationLegalDialog from './RegistrationLegalDialog';
 import barangaySeal from '../assets/images/Barangay_Bangbang_Official_Seal.png';
@@ -27,6 +27,119 @@ const AUTH_HIGHLIGHTS = [
   { icon: Truck, title: 'Schedules and routes', text: 'Residents see pickup days while collectors follow their assigned purok routes.' },
   { icon: ShieldCheck, title: 'Transparent records', text: 'Warnings, fines and fees are logged so every decision can be verified.' },
 ];
+
+type GoogleIdentityApi = {
+  initialize: (configuration: {
+    client_id: string;
+    callback: (response: { credential?: string }) => void;
+  }) => void;
+  renderButton: (
+    parent: HTMLElement,
+    options: {
+      type: 'standard';
+      theme: 'outline';
+      size: 'large';
+      width: number;
+    },
+  ) => void;
+};
+
+type GoogleIdentityState = {
+  api: GoogleIdentityApi | null;
+  clientId: string;
+  owner: symbol | null;
+  onCredential: ((credential: string) => void) | null;
+  onError: (() => void) | null;
+};
+
+type GoogleIdentityWindow = Window & {
+  google?: { accounts?: { id?: GoogleIdentityApi } };
+  __sgmsGoogleIdentity?: GoogleIdentityState;
+};
+
+function getGoogleIdentityState(): GoogleIdentityState {
+  const browserWindow = window as GoogleIdentityWindow;
+  browserWindow.__sgmsGoogleIdentity ??= {
+    api: null,
+    clientId: '',
+    owner: null,
+    onCredential: null,
+    onError: null,
+  };
+  return browserWindow.__sgmsGoogleIdentity;
+}
+
+function GoogleCredentialButton({
+  width,
+  onCredential,
+  onError,
+}: {
+  width: number;
+  onCredential: (credential: string) => void;
+  onError: () => void;
+}) {
+  const { clientId, scriptLoadedSuccessfully } = useGoogleOAuth();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const ownerRef = useRef(Symbol('sgms-google-button'));
+  const onCredentialRef = useRef(onCredential);
+  const onErrorRef = useRef(onError);
+  onCredentialRef.current = onCredential;
+  onErrorRef.current = onError;
+
+  useEffect(() => {
+    const state = getGoogleIdentityState();
+    const owner = ownerRef.current;
+    state.owner = owner;
+    state.onCredential = (credential) => onCredentialRef.current(credential);
+    state.onError = () => onErrorRef.current();
+
+    return () => {
+      if (state.owner === owner) {
+        state.owner = null;
+        state.onCredential = null;
+        state.onError = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!scriptLoadedSuccessfully || !container) return;
+
+    const identity = (window as GoogleIdentityWindow).google?.accounts?.id;
+    if (!identity) {
+      onErrorRef.current();
+      return;
+    }
+
+    const state = getGoogleIdentityState();
+    if (state.api !== identity || state.clientId !== clientId) {
+      identity.initialize({
+        client_id: clientId,
+        callback: (response) => {
+          const current = getGoogleIdentityState();
+          if (response.credential) {
+            current.onCredential?.(response.credential);
+          } else {
+            current.onError?.();
+          }
+        },
+      });
+      state.api = identity;
+      state.clientId = clientId;
+    }
+
+    container.replaceChildren();
+    identity.renderButton(container, {
+      type: 'standard',
+      theme: 'outline',
+      size: 'large',
+      width,
+    });
+  }, [clientId, scriptLoadedSuccessfully, width]);
+
+  return <div ref={containerRef} />;
+}
 
 
 export default function Registration() {
@@ -978,14 +1091,10 @@ const handleResetPasswordSubmit = async (
   </div>
 
   <div ref={googleWrapRef} className="auth-google w-full min-w-0 justify-center overflow-hidden">
-    <GoogleLogin
+    <GoogleCredentialButton
       width={googleButtonWidth}
-      onSuccess={(credentialResponse) => {
-        if (!credentialResponse.credential) {
-          setError('Google did not return a valid credential.');
-          return;
-        }
-        void handleGoogleLogin(credentialResponse.credential);
+      onCredential={(credential) => {
+        void handleGoogleLogin(credential);
       }}
       onError={() => {
         setError('Google Sign-In failed.');
