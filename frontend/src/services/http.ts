@@ -7,7 +7,12 @@ function getToken(): string {
     localStorage.getItem("authToken") || sessionStorage.getItem("authToken") || "";
 }
 
-export const apiClient = axios.create({ baseURL: apiBaseURL });
+// Never leave a screen in an endless loading state when the hosted backend
+// is waking up or temporarily unavailable.
+export const apiClient = axios.create({
+  baseURL: apiBaseURL,
+  timeout: 30_000,
+});
 
 apiClient.interceptors.request.use(config => {
   const token = getToken();
@@ -71,6 +76,9 @@ export const apiFetch: typeof fetch = async (input, options: RequestInit = {}) =
     });
   } catch (error) {
     if (axios.isCancel(error)) throw new DOMException("The request was aborted.", "AbortError");
+    if (axios.isAxiosError(error) && ["ECONNABORTED", "ETIMEDOUT"].includes(String(error.code))) {
+      throw new Error("The server took too long to respond. Please refresh and try again.");
+    }
     throw error;
   }
 };

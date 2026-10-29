@@ -22,6 +22,9 @@ export async function apiRequest<T>(
   } catch (error) {
     if (axios.isCancel(error)) throw new DOMException("The request was aborted.", "AbortError");
     if (axios.isAxiosError<{ message?: string }>(error)) {
+      if (["ECONNABORTED", "ETIMEDOUT"].includes(String(error.code))) {
+        throw new Error("The server took too long to respond. Please refresh and try again.");
+      }
       throw new Error(error.response?.data?.message || error.message || "API request failed.");
     }
     throw error;
