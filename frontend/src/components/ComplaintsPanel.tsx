@@ -1798,7 +1798,7 @@ export default function ComplaintsPanel({
                       disabled={saving}
                       className="w-full rounded-xl bg-amber-500 px-4 py-3 text-xs font-black uppercase text-white disabled:opacity-50"
                     >
-                      Start Task
+                      Begin Resolution
                     </button>
                   )}
 
