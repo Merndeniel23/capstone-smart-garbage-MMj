@@ -57,7 +57,7 @@ class NotificationRequestError extends Error {
 }
 
 export function createNotificationFeed(options: NotificationFeedOptions) {
-  const intervalMs = options.intervalMs ?? 30_000;
+  const intervalMs = options.intervalMs ?? 60_000;
   const requestTimeoutMs = options.requestTimeoutMs ?? 20_000;
   const runtime: NotificationFeedRuntime = {
     fetch: apiFetch,

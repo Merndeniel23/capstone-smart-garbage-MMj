@@ -1201,13 +1201,16 @@ export default function PaymentPortal({
     setArchivingPayment(true);
     setMessage(null);
     try {
-      const data = await apiRequest(`/${paymentToArchive.id}/archive`, {
+      const archivedPaymentId = paymentToArchive.id;
+      const data = await apiRequest(`/${archivedPaymentId}/archive`, {
         method: "PATCH",
       });
-      if (selectedPayment === paymentToArchive.id) setSelectedPayment(null);
+      if (selectedPayment === archivedPaymentId) setSelectedPayment(null);
+      setPayments((current) =>
+        current.filter((payment) => payment.id !== archivedPaymentId),
+      );
       setPaymentToArchive(null);
       setMessage({ type: "success", text: data.message || "Completed payment archived." });
-      await loadPayments();
       notifyAdminActionCountsChanged();
     } catch (error) {
       setMessage({
@@ -1244,8 +1247,11 @@ export default function PaymentPortal({
         setSelectedPayment(null);
       }
 
+      const deletedPaymentId = paymentToDelete.id;
+      setPayments((current) =>
+        current.filter((payment) => payment.id !== deletedPaymentId),
+      );
       setPaymentToDelete(null);
-      await loadPayments();
       notifyAdminActionCountsChanged();
     } catch (error) {
       setMessage({

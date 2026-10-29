@@ -539,8 +539,11 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
       showNotification(data.message);
       notifyAdminActionCountsChanged();
+      const deletedId = pendingWithdrawal.databaseId;
+      setEndorsements((current) =>
+        current.filter((request) => request.databaseId !== deletedId),
+      );
       setPendingWithdrawal(null);
-      await loadEndorsements(true);
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -578,6 +581,10 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
 
       showNotification(data.message);
       notifyAdminActionCountsChanged();
+      const deletedId = pendingPermanentDelete.databaseId;
+      setEndorsements((current) =>
+        current.filter((request) => request.databaseId !== deletedId),
+      );
 
       if (selectedRequest?.databaseId === pendingPermanentDelete.databaseId) {
         setSelectedRequest(null);
@@ -588,7 +595,6 @@ export default function EndorsementManager({ role }: EndorsementManagerProps) {
       }
 
       setPendingPermanentDelete(null);
-      await loadEndorsements(true);
     } catch (error) {
       setErrorMessage(
         error instanceof Error

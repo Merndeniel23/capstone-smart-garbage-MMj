@@ -960,6 +960,10 @@ export default function ManageGarbageBins() {
       setPendingDeactivateId(null);
       setDeactivating(false);
       setBins((current) => current.map((bin) => (bin.id === binId ? { ...bin, is_active: 0 } : bin)));
+      if (selectedBinId === binId) {
+        setSelectedBinId(null);
+        mapRef.current?.closePopup();
+      }
       if (form.id === binId) {
         resetForm();
       }
@@ -967,7 +971,6 @@ export default function ManageGarbageBins() {
         result?.message ||
           "Garbage bin deactivated.",
       );
-      void loadData(true);
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -1152,7 +1155,7 @@ export default function ManageGarbageBins() {
               </div>
               {selectedBin ? (
                 <div className="space-y-4" aria-live="polite">
-                  {isBinPhoto(selectedBin.photo_path) && <img src={selectedBin.photo_path} alt={`Garbage bin ${selectedBin.bin_code}`} className="h-40 w-full rounded-xl object-cover" />}
+                  {isBinPhoto(selectedBin.photo_path) && <img src={selectedBin.photo_path} alt={`Garbage bin ${selectedBin.bin_code}`} loading="lazy" decoding="async" className="h-40 w-full rounded-xl object-cover" />}
                   <div>
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <h3 className="text-xl font-black text-slate-900">{selectedBin.bin_code}</h3>

@@ -260,6 +260,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
   const [deleteConfirmation, setDeleteConfirmation] = useState<ManagedUser | null>(null);
   const [detailsUser, setDetailsUser] = useState<ManagedUser | null>(null);
   const deletingRef = useRef(false);
+  const refreshUsersInFlight = useRef(false);
   const [roleConfirmation, setRoleConfirmation] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -437,6 +438,8 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
   };
 
   const refreshUsers = async (silent = true) => {
+    if (refreshUsersInFlight.current) return;
+    refreshUsersInFlight.current = true;
     setRefreshing(true);
     if (!silent) setError("");
 
@@ -459,6 +462,7 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
         );
       }
     } finally {
+      refreshUsersInFlight.current = false;
       setRefreshing(false);
     }
   };
@@ -497,8 +501,12 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
     void loadData();
 
     const timer = window.setInterval(
-      () => void refreshUsers(true),
-      5000,
+      () => {
+        if (document.visibilityState === "visible") {
+          void refreshUsers(true);
+        }
+      },
+      60000,
     );
 
     const refreshOnFocus = () => {
@@ -765,7 +773,9 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
 
       setSuccessMessage(data.message || "Account status updated.");
       setStatusConfirmation(null);
-      await loadData();
+      setUsers((current) => current.map((item) =>
+        item.id === user.id ? { ...item, status: nextStatus } : item,
+      ));
       notifyAdminActionCountsChanged();
     } catch (err) {
       setStatusConfirmation(null);
@@ -808,7 +818,6 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
       if (verification?.email === user.email) setVerification(null);
       setSuccessMessage(data.message || "Account removed successfully. Historical records were preserved.");
       notifyAdminActionCountsChanged();
-      await refreshUsers(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to delete the account.");
     } finally {
@@ -2064,6 +2073,8 @@ export default function UserManagement({ initialRoleFilter = "all", initialStatu
                 <img
                   src={viewedUser.profile_photo}
                   alt={`${viewedUser.full_name}'s profile`}
+                  loading="lazy"
+                  decoding="async"
                   className="h-14 w-14 shrink-0 rounded-2xl border border-slate-200 object-cover"
                 />
               ) : (

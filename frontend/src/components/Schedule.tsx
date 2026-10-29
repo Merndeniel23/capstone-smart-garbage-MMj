@@ -598,9 +598,12 @@ export default function Schedule() {
         result.message ||
           "Collection schedule deleted successfully.",
       );
+      const deletedScheduleId = deleteTarget.id;
+      setSchedules((current) =>
+        current.filter((schedule) => schedule.id !== deletedScheduleId),
+      );
       setDeleteTarget(null);
       setSelectedSchedule(null);
-      await loadData(true);
     } catch (deleteError) {
       setError(
         deleteError instanceof Error

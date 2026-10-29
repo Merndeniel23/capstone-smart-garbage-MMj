@@ -26,7 +26,7 @@ const COMPLAINT_NOTIFICATION_TYPES = new Set([
   "complaint_message",
   "complaint_update",
 ]);
-const POLL_INTERVAL_MS = 30000;
+const POLL_INTERVAL_MS = 60000;
 const REQUEST_TIMEOUT_MS = 20000;
 const REFRESH_DEBOUNCE_MS = 250;
 const MIN_REFRESH_INTERVAL_MS = 1000;

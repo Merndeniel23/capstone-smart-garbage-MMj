@@ -322,10 +322,13 @@ export default function ComplaintsPanel({
   const [chatInput, setChatInput] =
     useState("");
   const latestLoad = useRef(0);
+  const referenceDataLoaded = useRef(false);
   const handledNotificationComplaintId = useRef<number | null>(null);
 
-  const loadData = async (silent = false) => {
+  const loadData = async (silent = false, includeReferenceData = false) => {
     const loadId = ++latestLoad.current;
+    const shouldLoadReferenceData =
+      includeReferenceData || !referenceDataLoaded.current;
 
     if (!silent) {
       setLoading(true);
@@ -333,15 +336,26 @@ export default function ComplaintsPanel({
     }
 
     try {
-      const [complaintData, profileData] =
-        await Promise.all([
+      const [complaintResult, profileResult, collectorResult] =
+        await Promise.allSettled([
           apiRequest("/complaints"),
-          apiRequest("/auth/me"),
+          shouldLoadReferenceData
+            ? apiRequest("/auth/me")
+            : Promise.resolve(null),
+          shouldLoadReferenceData && canManage
+            ? apiRequest("/admin/collectors")
+            : Promise.resolve(null),
         ]);
 
       if (loadId !== latestLoad.current) {
         return;
       }
+
+      if (complaintResult.status === "rejected") {
+        throw complaintResult.reason;
+      }
+
+      const complaintData = complaintResult.value;
 
       setLoadError("");
 
@@ -353,23 +367,33 @@ export default function ComplaintsPanel({
           : [],
       );
 
-      setCurrentUser(
-        profileData.user || null,
-      );
-
-      if (canManage) {
-        try {
-          const collectorData = await apiRequest("/admin/collectors");
-          if (loadId !== latestLoad.current) return;
-          setCollectors(Array.isArray(collectorData.collectors) ? collectorData.collectors : []);
-          setCollectorError("");
-        } catch (err) {
-          if (loadId !== latestLoad.current) return;
-          setCollectors([]);
-          setCollectorError(err instanceof Error ? err.message : "Unable to load collectors.");
+      if (shouldLoadReferenceData) {
+        if (profileResult.status === "fulfilled" && profileResult.value) {
+          setCurrentUser(profileResult.value.user || null);
         }
-      } else {
-        setCollectors([]);
+
+        if (canManage) {
+          if (collectorResult.status === "fulfilled" && collectorResult.value) {
+            setCollectors(
+              Array.isArray(collectorResult.value.collectors)
+                ? collectorResult.value.collectors
+                : [],
+            );
+            setCollectorError("");
+          } else if (collectorResult.status === "rejected") {
+            setCollectorError(
+              collectorResult.reason instanceof Error
+                ? collectorResult.reason.message
+                : "Unable to load collectors.",
+            );
+          }
+        } else {
+          setCollectors([]);
+        }
+
+        referenceDataLoaded.current =
+          profileResult.status === "fulfilled" &&
+          (!canManage || collectorResult.status === "fulfilled");
       }
     } catch (err) {
       if (loadId === latestLoad.current) {
@@ -389,27 +413,34 @@ export default function ComplaintsPanel({
   useEffect(() => {
     void markAdminActionNotificationsRead("complaints");
 
-    void loadData();
+    referenceDataLoaded.current = false;
+    void loadData(false, true);
 
     if (role !== "admin" && role !== "super_admin") {
-      return;
+      return () => {
+        latestLoad.current += 1;
+      };
     }
 
     const refreshComplaints = () => {
-      void loadData(true);
+      if (document.visibilityState === "visible") {
+        void loadData(true);
+      }
     };
 
     const timer = window.setInterval(
       refreshComplaints,
-      10000,
+      60000,
     );
 
     window.addEventListener("focus", refreshComplaints);
+    window.addEventListener("complaints-changed", refreshComplaints);
 
     return () => {
       latestLoad.current += 1;
       window.clearInterval(timer);
       window.removeEventListener("focus", refreshComplaints);
+      window.removeEventListener("complaints-changed", refreshComplaints);
     };
   }, [role]);
 
@@ -880,10 +911,14 @@ export default function ComplaintsPanel({
     setSaving(true);
     setError("");
     setSuccess("");
+    const complaintId = selectedComplaint.id;
+    const assignedCollector = availableCollectors.find(
+      (collector) => String(collector.id) === selectedCollectorId,
+    );
 
     try {
       const data = await apiRequest(
-        `/complaints/${selectedComplaint.id}/assign`,
+        `/complaints/${complaintId}/assign`,
         {
           method: "PUT",
           body: JSON.stringify({
@@ -899,7 +934,23 @@ export default function ComplaintsPanel({
           "Complaint assigned.",
       );
 
-      await loadData();
+      const assignedAt = new Date().toISOString();
+      setComplaints((current) => current.map((item) =>
+        item.id === complaintId
+          ? {
+              ...item,
+              status: "assigned",
+              assigned_collector_id: Number(selectedCollectorId),
+              assigned_collector_name:
+                data.assignedCollector?.full_name || assignedCollector?.full_name || null,
+              assigned_at: assignedAt,
+              started_at: null,
+              completed_at: null,
+              resolved_at: null,
+              updated_at: assignedAt,
+            }
+          : item,
+      ));
       notifyAdminActionCountsChanged();
     } catch (err) {
       setError(
@@ -922,10 +973,11 @@ export default function ComplaintsPanel({
     setSaving(true);
     setError("");
     setSuccess("");
+    const complaintId = selectedComplaint.id;
 
     try {
       const data = await apiRequest(
-        `/complaints/${selectedComplaint.id}/status`,
+        `/complaints/${complaintId}/status`,
         {
           method: "PUT",
           body: JSON.stringify({
@@ -939,7 +991,18 @@ export default function ComplaintsPanel({
           "Complaint updated.",
       );
 
-      await loadData();
+      const updatedAt = new Date().toISOString();
+      setComplaints((current) => current.map((item) =>
+        item.id === complaintId
+          ? {
+              ...item,
+              status,
+              started_at: status === "in_progress" ? (item.started_at || updatedAt) : item.started_at,
+              completed_at: status === "completed" ? updatedAt : item.completed_at,
+              updated_at: updatedAt,
+            }
+          : item,
+      ));
       notifyAdminActionCountsChanged();
     } catch (err) {
       setError(
@@ -971,15 +1034,16 @@ export default function ComplaintsPanel({
       setSaving(true);
       setError("");
       setSuccess("");
+      const complaintId = selectedComplaint.id;
+      const officialRemark = resolutionRemark.trim();
 
       try {
         const data = await apiRequest(
-          `/complaints/${selectedComplaint.id}/resolve`,
+          `/complaints/${complaintId}/resolve`,
           {
             method: "PUT",
             body: JSON.stringify({
-              remarks:
-                resolutionRemark.trim(),
+              remarks: officialRemark,
             }),
           },
         );
@@ -991,7 +1055,19 @@ export default function ComplaintsPanel({
 
         setConfirmation(null);
 
-        await loadData();
+        const resolvedAt = new Date().toISOString();
+        setComplaints((current) => current.map((item) =>
+          item.id === complaintId
+            ? {
+                ...item,
+                status: "resolved",
+                resolution_remark: officialRemark,
+                resolved_at: resolvedAt,
+                updated_at: resolvedAt,
+              }
+            : item,
+        ));
+        setResolutionRemark("");
         notifyAdminActionCountsChanged();
       } catch (err) {
         setError(
@@ -1018,22 +1094,41 @@ export default function ComplaintsPanel({
 
     setSaving(true);
     setError("");
+    const complaintId = selectedComplaint.id;
+    const message = chatInput.trim();
 
     try {
-      await apiRequest(
-        `/complaints/${selectedComplaint.id}/messages`,
+      const data = await apiRequest(
+        `/complaints/${complaintId}/messages`,
         {
           method: "POST",
           body: JSON.stringify({
-            message:
-              chatInput.trim(),
+            message,
           }),
         },
       );
 
       setChatInput("");
       setSuccess("Message sent successfully.");
-      await loadData();
+      setComplaints((current) => current.map((item) =>
+        item.id === complaintId
+          ? {
+              ...item,
+              messages: [
+                ...item.messages,
+                {
+                  id: Number(data.messageId || Date.now()),
+                  complaint_id: complaintId,
+                  sender_id: Number(currentUser?.id || 0),
+                  sender_name: currentUser?.full_name || "You",
+                  sender_role: currentUser?.role || role,
+                  message,
+                  created_at: new Date().toISOString(),
+                },
+              ],
+            }
+          : item,
+      ));
       notifyAdminActionCountsChanged();
     } catch (err) {
       setError(
@@ -1058,8 +1153,9 @@ export default function ComplaintsPanel({
       setSuccess("");
 
       try {
+        const complaintId = selectedComplaint.id;
         const data = await apiRequest(
-          `/complaints/${selectedComplaint.id}`,
+          `/complaints/${complaintId}`,
           {
             method: "DELETE",
           },
@@ -1072,7 +1168,11 @@ export default function ComplaintsPanel({
 
         setSelectedId(null);
         setConfirmation(null);
-        await loadData();
+        setComplaints((current) => current.map((item) =>
+          item.id === complaintId
+            ? { ...item, status: "cancelled", updated_at: new Date().toISOString() }
+            : item,
+        ));
         notifyAdminActionCountsChanged();
       } catch (err) {
         setError(
@@ -1102,8 +1202,9 @@ export default function ComplaintsPanel({
       setSuccess("");
 
       try {
+        const complaintId = selectedComplaint.id;
         const data = await apiRequest(
-          `/complaints/${selectedComplaint.id}`,
+          `/complaints/${complaintId}`,
           {
             method: "DELETE",
           },
@@ -1116,7 +1217,9 @@ export default function ComplaintsPanel({
 
         setSelectedId(null);
         setConfirmation(null);
-        await loadData();
+        setComplaints((current) =>
+          current.filter((item) => item.id !== complaintId),
+        );
         notifyAdminActionCountsChanged();
       } catch (err) {
         setError(
@@ -1560,10 +1663,15 @@ export default function ComplaintsPanel({
                 {/* Collector soft delete: hides the finished complaint from their own list only. */}
                 {role === "collector" && ["completed", "resolved"].includes(selectedComplaint.status) && (
                   <RecordActions label={`complaint ${selectedComplaint.id}`} disabled={saving} onArchive={() => {
+                    const complaintId = selectedComplaint.id;
                     setSaving(true);
                     setError("");
-                    void apiRequest(`/complaints/${selectedComplaint.id}/archive-mine`, { method: "POST", body: "{}" })
-                      .then((data) => { setSuccess(data.message); setSelectedId(null); return loadData(); })
+                    void apiRequest(`/complaints/${complaintId}/archive-mine`, { method: "POST", body: "{}" })
+                      .then((data) => {
+                        setSuccess(data.message);
+                        setSelectedId(null);
+                        setComplaints((current) => current.filter((item) => item.id !== complaintId));
+                      })
                       .catch((error) => setError(error instanceof Error ? error.message : "Unable to remove the complaint from your list."))
                       .finally(() => setSaving(false));
                   }} />
@@ -1641,6 +1749,8 @@ export default function ComplaintsPanel({
                       selectedComplaint.photo_url
                     }
                     alt="Complaint evidence"
+                    loading="lazy"
+                    decoding="async"
                     className="max-h-64 w-full rounded-2xl border border-slate-100 object-cover"
                   />
                 )}
