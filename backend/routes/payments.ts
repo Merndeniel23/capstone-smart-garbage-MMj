@@ -1495,14 +1495,7 @@ router.post(
             req.body.payment_reference,
           120,
         );
-      const paymentReference =
-        submittedReference ||
-        (paymentMethod === "xendit"
-          ? `XENDIT-${Date.now().toString(36).toUpperCase()}-${crypto
-              .randomBytes(2)
-              .toString("hex")
-              .toUpperCase()}`
-          : "");
+      const paymentReference = submittedReference;
 
       const receiptProof =
         validateImageDataUrl(
@@ -1550,6 +1543,14 @@ router.post(
         });
       }
 
+      if (paymentMethod === "xendit") {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Use the secure Xendit checkout. Xendit payments cannot be submitted manually.",
+        });
+      }
+
       if (
         !billingPeriod
       ) {
@@ -1571,7 +1572,7 @@ router.post(
         });
       }
 
-      if (!receiptProof && paymentMethod !== "xendit") {
+      if (!receiptProof) {
         return res.status(400).json({
           success: false,
           message:
@@ -1670,16 +1671,10 @@ router.post(
         }
       }
 
-      uploadedReceiptProof = receiptProof
-        ? await storeProof(
-            receiptProof,
-            `payments/${viewer.id}/${transactionCode}/receipt.${imageExtensionForDataUrl(receiptProof)}`,
-          )
-        : JSON.stringify({
-            provider: "xendit",
-            reference: paymentReference,
-            submittedAt: new Date().toISOString(),
-          });
+      uploadedReceiptProof = await storeProof(
+        receiptProof,
+        `payments/${viewer.id}/${transactionCode}/receipt.${imageExtensionForDataUrl(receiptProof)}`,
+      );
 
       const [result] =
         await connection.execute<any>(

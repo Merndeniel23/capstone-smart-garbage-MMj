@@ -13,6 +13,7 @@
     "test:accounts": "tsx --test services/accountDeletion.test.ts",
     "test:notifications": "tsx --test routes/notifications.test.ts",
     "test:schedules": "tsx --test routes/collectionSchedules.test.ts",
+    "test:xendit": "tsx --test routes/xendit.test.ts",
     "db:setup": "tsx scripts/setupDatabase.ts",
     "create-barangay-captain": "tsx scripts/createBarangayCaptain.ts"
   },

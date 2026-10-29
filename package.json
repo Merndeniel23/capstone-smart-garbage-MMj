@@ -21,6 +21,7 @@
     "test:accounts": "npm run test:accounts --workspace @sgms/backend",
     "test:notifications": "npm run test:notifications --workspace @sgms/backend",
     "test:schedules": "npm run test:schedules --workspace @sgms/backend",
+    "test:xendit": "npm run test:xendit --workspace @sgms/backend",
     "db:setup": "npm run db:setup --workspace @sgms/backend",
     "create-super-admin": "npm run create-super-admin --workspace @sgms/backend"
   }

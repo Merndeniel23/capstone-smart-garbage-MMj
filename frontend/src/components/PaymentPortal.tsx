@@ -1,4 +1,5 @@
 import { apiFetch } from "../services/http";
+import { apiRequest as systemApiRequest } from "../services/api";
 import { PAYMENT_CATEGORY_LABELS, type PaymentCategoryOption } from "../../../shared/paymentCategories";
 import {
   useEffect,
@@ -874,27 +875,18 @@ export default function PaymentPortal({
     setSubmitting(true);
 
     try {
-      if (method === "xendit" && !reference.trim() && !receiptProof) {
-        try {
-          const checkoutData = await apiRequest("/api/online-payments", {
-            method: "POST",
-            body: JSON.stringify({
-              category,
-              billingPeriod,
-              amount: enteredAmount,
-            }),
-          });
-          if (checkoutData?.checkoutUrl) {
-            const url = new URL(String(checkoutData.checkoutUrl));
-            if (url.protocol === "https:" && url.hostname.endsWith(".xendit.co")) {
-              window.location.assign(url.href);
-              return;
-            }
-          }
-        } catch {
-          // Fall back to recording Xendit payment directly in /api/payments
-          // when live Xendit invoice keys are not configured on the server.
+      if (method === "xendit") {
+        const checkoutData = await systemApiRequest<{checkoutUrl:string}>("/online-payments", {
+          method: "POST",
+          body: JSON.stringify({category,billingPeriod}),
+        });
+        const url = new URL(String(checkoutData.checkoutUrl));
+        const hostname = url.hostname.toLowerCase();
+        if (url.protocol !== "https:" || (hostname !== "xendit.co" && !hostname.endsWith(".xendit.co"))) {
+          throw new Error("Xendit returned an invalid checkout URL.");
         }
+        window.location.assign(url.href);
+        return;
       }
 
       const data = await apiRequest(
@@ -2786,9 +2778,10 @@ export default function PaymentPortal({
                   event.target.value,
                 )
               }
+              readOnly={method === "xendit"}
               placeholder={minimumAmount > 0 ? `Minimum ₱${minimumAmount.toFixed(2)}` : "Enter payment amount"}
               aria-invalid={hasAmountInput && isBelowMinimum}
-              className="min-h-11 w-full rounded-xl border px-3 py-2 text-sm"
+              className={`min-h-11 w-full rounded-xl border px-3 py-2 text-sm ${method === "xendit" ? "cursor-not-allowed bg-slate-100 text-slate-600" : ""}`}
               required
             />
               </div>
@@ -2801,7 +2794,9 @@ export default function PaymentPortal({
                   </span>
                 ) : (
                   <span>
-                    Minimum required amount: ₱{minimumAmount > 0 ? minimumAmount.toFixed(2) : "0.00"}. Payments below the minimum cannot be submitted.
+                    {method === "xendit"
+                      ? `Xendit checkout amount: ₱${minimumAmount > 0 ? minimumAmount.toFixed(2) : "0.00"}. This amount comes from the configured barangay fee.`
+                      : `Minimum required amount: ₱${minimumAmount > 0 ? minimumAmount.toFixed(2) : "0.00"}. Payments below the minimum cannot be submitted.`}
                   </span>
                 )}
               </p>
@@ -2822,11 +2817,10 @@ export default function PaymentPortal({
                 <button
                   key={value}
                   type="button"
-                  onClick={() =>
-                    setMethod(
-                      value as PaymentRecord["payment_method"],
-                    )
-                  }
+                  onClick={() => {
+                    setMethod(value as PaymentRecord["payment_method"]);
+                    if (value === "xendit") setAmount(String(minimumAmount || ""));
+                  }}
                   className={`rounded-xl border p-3 text-[10px] font-black ${
                     method === value
                       ? "border-emerald-500 bg-emerald-50 text-emerald-700"
@@ -2840,50 +2834,29 @@ export default function PaymentPortal({
 
             <div className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
               {method === "xendit"
-                ? "Pay online via Xendit. Click 'Pay with Xendit / Submit Payment' below to open Xendit checkout (or enter your Xendit reference / receipt if already paid)."
+                ? "Continue to the secure Xendit checkout. The payment appears in your records only after Xendit verifies it."
                 : method ===
                   "over_the_counter"
                   ? "Pay the Purok Leader in person. Enter the official receipt number and upload a photo of the signed receipt."
                   : "Pay only to the official Purok collection account shown by your local office. The uploaded screenshot is supporting evidence; the Leader must still verify the actual transaction."}
             </div>
 
-            <input
-              aria-label={method === "over_the_counter" ? "Official receipt number" : method === "xendit" ? "Xendit reference number (optional for checkout)" : "Payment reference number"}
-              value={reference}
-              onChange={(event) =>
-                setReference(
-                  event.target.value,
-                )
-              }
-              placeholder={
-                method === "xendit"
-                  ? "Xendit reference number (leave blank to launch Xendit)"
-                  : method ===
-                    "over_the_counter"
-                    ? "Official receipt number"
-                    : "GCash / Maya reference number"
-              }
-              className="mt-3 min-h-11 w-full rounded-xl border px-3 py-2 text-sm"
-              required={method !== "xendit"}
-            />
+            {method !== "xendit" && <>
+              <input
+                aria-label={method === "over_the_counter" ? "Official receipt number" : "Payment reference number"}
+                value={reference}
+                onChange={(event) => setReference(event.target.value)}
+                placeholder={method === "over_the_counter" ? "Official receipt number" : "GCash / Maya reference number"}
+                className="mt-3 min-h-11 w-full rounded-xl border px-3 py-2 text-sm"
+                required
+              />
 
-            <UploadField
-              label={
-                method === "xendit"
-                  ? "Upload Xendit receipt screenshot (optional)"
-                  : method ===
-                    "over_the_counter"
-                    ? "Upload signed official receipt"
-                    : "Upload payment screenshot"
-              }
-              ready={Boolean(receiptProof)}
-              onFile={(file) =>
-                void handleImage(
-                  file,
-                  "receipt",
-                )
-              }
-            />
+              <UploadField
+                label={method === "over_the_counter" ? "Upload signed official receipt" : "Upload payment screenshot"}
+                ready={Boolean(receiptProof)}
+                onFile={(file) => void handleImage(file,"receipt")}
+              />
+            </>}
             </fieldset>
 
             <button
@@ -2903,7 +2876,7 @@ export default function PaymentPortal({
                 <CreditCard className="h-4 w-4" />
               )}
               {method === "xendit"
-                ? "Pay Online with Xendit / Submit"
+                ? "Continue to Xendit Checkout"
                 : "Submit for Verification"}
             </button>
           </form>
