@@ -244,6 +244,11 @@ export default function UserProfilePanel() {
 
   const isCivilian = profile?.role === "resident";
 
+  // Older API responses may omit has_password. Default to the safer change
+  // password flow unless the server explicitly confirms there is no password.
+  const hasAccountPassword =
+    profile?.has_password !== false && profile?.has_password !== 0;
+
   const needsInitialResidentSetup =
     isCivilian &&
     Boolean(
@@ -659,8 +664,6 @@ export default function UserProfilePanel() {
     event.preventDefault();
     setPasswordError("");
     setPasswordMessage("");
-
-    const hasAccountPassword = Boolean(profile?.has_password);
 
     if (hasAccountPassword && !currentPassword) {
       setPasswordError("Enter your current password.");
@@ -1359,37 +1362,37 @@ export default function UserProfilePanel() {
           </div>
 
           {securityView === "password" && (
-          <form onSubmit={handleChangePassword} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+          <form noValidate onSubmit={handleChangePassword} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
             <div className="flex items-center gap-2 text-slate-900">
               <Lock className="h-4 w-4 text-emerald-600" />
-              <h4 className="text-sm font-black">{profile?.has_password ? "Change Password" : "Set Password"}</h4>
+              <h4 className="text-sm font-black">{hasAccountPassword ? "Change Password" : "Set Password"}</h4>
             </div>
             <p className="text-[11px] text-slate-500">
-              {profile?.has_password
+              {hasAccountPassword
                 ? "Enter your current password before setting a new one."
                 : "Set a password for your account so you can also sign in with email and password."}
             </p>
             {passwordError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-800">{passwordError}</p>}
             {passwordMessage && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800">{passwordMessage}</p>}
-            <div className={`grid gap-3 ${profile?.has_password ? "sm:grid-cols-2" : "grid-cols-1"}`}>
-              {Boolean(profile?.has_password) && (
+            <div className={`grid gap-3 ${hasAccountPassword ? "sm:grid-cols-2" : "grid-cols-1"}`}>
+              {hasAccountPassword && (
                 <label className="block text-xs font-bold text-slate-700 sm:col-span-2">
                   Current Password
                   <input type={showPassword ? "text" : "password"} value={currentPassword} onChange={e => setCurrentPassword(e.target.value)}
-                    autoComplete="current-password" required maxLength={72}
+                    autoComplete="current-password" maxLength={72}
                     className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 focus:border-emerald-500 focus:outline-none" />
                 </label>
               )}
               <label className="block text-xs font-bold text-slate-700">
-                {profile?.has_password ? "New Password" : "Password"}
+                {hasAccountPassword ? "New Password" : "Password"}
                 <input type={showPassword ? "text" : "password"} value={nextPassword} onChange={e => setNextPassword(e.target.value)}
-                  autoComplete="new-password" required minLength={8} maxLength={72}
+                  autoComplete="new-password" minLength={8} maxLength={72}
                   className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 focus:border-emerald-500 focus:outline-none" />
               </label>
               <label className="block text-xs font-bold text-slate-700">
-                {profile?.has_password ? "Confirm New Password" : "Confirm Password"}
+                {hasAccountPassword ? "Confirm New Password" : "Confirm Password"}
                 <input type={showPassword ? "text" : "password"} value={confirmNextPassword} onChange={e => setConfirmNextPassword(e.target.value)}
-                  autoComplete="new-password" required minLength={8} maxLength={72}
+                  autoComplete="new-password" minLength={8} maxLength={72}
                   className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 focus:border-emerald-500 focus:outline-none" />
               </label>
             </div>
@@ -1403,7 +1406,7 @@ export default function UserProfilePanel() {
               <button type="submit" disabled={passwordSaving}
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-xs font-black text-white hover:bg-emerald-800 disabled:opacity-50">
                 {passwordSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-                {profile?.has_password ? "Update Password" : "Set Password"}
+                {hasAccountPassword ? "Update Password" : "Set Password"}
               </button>
             </div>
           </form>

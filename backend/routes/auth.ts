@@ -1082,7 +1082,7 @@ router.get(
             u.profile_photo,
             u.status,
             u.must_change_password,
-            (u.password_hash IS NOT NULL AND u.password_hash != '' AND u.must_change_password = 0) AS has_password,
+            (u.password_hash IS NOT NULL AND u.password_hash != '') AS has_password,
             u.created_at
           FROM users u
           LEFT JOIN barangays b
@@ -1717,9 +1717,9 @@ router.put(
         });
       }
 
-      const hasPermanentPassword = Boolean(user.password_hash && !user.must_change_password);
+      const hasStoredPassword = Boolean(user.password_hash);
 
-      if (hasPermanentPassword) {
+      if (hasStoredPassword) {
         if (!currentPassword) {
           return res.status(400).json({
             success: false,
@@ -1734,7 +1734,7 @@ router.put(
           });
         }
       }
-      if (await bcrypt.compare(newPassword, user.password_hash)) {
+      if (hasStoredPassword && await bcrypt.compare(newPassword, user.password_hash)) {
         return res.status(400).json({
           success: false,
           message: "Choose a new password different from your current password.",
@@ -1745,7 +1745,7 @@ router.put(
       const [result] = await db.execute<any>(
         `UPDATE users SET password_hash = ?, must_change_password = 0,
          updated_at = CURRENT_TIMESTAMP
-         WHERE id = ? AND password_hash = ? AND status IN ('active', 'pending')`,
+         WHERE id = ? AND password_hash <=> ? AND status IN ('active', 'pending')`,
         [nextHash, userId, user.password_hash],
       );
       if (Number(result.affectedRows) !== 1) {
