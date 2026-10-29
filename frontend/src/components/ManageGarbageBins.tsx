@@ -348,6 +348,7 @@ export default function ManageGarbageBins() {
     if (hasValidCoordinates(bin)) {
       mapRef.current?.flyTo([Number(bin.latitude), Number(bin.longitude)], 18, { animate: false });
       markersByIdRef.current.get(bin.id)?.openPopup();
+      mapContainerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
     } else {
       mapRef.current?.closePopup();
     }
@@ -727,13 +728,13 @@ export default function ManageGarbageBins() {
   }, [adminView, showForm]);
 
   useEffect(() => {
-    if (!isSuperAdmin || adminView !== "bins") return;
+    if (adminView !== "bins") return;
     for (const bin of visibleBins) {
       const marker = markersByIdRef.current.get(bin.id);
       marker?.setIcon(binMarkerIcon(bin, bin.id === selectedBinId));
       marker?.setZIndexOffset(bin.id === selectedBinId ? 1000 : 0);
     }
-  }, [selectedBinId, visibleBins, isSuperAdmin, adminView]);
+  }, [selectedBinId, visibleBins, adminView]);
 
   const removeSelectedMarker = () => {
     if (selectedMarkerRef.current) {
@@ -1441,19 +1442,27 @@ export default function ManageGarbageBins() {
               {paginatedBins.map((bin) => (
                 <tr
                   key={bin.id}
-                  onClick={isSuperAdmin ? () => focusBin(bin) : undefined}
-                  className={`border-t border-slate-200 transition dark:border-slate-700 ${isSuperAdmin ? selectedBinId === bin.id
+                  tabIndex={0}
+                  onClick={() => focusBin(bin)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      focusBin(bin);
+                    }
+                  }}
+                  aria-label={`Show ${bin.bin_code} information on the map`}
+                  className={`border-t border-slate-200 transition dark:border-slate-700 ${selectedBinId === bin.id
                     ? "cursor-pointer bg-emerald-50 ring-1 ring-inset ring-emerald-300 dark:bg-emerald-950/25"
-                    : "cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800" : ""}`}
+                    : "cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800"}`}
                 >
                   <td className="truncate px-5 py-3 font-black" title={bin.bin_code}>
-                    {isSuperAdmin ? <button type="button" aria-pressed={selectedBinId === bin.id}
+                    <button type="button" aria-pressed={selectedBinId === bin.id}
                       title={`View details for ${bin.bin_code}`}
                       onClick={event => { event.stopPropagation(); focusBin(bin); }}
                       className="rounded text-left text-emerald-700 underline decoration-emerald-200 underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-600">
                       {bin.bin_code}
-                    </button> : bin.bin_code}
-                    {isSuperAdmin && selectedBinId === bin.id && <span className="mt-1 block text-[10px] font-bold uppercase text-emerald-700">Selected</span>}
+                    </button>
+                    {selectedBinId === bin.id && <span className="mt-1 block text-[10px] font-bold uppercase text-emerald-700">Selected on map</span>}
                   </td>
 
                   <td className="truncate px-3 py-3" title={bin.location_name}>
@@ -1476,7 +1485,7 @@ export default function ManageGarbageBins() {
                   </td>
 
                   {canEditBins && (
-                    <td className="px-3 py-3">
+                    <td className="px-3 py-3" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
                       <div className="flex gap-2">
                         <button
                           type="button"
@@ -1538,10 +1547,19 @@ export default function ManageGarbageBins() {
           {!loading && paginatedBins.map((bin) => (
             <article
               key={bin.id}
+              tabIndex={0}
+              onClick={() => focusBin(bin)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  focusBin(bin);
+                }
+              }}
+              aria-label={`Show ${bin.bin_code} information on the map`}
               className={`rounded-xl border bg-white p-3 text-slate-800 shadow-sm dark:bg-slate-900 dark:text-slate-100 ${
-                isSuperAdmin && selectedBinId === bin.id
-                  ? "border-emerald-400 ring-1 ring-emerald-200"
-                  : "border-slate-200"
+                selectedBinId === bin.id
+                  ? "cursor-pointer border-emerald-400 ring-1 ring-emerald-200"
+                  : "cursor-pointer border-slate-200"
               }`}
             >
               <div className="flex items-start justify-between gap-3">
@@ -1554,8 +1572,8 @@ export default function ManageGarbageBins() {
               </div>
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3 text-xs">
                 <span className={Number(bin.is_scheduled_today) === 1 ? "font-semibold text-emerald-700" : "text-slate-500"}>{collectionTimeLabel(bin)}</span>
-                <div className="flex items-center gap-1">
-                  {isSuperAdmin && <button type="button" onClick={() => focusBin(bin)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 font-bold text-emerald-700" title={`View details for ${bin.bin_code}`}>Details</button>}
+                <div className="flex items-center gap-1" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+                  <button type="button" onClick={() => focusBin(bin)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 font-bold text-emerald-700" title={`Show ${bin.bin_code} on map`}>View on map</button>
                   {canEditBins && <button type="button" onClick={() => openEditForm(bin)} className="rounded-lg border border-slate-200 p-1.5 text-slate-700" title="Edit garbage bin" aria-label={`Edit ${bin.bin_code}`}><Pencil className="h-4 w-4" /></button>}
                   {canEditBins && Number(bin.is_active) === 1 && <RecordActions label={bin.bin_code} onArchive={()=>setPendingDeactivateId(bin.id)} />}
                 </div>
