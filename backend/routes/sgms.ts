@@ -343,7 +343,10 @@ router.post("/violations", endpoint(async (req, res) => {
 router.get("/activity", endpoint(async (req, res) => {
   role(req, ["admin","super_admin","purok_leader","resident","collector"]);
   const area = scope(req, "a");
-  const [rows] = await db.query<any[]>(`SELECT a.* FROM activity_logs a WHERE ${area.sql} ${["purok_leader","collector"].includes(req.user!.role) ? "AND a.entity_type <> 'complaints'" : ""} ${req.user!.role === "collector" ? "AND a.actor_id = ?" : ""} ORDER BY a.occurred_at DESC,a.id DESC LIMIT 500`, [...area.values,...(req.user!.role === "collector" ? [req.user!.id] : [])]);
+  const [rows] = await db.query<any[]>(`SELECT a.* FROM activity_logs a WHERE ${area.sql}
+    AND NOT EXISTS (SELECT 1 FROM activity_log_archives ala WHERE ala.activity_log_id = a.id AND ala.user_id = ?)
+    ${["purok_leader","collector"].includes(req.user!.role) ? "AND a.entity_type <> 'complaints'" : ""} ${req.user!.role === "collector" ? "AND a.actor_id = ?" : ""}
+    ORDER BY a.occurred_at DESC,a.id DESC LIMIT 500`, [...area.values,req.user!.id,...(req.user!.role === "collector" ? [req.user!.id] : [])]);
   const colArea = scope(req, "c");
   const [collections] = await db.query<any[]>(`SELECT c.*, u.full_name AS household_name, collector.full_name AS collector_name, gb.bin_code, p.name AS purok_name,
       (SELECT COALESCE(v.action, vp.action) FROM household_violations v LEFT JOIN barangay_violation_policies vp ON vp.id = v.policy_id WHERE v.collection_id = c.id ORDER BY v.id LIMIT 1) AS decision_action
@@ -356,6 +359,24 @@ router.get("/activity", endpoint(async (req, res) => {
     undecidedCollections: collections.filter((row: any) => row.segregation === "not_segregated" && !row.decision_action),
     timezone: "Asia/Manila",
   });
+}));
+router.delete("/activity/:id", endpoint(async (req, res) => {
+  role(req, ["admin","super_admin","purok_leader","resident","collector"]);
+  const id = positiveId(req.params.id);
+  await transaction(async connection => {
+    const [rows] = await connection.query<any[]>("SELECT * FROM activity_logs WHERE id = ? FOR UPDATE", [id]);
+    const activity = rows[0];
+    const collectorOwnsLog = req.user!.role !== "collector" || Number(activity?.actor_id) === req.user!.id;
+    const leaderCanSeeLog = req.user!.role !== "purok_leader" || activity?.entity_type !== "complaints";
+    if (!activity || !canAccess(req.user!, activity) || !collectorOwnsLog || !leaderCanSeeLog) {
+      throw new DomainError("Activity log not found in your history.", 404);
+    }
+    await connection.execute(
+      "INSERT INTO activity_log_archives (activity_log_id,user_id) VALUES (?,?) ON DUPLICATE KEY UPDATE archived_at = archived_at",
+      [id,req.user!.id],
+    );
+  });
+  res.json({message:"Activity removed from your history. The original audit record is preserved.",archived:true});
 }));
 router.post("/endorsement-templates", endpoint(async (req, res) => {
   role(req, ["admin"]);

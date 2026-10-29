@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
-import { ChevronDown, Plus, QrCode, RefreshCw, Settings2, ShieldAlert } from "lucide-react";
+import { ChevronDown, Plus, QrCode, RefreshCw, Settings2, ShieldAlert, Trash2 } from "lucide-react";
 import { apiRequest } from "../services/api";
 import { useAppState } from "../context/AppStateContext";
 import ConfirmDialog from "./ConfirmDialog";
@@ -342,6 +342,18 @@ export default function SgmsRecords({view}: {view:RecordView}) {
     catch(error){setMessage(error instanceof Error?error.message:"Unable to save.");return false;}
     finally{setBusy(false);}
   }
+  async function deleteActivity(row:any) {
+    if(busy)return;
+    const previous=data;
+    setBusy(true);setMessage("");setData(current=>current.filter(item=>Number(item.id)!==Number(row.id)));
+    try {
+      const result=await apiRequest<any>(`/sgms/activity/${Number(row.id)}`,{method:"DELETE"});
+      setMessage(result.message||"Activity removed from your history.");
+    } catch(error) {
+      setData(previous);
+      setMessage(error instanceof Error?error.message:"Unable to remove this activity.");
+    } finally {setBusy(false);}
+  }
   const formData = (event: FormEvent<HTMLFormElement>): Record<string, FormDataEntryValue> => {
     event.preventDefault();
     const values: Record<string, FormDataEntryValue> = Object.fromEntries(new FormData(event.currentTarget));
@@ -394,10 +406,10 @@ export default function SgmsRecords({view}: {view:RecordView}) {
     {view==="activity-logs"&&historyTab==="violations"&&!initialLoading&&(violationHistory.length===0?<p className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-sm text-slate-500">No violations or suspensions recorded.</p>:<ResponsiveTable label="Violations and suspensions" headers={violationHeaders} rows={violationHistory} cells={violationCells} onRow={row=>setDetail(violationDetail(row))}/>)}
     {(["collection-records","violations","barangay-policies"].includes(view)||(view==="activity-logs"&&historyTab==="all"))&&data.length>0&&<ResponsiveTable
       label={titles[view]}
-      headers={view==="collection-records"?collectionHeaders:view==="violations"?violationHeaders:view==="activity-logs"?["Date & time","Who","Role","Activity","Details"]:["Policy","Action","Amount / days","Official reference","Approved at"]}
+      headers={view==="collection-records"?collectionHeaders:view==="violations"?violationHeaders:view==="activity-logs"?["Date & time","Who","Role","Activity","Details","Action"]:["Policy","Action","Amount / days","Official reference","Approved at"]}
       rows={data}
       onRow={view==="barangay-policies"?undefined:openRow}
-      cells={row=>view==="collection-records"?collectionCells(row):view==="violations"?violationCells(row):view==="activity-logs"?[date(row.occurred_at),row.actor_name,roleNames[row.actor_role]||row.actor_role,<span className="flex flex-wrap items-center gap-2">{activityLabels[row.action]||row.action.replaceAll("_"," ")}{row.action==="collection_not_segregated"&&(admin||leader)&&<button type="button" onClick={event=>{event.stopPropagation();window.scrollTo({top:0,behavior:"smooth"});}} onKeyDown={event=>event.stopPropagation()} className="rounded-lg border border-rose-300 px-2 py-1 text-xs font-semibold text-rose-700">Decide above ↑</button>}</span>,activityDetail(row)]:[row.title,row.action,row.fine_amount||row.suspension_days,row.official_reference,date(row.approved_at)]}
+      cells={row=>view==="collection-records"?collectionCells(row):view==="violations"?violationCells(row):view==="activity-logs"?[date(row.occurred_at),row.actor_name,roleNames[row.actor_role]||row.actor_role,<span className="flex flex-wrap items-center gap-2">{activityLabels[row.action]||row.action.replaceAll("_"," ")}{row.action==="collection_not_segregated"&&(admin||leader)&&<button type="button" onClick={event=>{event.stopPropagation();window.scrollTo({top:0,behavior:"smooth"});}} onKeyDown={event=>event.stopPropagation()} className="rounded-lg border border-rose-300 px-2 py-1 text-xs font-semibold text-rose-700">Decide above ↑</button>}</span>,activityDetail(row),<button type="button" disabled={busy} aria-label={`Delete activity ${row.id}`} onClick={event=>{event.stopPropagation();void deleteActivity(row);}} onKeyDown={event=>event.stopPropagation()} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-50"><Trash2 aria-hidden="true" className="h-3.5 w-3.5"/>Delete</button>]:[row.title,row.action,row.fine_amount||row.suspension_days,row.official_reference,date(row.approved_at)]}
     />}
     {view==="payment-history"&&data.map(row=><article key={row.id} {...clickable(()=>setDetail(paymentDetail(row)))} className={cardClass}><p className="font-bold">{row.transaction_code} · {row.resident_name} · PHP {Number(row.amount).toFixed(2)}</p><p className="text-sm">{row.category} · {row.billing_period} · {row.payment_method} · {row.status}{row.archived_at?" · Archived":""}</p><p className="text-xs text-slate-600">Submitted {date(row.created_at)}{row.leader_verified_at?` · Reviewed by ${row.leader_name} at ${date(row.leader_verified_at)}`:""}</p>{row.leader_remarks&&<p className="text-sm">{row.leader_remarks}</p>}</article>)}
     {!loading&&!data.length&&view!=="activity-logs"&&<p className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-sm text-slate-500">No records to display.</p>}

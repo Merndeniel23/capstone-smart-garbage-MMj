@@ -221,6 +221,16 @@ export async function ensureRegistrationSchema(database: Pick<Pool, "query">) {
   `);
 
   await database.query(`
+    CREATE TABLE IF NOT EXISTS activity_log_archives (
+      activity_log_id BIGINT UNSIGNED NOT NULL,
+      user_id INT UNSIGNED NOT NULL,
+      archived_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (activity_log_id, user_id),
+      KEY idx_activity_log_archives_user (user_id, archived_at)
+    ) ENGINE=InnoDB
+  `);
+
+  await database.query(`
     CREATE TABLE IF NOT EXISTS household_violation_reviews (
       violation_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
       decision ENUM('upheld','voided') NOT NULL,
