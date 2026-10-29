@@ -12,6 +12,7 @@ function configuredFee(name: string, defaultAmount: number) {
 
 export const CATEGORY_AMOUNTS: Record<string, number> = {
   weekly_fee: configuredFee("PAYMENT_WEEKLY_FEE", 5),
+  violation_fine: configuredFee("PAYMENT_VIOLATION_FINE", 50),
   special_heavy_trash: configuredFee("PAYMENT_HEAVY_TRASH_FEE", 80),
   hazardous_disposal: configuredFee("PAYMENT_HAZARDOUS_FEE", 120),
 };

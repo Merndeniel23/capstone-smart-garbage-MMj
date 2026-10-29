@@ -1,5 +1,6 @@
 export const PAYMENT_CATEGORY_LABELS = {
   weekly_fee: "Weekly Purok Maintenance Fee",
+  violation_fine: "Segregation Violation Fine",
   special_heavy_trash: "Special Heavy Trash Pickup",
   hazardous_disposal: "Hazardous / E-Waste Disposal",
 } as const;

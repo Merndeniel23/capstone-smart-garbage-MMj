@@ -15,7 +15,7 @@ import {
   storeProof,
 } from "../config/storage.js";
 
-import { paymentCategories } from "../config/paymentFees.js";
+import { CATEGORY_AMOUNTS, paymentCategories } from "../config/paymentFees.js";
 
 const router = Router();
 
@@ -285,6 +285,33 @@ export async function paymentFeeInfo(
     uses_default:
       !currentRecord,
   };
+}
+
+export async function latestResidentViolationFine(
+  residentId: number,
+  executor: any = db,
+): Promise<number | null> {
+  try {
+    const [rows] = await executor.query(
+      `
+      SELECT COALESCE(v.fine_amount, p.fine_amount) AS fine_amount
+      FROM household_violations v
+      LEFT JOIN barangay_violation_policies p ON p.id = v.policy_id
+      WHERE v.resident_id = ?
+        AND COALESCE(v.action, p.action) = 'fine'
+        AND COALESCE(v.fine_amount, p.fine_amount) > 0
+      ORDER BY v.issued_at DESC, v.id DESC
+      LIMIT 1
+      `,
+      [residentId],
+    );
+    const fine = Number(rows?.[0]?.fine_amount);
+    return Number.isFinite(fine) && fine > 0
+      ? Math.round(fine * 100) / 100
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 type ResidentComplianceRow = {
@@ -1202,6 +1229,13 @@ router.get(
         pending_total: Number(financialRows[0]?.pending_total || 0),
       };
 
+      const residentFineAmount =
+        viewer.role === "resident"
+          ? await latestResidentViolationFine(
+              Number(viewer.id),
+            )
+          : null;
+
       const feeInfo =
         viewer.purok_id
           ? await paymentFeeInfo(
@@ -1212,7 +1246,14 @@ router.get(
       const categories =
         paymentCategories.map(
           (item: any) =>
-            item.value === "weekly_fee" &&
+            item.value === "violation_fine" &&
+            residentFineAmount !== null
+              ? {
+                  ...item,
+                  amount:
+                    residentFineAmount,
+                }
+              : item.value === "weekly_fee" &&
             feeInfo
               ? {
                   ...item,
@@ -1492,7 +1533,7 @@ router.post(
         });
       }
 
-      // Residents may submit any positive contribution amount.
+      // Residents must submit at least the minimum configured category fee.
       // Category fees are references only and do not limit the amount paid.
       const amount =
         Math.round(submittedAmount * 100) / 100;
@@ -1597,6 +1638,29 @@ router.post(
 
       const transactionCode =
         createTransactionCode();
+
+      let minimumAmount = Number(CATEGORY_AMOUNTS[category] || 0);
+      if (category === "weekly_fee") {
+        const feeInfo = await paymentFeeInfo(Number(viewer.purok_id), connection);
+        minimumAmount = Number(feeInfo.amount);
+      } else if (category === "violation_fine") {
+        const latestFine = await latestResidentViolationFine(Number(viewer.id), connection);
+        if (latestFine !== null) {
+          minimumAmount = latestFine;
+        }
+      }
+
+      if (
+        Number.isFinite(minimumAmount) &&
+        minimumAmount > 0 &&
+        Math.round(amount * 100) < Math.round(minimumAmount * 100)
+      ) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message: `Payment amount cannot be below the minimum of PHP ${minimumAmount.toFixed(2)}.`,
+        });
+      }
 
       if (revisionsEnabled()) {
         const [online] = await connection.query<any[]>("SELECT id FROM online_payment_attempts WHERE resident_id = ? AND category = ? AND billing_period = ? AND status IN ('creating','pending','paid')", [viewer.id,category,billingPeriod]);
@@ -2084,7 +2148,7 @@ router.patch(
         `
         UPDATE payments
         SET
-          status = 'pending_admin_confirmation',
+          status = 'completed',
           remittance_reference = ?,
           remittance_proof = ?,
           remitted_at = NOW()
@@ -2120,7 +2184,7 @@ router.patch(
       return res.json({
         success: true,
         message:
-          "Remittance submitted for Barangay Admin confirmation.",
+          "Remittance recorded. The payment is now completed.",
       });
     } catch (error) {
       await connection.rollback();
@@ -2149,396 +2213,6 @@ router.patch(
 );
 
 
-router.patch(
-  "/summary/purok/:purokId/confirm",
-  requireAuth,
-  async (
-    req: AuthRequest,
-    res,
-  ) => {
-    const connection =
-      await db.getConnection();
-
-    try {
-      const userId =
-        positiveInteger(req.user?.id);
-
-      const purokId =
-        positiveInteger(req.params.purokId);
-
-      if (!userId || !purokId) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "A valid purok is required.",
-        });
-      }
-
-      await connection.beginTransaction();
-
-      const viewer =
-        await getViewer(
-          userId,
-          connection,
-          true,
-        );
-
-      if (
-        !viewer ||
-        viewer.role !== "admin" ||
-        !viewer.barangay_id
-      ) {
-        await connection.rollback();
-
-        return res.status(403).json({
-          success: false,
-          message:
-            "Barangay Captain access with an assigned barangay is required.",
-        });
-      }
-
-      const [purokRows] =
-        await connection.query<any[]>(
-          `
-          SELECT id
-          FROM puroks
-          WHERE id = ?
-            AND barangay_id = ?
-          LIMIT 1
-          FOR UPDATE
-          `,
-          [
-            purokId,
-            viewer.barangay_id,
-          ],
-        );
-
-      if (!purokRows[0]) {
-        await connection.rollback();
-
-        return res.status(404).json({
-          success: false,
-          message:
-            "That purok is outside your assigned barangay.",
-        });
-      }
-
-      const remarks = cleanText(
-        req.body.remarks,
-        500,
-      );
-
-      const [result] =
-        await connection.execute<any>(
-          `
-          UPDATE payments
-          SET
-            status = 'completed',
-            admin_confirmed_by = ?,
-            admin_confirmed_at = NOW(),
-            admin_remarks = COALESCE(NULLIF(?, ''), admin_remarks)
-          WHERE purok_id = ?
-            AND barangay_id = ?
-            AND status = 'pending_admin_confirmation'
-          `,
-          [
-            viewer.id,
-            remarks,
-            purokId,
-            viewer.barangay_id,
-          ],
-        );
-
-      if (!result.affectedRows) {
-        await connection.rollback();
-
-        return res.status(409).json({
-          success: false,
-          message:
-            "There are no Purok remittances waiting for confirmation.",
-        });
-      }
-
-      await connection.commit();
-
-      return res.json({
-        success: true,
-        message:
-          `${result.affectedRows} remittance ${
-            result.affectedRows === 1
-              ? "record was"
-              : "records were"
-          } confirmed for this purok.`,
-        confirmedCount:
-          Number(result.affectedRows),
-      });
-    } catch (error) {
-      await connection.rollback();
-
-      console.error(
-        "Confirm Purok remittance error:",
-        error,
-      );
-
-      return res.status(500).json({
-        success: false,
-        message:
-          "Unable to confirm the Purok remittance.",
-      });
-    } finally {
-      connection.release();
-    }
-  },
-);
-
-router.patch(
-  "/:id/admin-review",
-  requireAuth,
-  async (
-    req: AuthRequest,
-    res,
-  ) => {
-    const connection =
-      await db.getConnection();
-
-    try {
-      const userId =
-        positiveInteger(req.user?.id);
-
-      const paymentId =
-        positiveInteger(req.params.id);
-
-      if (!userId || !paymentId) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "A valid payment is required.",
-        });
-      }
-
-      let viewer =
-        await getViewer(userId);
-
-      if (
-        !viewer ||
-        !["admin", "super_admin"].includes(
-          viewer.role,
-        )
-      ) {
-        return res.status(403).json({
-          success: false,
-          message:
-            "Barangay Admin access is required.",
-        });
-      }
-
-      const action = cleanText(
-        req.body.action,
-        20,
-      ).toLowerCase();
-
-      const remarks = cleanText(
-        req.body.remarks,
-        500,
-      );
-
-      const discrepancyAmount = Number(
-        req.body.discrepancyAmount ??
-          req.body.discrepancy_amount ??
-          0,
-      );
-
-      if (
-        action !== "confirm" &&
-        action !== "discrepancy"
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Action must be confirm or discrepancy.",
-        });
-      }
-
-      if (
-        action === "discrepancy" &&
-        (!Number.isFinite(
-          discrepancyAmount,
-        ) ||
-          discrepancyAmount <= 0)
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Enter the missing or mismatched amount.",
-        });
-      }
-
-      if (action === "discrepancy" && remarks.length < 5) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Provide a short explanation for the discrepancy.",
-        });
-      }
-
-      await connection.beginTransaction();
-
-      viewer = await getViewer(
-        userId,
-        connection,
-        true,
-      );
-
-      if (
-        !viewer ||
-        !["admin", "super_admin"].includes(viewer.role) ||
-        (viewer.role === "admin" && !viewer.barangay_id)
-      ) {
-        await connection.rollback();
-        return res.status(403).json({
-          success: false,
-          message:
-            "Barangay Admin access with an assigned barangay is required.",
-        });
-      }
-
-      const [rows] =
-        await connection.query<any[]>(
-          `
-          SELECT
-            id,
-            barangay_id,
-            amount,
-            status,
-            admin_remarks,
-            discrepancy_amount
-          FROM payments
-          WHERE id = ?
-          FOR UPDATE
-          `,
-          [paymentId],
-        );
-
-      const payment = rows[0];
-
-      if (!payment) {
-        await connection.rollback();
-        return res.status(404).json({
-          success: false,
-          message:
-            "Payment was not found.",
-        });
-      }
-
-      if (
-        viewer.role === "admin" &&
-        Number(payment.barangay_id) !==
-          Number(viewer.barangay_id)
-      ) {
-        await connection.rollback();
-        return res.status(404).json({
-          success: false,
-          message:
-            "You can only confirm remittances from your assigned barangay.",
-        });
-      }
-
-      const legalTransition =
-        payment.status === "pending_admin_confirmation" ||
-        (payment.status === "discrepancy" && action === "confirm");
-
-      if (!legalTransition) {
-        await connection.rollback();
-        return res.status(409).json({
-          success: false,
-          message:
-            "This remittance is not awaiting admin confirmation.",
-        });
-      }
-
-      if (
-        action === "discrepancy" &&
-        Number.isFinite(Number(payment.amount)) &&
-        discrepancyAmount > Number(payment.amount)
-      ) {
-        await connection.rollback();
-        return res.status(400).json({
-          success: false,
-          message: "Discrepancy cannot exceed the original payment amount.",
-        });
-      }
-
-      const nextStatus: PaymentStatus =
-        action === "confirm"
-          ? "completed"
-          : "discrepancy";
-
-      const [result] = await connection.execute<any>(
-        `
-        UPDATE payments
-        SET
-          status = ?,
-          admin_confirmed_by = ?,
-          admin_confirmed_at = NOW(),
-          admin_remarks = ?,
-          discrepancy_amount = ?
-        WHERE id = ?
-          AND status = ?
-        `,
-        [
-          nextStatus,
-          viewer.id,
-          remarks || payment.admin_remarks || null,
-          action === "discrepancy"
-            ? discrepancyAmount
-            : payment.discrepancy_amount ?? null,
-          paymentId,
-          payment.status,
-        ],
-      );
-
-      if (result.affectedRows !== 1) {
-        await connection.rollback();
-        return res.status(409).json({
-          success: false,
-          message:
-            "This remittance changed before the review could be saved.",
-        });
-      }
-
-      await connection.commit();
-
-      return res.json({
-        success: true,
-        message:
-          action === "confirm"
-            ? "Remittance confirmed. Payment is completed."
-            : "A remittance discrepancy was recorded.",
-      });
-    } catch (error) {
-      await connection.rollback();
-
-      console.error(
-        "Admin remittance review error:",
-        error,
-      );
-
-      return res.status(500).json({
-        success: false,
-        message:
-          "Unable to review the remittance.",
-      });
-    } finally {
-      connection.release();
-    }
-  },
-);
-
-
-/**
- * Hide an already completed payment from daily lists without deleting it.
- * Restricted to the assigned Purok Leader (or Municipal Administrator).
- */
 router.patch(
   "/:id/archive",
   requireAuth,

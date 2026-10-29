@@ -928,7 +928,9 @@ router.post(
         });
       }
 
-      if (!String(user.password_hash || "").trim()) {
+      // Google already proves the identity, so an account still on a
+      // temporary password just sets its own password here instead.
+      if (!String(user.password_hash || "").trim() || Boolean(user.must_change_password)) {
         if (req.body.acceptedPolicies !== true) {
           return res.status(409).json({
             success: false,
@@ -1080,6 +1082,7 @@ router.get(
             u.profile_photo,
             u.status,
             u.must_change_password,
+            (u.password_hash IS NOT NULL AND u.password_hash != '' AND u.must_change_password = 0) AS has_password,
             u.created_at
           FROM users u
           LEFT JOIN barangays b
@@ -1103,6 +1106,7 @@ router.get(
         success: true,
         user: {
           ...rows[0],
+          has_password: Boolean(rows[0].has_password),
           profile_photo: await signedProofUrl(rows[0].profile_photo),
         },
       });
@@ -1560,10 +1564,10 @@ router.put(
         });
       }
 
-      if (!currentPassword || !newPassword || newPassword !== confirmPassword) {
+      if (!newPassword || newPassword !== confirmPassword) {
         return res.status(400).json({
           success: false,
-          message: "Complete the password fields and ensure the new passwords match.",
+          message: "Enter and confirm your new password.",
         });
       }
 
@@ -1606,20 +1610,22 @@ router.put(
         });
       }
 
-      const currentMatches = await bcrypt.compare(
-        currentPassword,
-        user.password_hash,
-      );
+      if (currentPassword && user.password_hash) {
+        const currentMatches = await bcrypt.compare(
+          currentPassword,
+          user.password_hash,
+        );
 
-      if (!currentMatches) {
-        await connection.rollback();
-        return res.status(400).json({
-          success: false,
-          message: "Current temporary password is incorrect.",
-        });
+        if (!currentMatches) {
+          await connection.rollback();
+          return res.status(400).json({
+            success: false,
+            message: "Current temporary password is incorrect.",
+          });
+        }
       }
 
-      if (await bcrypt.compare(newPassword, user.password_hash)) {
+      if (user.password_hash && (await bcrypt.compare(newPassword, user.password_hash))) {
         await connection.rollback();
         return res.status(400).json({
           success: false,
@@ -1684,10 +1690,10 @@ router.put(
     const newPassword = String(req.body.newPassword || "");
     const confirmPassword = String(req.body.confirmPassword || "");
 
-    if (!currentPassword || !newPassword || newPassword !== confirmPassword) {
+    if (!newPassword || newPassword !== confirmPassword) {
       return res.status(400).json({
         success: false,
-        message: "Enter your current password and matching new passwords.",
+        message: "Enter and confirm your new password.",
       });
     }
 
@@ -1700,15 +1706,33 @@ router.put(
 
     try {
       const [rows] = await db.query<any[]>(
-        "SELECT password_hash FROM users WHERE id = ? AND status IN ('active', 'pending') LIMIT 1",
+        "SELECT password_hash, must_change_password FROM users WHERE id = ? AND status IN ('active', 'pending') LIMIT 1",
         [userId],
       );
       const user = rows[0];
-      if (!user || !(await bcrypt.compare(currentPassword, user.password_hash))) {
-        return res.status(403).json({
+      if (!user) {
+        return res.status(404).json({
           success: false,
-          message: "Current password is incorrect.",
+          message: "User not found.",
         });
+      }
+
+      const hasPermanentPassword = Boolean(user.password_hash && !user.must_change_password);
+
+      if (hasPermanentPassword) {
+        if (!currentPassword) {
+          return res.status(400).json({
+            success: false,
+            message: "Enter your current password.",
+          });
+        }
+        const matches = await bcrypt.compare(currentPassword, user.password_hash);
+        if (!matches) {
+          return res.status(403).json({
+            success: false,
+            message: "Current password is incorrect.",
+          });
+        }
       }
       if (await bcrypt.compare(newPassword, user.password_hash)) {
         return res.status(400).json({

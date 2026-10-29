@@ -1167,7 +1167,7 @@ export default function Schedule() {
             )}
 
             <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3">
-              {canCreateSchedule && (
+              {canManage && (
                 <button
                   type="button"
                   onClick={() => {

@@ -80,6 +80,10 @@ export async function ensureRegistrationSchema(database: Pick<Pool, "query">) {
     database,
     "ALTER TABLE payments MODIFY payment_method ENUM('gcash','maya','over_the_counter','xendit') NOT NULL",
   );
+  await safeAlter(
+    database,
+    "ALTER TABLE payments MODIFY category ENUM('weekly_fee','special_heavy_trash','hazardous_disposal','violation_fine') NOT NULL DEFAULT 'weekly_fee'",
+  );
 
   await database.query(`
     CREATE TABLE IF NOT EXISTS account_activations (

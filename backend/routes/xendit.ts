@@ -3,7 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { db } from "../config/db.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 import { CATEGORY_AMOUNTS } from "../config/paymentFees.js";
-import { paymentFeeInfo } from "./payments.js";
+import { latestResidentViolationFine, paymentFeeInfo } from "./payments.js";
 import { audit, DomainError, requiredText, revisionsEnabled, transaction } from "../services/sgms.js";
 
 const router=Router();
@@ -49,7 +49,8 @@ router.post("/",requireAuth,safe(async(req,res)=>{
     }
     const [payments]=await connection.query<any[]>("SELECT id FROM payments WHERE resident_id = ? AND category = ? AND billing_period = ? AND status <> 'rejected_by_leader' LIMIT 1",[user.id,category,period]);
     if(payments.length)throw new DomainError("A payment already exists for this billing period.",409);
-    const amount=category==="weekly_fee"?Number((await paymentFeeInfo(Number(user.purok_id),connection)).amount):CATEGORY_AMOUNTS[category];
+    // Charge the same minimum the manual form enforces: the purok's weekly fee or the resident's issued fine.
+    const amount=category==="weekly_fee"?Number((await paymentFeeInfo(Number(user.purok_id),connection)).amount):category==="violation_fine"?(await latestResidentViolationFine(Number(user.id),connection))??CATEGORY_AMOUNTS[category]:CATEGORY_AMOUNTS[category];
     cents(amount);
     const externalId=`SGMS-${randomBytes(16).toString("hex")}`;
     const [created]:any=await connection.execute("INSERT INTO online_payment_attempts (resident_id,barangay_id,purok_id,external_id,category,billing_period,amount) VALUES (?,?,?,?,?,?,?)",[user.id,user.barangay_id,user.purok_id,externalId,category,period,amount]);

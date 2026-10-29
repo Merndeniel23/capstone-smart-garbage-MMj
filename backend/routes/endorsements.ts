@@ -319,7 +319,16 @@ const endorsementSelect = `
       FROM payments pay
       WHERE pay.resident_id = er.requester_id
         AND pay.status IN ('pending_leader_verification', 'discrepancy')
-    ) AS outstanding_payment_count
+    ) AS outstanding_payment_count,
+    (
+      SELECT COUNT(*)
+      FROM household_violations v
+      WHERE v.resident_id = er.requester_id
+        AND NOT EXISTS (
+          SELECT 1 FROM household_violation_reviews r
+          WHERE r.violation_id = v.id AND r.decision = 'voided'
+        )
+    ) AS violation_count
   FROM endorsement_requests er
 `;
 
@@ -517,7 +526,8 @@ router.get("/", async (req: AuthRequest, res) => {
       whereClause = "WHERE er.purok_id = ?";
       parameters = [purokId];
     } else if (role === "admin") {
-      // Read-only: the Purok Leader remains the one who releases endorsements.
+      // Read-only: the Purok Leader releases endorsements, so the Captain
+      // only sees requests the Leader already approved.
       const barangayId = positiveInteger(viewer.barangay_id);
 
       if (!barangayId) {
@@ -528,7 +538,7 @@ router.get("/", async (req: AuthRequest, res) => {
         });
       }
 
-      whereClause = "WHERE er.barangay_id = ?";
+      whereClause = "WHERE er.barangay_id = ? AND er.status = 'approved'";
       parameters = [barangayId];
     } else {
       return res.status(403).json({

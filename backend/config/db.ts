@@ -14,6 +14,7 @@ export const db = mysql.createPool({
 
   waitForConnections: true,
   connectionLimit: 10,
+  connectTimeout: 10000,
   ...(process.env.SGMS_REVISIONS_ENABLED === "true" ? {timezone: "+08:00", dateStrings: ["DATE"] as Array<"DATE">} : {}),
 
   // Required by Aiven.

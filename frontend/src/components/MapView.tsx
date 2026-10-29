@@ -2133,8 +2133,8 @@ function BinDetails({
             </button>
           )}
 
-          {request &&
-            ["approved", "assigned"].includes(request.status) && (
+          {(request?.status === "approved" ||
+            request?.status === "assigned") && (
               <button
                 type="button"
                 disabled={busy}

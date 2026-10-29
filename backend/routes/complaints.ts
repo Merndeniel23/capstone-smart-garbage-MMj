@@ -53,13 +53,13 @@ function ensureComplaintArchives() {
 router.use("/:id", requireAuth, async (req: AuthRequest, res, next) => {
   if (!revisionsEnabled() || !/^\d+$/.test(String(req.params.id))) return next();
   try {
-    const [rows] = await db.query<any[]>("SELECT c.admin_only,c.reported_by,c.archived_at,p.barangay_id FROM complaints c LEFT JOIN puroks p ON p.id = c.purok_id WHERE c.id = ?", [req.params.id]);
+    const [rows] = await db.query<any[]>("SELECT c.admin_only,c.reported_by,c.archived_at,c.assigned_collector_id,p.barangay_id FROM complaints c LEFT JOIN puroks p ON p.id = c.purok_id WHERE c.id = ?", [req.params.id]);
     const complaint = rows[0];
     if (complaint?.archived_at) return res.status(404).json({message: "Complaint not found."});
     if (Number(complaint?.admin_only)) {
       const user = req.user!;
-      if (!(user.role === "super_admin" || (user.role === "admin" && user.barangay_id && Number(user.barangay_id) === Number(complaint.barangay_id)) || (user.role === "resident" && user.id === Number(complaint.reported_by)))) return res.status(404).json({message: "Complaint not found."});
-      if (req.path === "/assign") return res.status(409).json({message: "Resident complaints are investigated directly by the Admin and cannot be assigned to a Collector."});
+      const isAssigned = user.role === "collector" && complaint.assigned_collector_id && Number(complaint.assigned_collector_id) === user.id;
+      if (!(user.role === "super_admin" || (user.role === "admin" && user.barangay_id && Number(user.barangay_id) === Number(complaint.barangay_id)) || (user.role === "resident" && user.id === Number(complaint.reported_by)) || isAssigned)) return res.status(404).json({message: "Complaint not found."});
     }
     next();
   } catch { res.status(500).json({message: "Unable to check complaint access."}); }
@@ -290,10 +290,7 @@ async function notifyComplaintParticipants(
   },
 ) {
   const recipients: ComplaintNotificationRecipient[] = [];
-  if(revisionsEnabled()) {
-    const [privacy]=await executor.query("SELECT admin_only FROM complaints WHERE id = ?",[input.complaintId]);
-    if(Number(privacy[0]?.admin_only))input.assignedCollectorId=null;
-  }
+  // Keep assigned collector notification recipient intact
 
   if (input.sender.id !== input.reporterId) {
     recipients.push({ userId: input.reporterId });
@@ -441,7 +438,7 @@ router.get(
         });
       }
 
-      if (revisionsEnabled()) whereClause += `${whereClause ? "" : "WHERE 1=1"}${activeRecord("c")}${["purok_leader","collector"].includes(role) ? " AND c.admin_only = 0" : ""}`;
+      if (revisionsEnabled()) whereClause += `${whereClause ? "" : "WHERE 1=1"}${activeRecord("c")}${role === "collector" ? " AND (c.admin_only = 0 OR c.assigned_collector_id = " + Number(viewer.id) + ")" : role === "purok_leader" ? " AND c.admin_only = 0" : ""}`;
       await ensureComplaintArchives();
       whereClause += `${whereClause ? " AND" : "WHERE"} NOT EXISTS (SELECT 1 FROM complaint_archives ca WHERE ca.complaint_id = c.id)
         AND NOT EXISTS (SELECT 1 FROM complaint_user_archives cua WHERE cua.complaint_id = c.id AND cua.user_id = ?)`;
@@ -897,8 +894,7 @@ router.post(
         );
 
       if (revisionsEnabled()) {
-        if (viewer.role === "resident") await connection.execute("UPDATE complaints SET admin_only = 1 WHERE id = ?", [Number(result.insertId)]);
-        if (subject) await connection.execute("UPDATE complaints SET subject_user_id = ?, subject_role = ? WHERE id = ?", [subject.id, subject.role, Number(result.insertId)]);
+        if (subject) await connection.execute("UPDATE complaints SET admin_only = 1, subject_user_id = ?, subject_role = ? WHERE id = ?", [subject.id, subject.role, Number(result.insertId)]);
         await audit(connection, req.user!, "complaint_submitted", "complaints", Number(result.insertId), {barangay_id: barangayId, purok_id: purokId, resident_id: viewer.role === "resident" ? viewer.id : null}, subject ? {subjectRole: subject.role, subjectName: subject.full_name} : null);
       }
       await notifyComplaintParticipants(connection, {
@@ -1130,7 +1126,7 @@ router.put(
         });
       }
 
-      if (!["pending", "assigned"].includes(String(complaint.status))) {
+      if (!["pending", "assigned", "in_progress"].includes(String(complaint.status))) {
         await connection.rollback();
 
         return res.status(409).json({
@@ -1190,7 +1186,7 @@ router.put(
         });
       }
 
-      if (!await collectorHasPurok(collector, Number(complaint.purok_id), connection)) throw new DomainError("The Collector must currently be assigned to this complaint's Purok in the same barangay.", 403);
+      // Barangay Captain can assign any active collector in their barangay
       /*
        * Prevent accidental assignment to a same-name collector
        * from another barangay.
@@ -1217,12 +1213,13 @@ router.put(
           SET
             assigned_collector_id = ?,
             status = 'assigned',
+            admin_only = 0,
             assigned_at = NOW(),
             started_at = NULL,
             completed_at = NULL,
             resolved_at = NULL
           WHERE id = ?
-            AND status IN ('pending', 'assigned')
+            AND status IN ('pending', 'assigned', 'in_progress')
           `,
           [
             collectorId,

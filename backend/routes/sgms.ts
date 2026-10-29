@@ -77,8 +77,8 @@ router.post("/households", endpoint(async(req,res)=>{
 router.get("/payment-history", endpoint(async(req,res)=>{
   role(req,["admin","super_admin","purok_leader","resident"]);
   const area=scope(req,"pay");
-  const [payments]=await db.query<any[]>(`SELECT pay.id,pay.transaction_code,pay.resident_id,pay.amount,pay.category,pay.billing_period,pay.payment_method,pay.payment_reference,pay.status,pay.created_at,pay.leader_verified_at,pay.leader_remarks,pay.admin_confirmed_at,u.full_name AS resident_name,leader.full_name AS leader_name,a.archived_at
-    FROM payments pay JOIN users u ON u.id = pay.resident_id LEFT JOIN users leader ON leader.id = pay.leader_verified_by LEFT JOIN payment_archives a ON a.payment_id = pay.id WHERE ${area.sql} ORDER BY pay.created_at DESC,pay.id DESC LIMIT 500`,area.values);
+  const [payments]=await db.query<any[]>(`SELECT pay.id,pay.transaction_code,pay.resident_id,pay.amount,pay.category,pay.billing_period,pay.payment_method,pay.payment_reference,pay.status,pay.created_at,pay.leader_verified_at,pay.leader_remarks,pay.admin_confirmed_at,pay.discrepancy_amount,u.full_name AS resident_name,leader.full_name AS leader_name,pr.name AS purok_name,a.archived_at
+    FROM payments pay JOIN users u ON u.id = pay.resident_id LEFT JOIN puroks pr ON pr.id = pay.purok_id LEFT JOIN users leader ON leader.id = pay.leader_verified_by LEFT JOIN payment_archives a ON a.payment_id = pay.id WHERE ${area.sql} ORDER BY pay.created_at DESC,pay.id DESC LIMIT 500`,area.values);
   res.json({payments});
 }));
 
@@ -282,17 +282,18 @@ router.get("/violations", endpoint(async (req, res) => {
   const [rows] = await db.query<any[]>(`SELECT v.id, v.collection_id, v.policy_id, v.resident_id, v.barangay_id, v.purok_id, v.reason, v.suspension_until, v.issued_at,
       COALESCE(v.action, p.action) AS action, COALESCE(v.fine_amount, p.fine_amount) AS fine_amount, COALESCE(v.suspension_scope, p.suspension_scope) AS suspension_scope,
       p.title, p.official_reference, u.full_name AS household_name, actor.full_name AS issued_by_name, gb.bin_code,
-      r.decision AS review_decision, r.reason AS review_reason, r.reviewed_at
+      r.decision AS review_decision, r.reason AS review_reason, r.reviewed_at,
+      pr.name AS purok_name, c.collected_at, c.segregation, collector.full_name AS collector_name
     FROM household_violations v LEFT JOIN barangay_violation_policies p ON p.id = v.policy_id JOIN users u ON u.id = v.resident_id JOIN users actor ON actor.id = v.issued_by
-      LEFT JOIN household_collections c ON c.id = v.collection_id LEFT JOIN garbage_bins gb ON gb.id = c.bin_id LEFT JOIN household_violation_reviews r ON r.violation_id = v.id
+      LEFT JOIN puroks pr ON pr.id = v.purok_id LEFT JOIN household_collections c ON c.id = v.collection_id LEFT JOIN users collector ON collector.id = c.collector_id LEFT JOIN garbage_bins gb ON gb.id = c.bin_id LEFT JOIN household_violation_reviews r ON r.violation_id = v.id
     WHERE ${area.sql} ORDER BY v.issued_at DESC, v.id DESC LIMIT 500`, area.values);
   res.json({violations: rows});
 }));
 const decisionTitles: Record<string,string> = {warning:"Warning issued",fine:"Fine issued",suspension:"Suspension issued"};
 // The Purok Leader decides warning, fine or suspension for a "not segregated"
-// scan, or suspends a resident directly. Admin keeps full access.
+// scan, or suspends a resident directly. The Admin only views violations.
 router.post("/violations", endpoint(async (req, res) => {
-  role(req, ["purok_leader","admin"]);
+  role(req, ["purok_leader"]);
   const reason = requiredText(req.body.reason, 1000);
   const collectionId = req.body.collectionId ? positiveId(req.body.collectionId) : null;
   const policyId = req.body.policyId ? positiveId(req.body.policyId) : null;
@@ -339,19 +340,6 @@ router.post("/violations", endpoint(async (req, res) => {
   });
   res.status(201).json({message});
 }));
-router.post("/violations/:id/review",endpoint(async(req,res)=>{
-  role(req,["admin"]);
-  const id=positiveId(req.params.id),reason=requiredText(req.body.reason,1000),decision=req.body.decision;
-  if(!["upheld","voided"].includes(decision))throw new DomainError("Choose an explicit review decision.");
-  await transaction(async connection=>{
-    const [rows]=await connection.query<any[]>("SELECT v.id,v.resident_id,v.barangay_id,v.purok_id FROM household_violations v WHERE v.id = ? FOR UPDATE",[id]);
-    if(!rows[0]||!canAccess(req.user!,rows[0]))throw new DomainError("Violation not found.",404);
-    await connection.execute("INSERT INTO household_violation_reviews (violation_id,decision,reason,reviewed_by) VALUES (?,?,?,?)",[id,decision,reason,req.user!.id]);
-    await audit(connection,req.user!,"violation_reviewed","household_violations",id,rows[0],{decision,reason});
-    if(decision==="voided")await connection.execute("INSERT INTO notifications (recipient_user_id,barangay_id,purok_id,title,message,notification_type,created_by) VALUES (?,?,?,'Violation voided',?,'violation',?)",[rows[0].resident_id,rows[0].barangay_id,rows[0].purok_id,`The Admin voided violation #${id}: ${reason}`,req.user!.id]);
-  });
-  res.json({message:"Review recorded. The original violation remains preserved."});
-}));
 router.get("/activity", endpoint(async (req, res) => {
   role(req, ["admin","super_admin","purok_leader","resident","collector"]);
   const area = scope(req, "a");
@@ -396,6 +384,7 @@ router.get("/endorsements/:id/document", endpoint(async (req, res) => {
   res.json({document: {text: request.issued_document_text, certificateNumber: request.certificate_number, directPdfAvailable: supportsTextPdf(request.issued_document_text)}});
 }));
 router.get("/endorsements/:id/pdf", endpoint(async (req, res) => {
+  if (req.user!.role === "admin") throw new DomainError("The Barangay Captain can view the letter but not export it.", 403);
   const request = await approvedEndorsement(req);
   if (!supportsTextPdf(request.issued_document_text)) throw new DomainError("This approved document contains Unicode text. Use View approved document, then Print / Save as PDF; no names or wording will be replaced.", 409);
   await transaction(connection => audit(connection, req.user!, "endorsement_downloaded", "endorsement_requests", Number(request.id), request));

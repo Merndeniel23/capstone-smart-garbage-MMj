@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
-import { Camera, Check, CheckCircle2, ImageUp, QrCode, RefreshCw, X, XCircle } from "lucide-react";
+import { Camera, Check, CheckCircle2, ImageUp, QrCode, X, XCircle } from "lucide-react";
 import { apiRequest } from "../services/api";
 import { notifyAdminActionCountsChanged } from "../hooks/useAdminActionCounts";
 
@@ -15,6 +15,121 @@ type HouseholdBin = {
 type IdentifiedBin = Readonly<{ payload: string; bin: Readonly<HouseholdBin>; key: string }>;
 type Segregation = "segregated" | "not_segregated";
 
+function isLikelyMobileDevice(): boolean {
+  const navigatorWithHints = navigator as Navigator & {
+    userAgentData?: { mobile?: boolean };
+  };
+
+  return (
+    navigatorWithHints.userAgentData?.mobile === true ||
+    /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+  );
+}
+
+function stopMediaStream(activeStream: MediaStream | null): void {
+  activeStream?.getTracks().forEach((track) => track.stop());
+}
+
+function cameraErrorMessage(error: unknown): string {
+  const name = error instanceof DOMException ? error.name : "";
+
+  if (name === "NotAllowedError" || name === "PermissionDeniedError" || name === "SecurityError") {
+    return "Camera access was denied. Allow camera permission for this site in your browser settings and try again.";
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return "No camera was found on this device. Connect or enable a camera, or use Scan QR Image instead.";
+  }
+  if (name === "NotReadableError" || name === "TrackStartError" || name === "AbortError") {
+    return "The camera is already in use or unavailable. Close other apps or browser tabs using it, then try again.";
+  }
+  if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") {
+    return "No available camera matches the requested settings. Enable another camera or use Scan QR Image instead.";
+  }
+
+  return "Unable to start the camera. Check the browser camera permission and try again, or use Scan QR Image instead.";
+}
+
+async function requestAvailableCamera(): Promise<MediaStream> {
+  const mediaDevices = navigator.mediaDevices;
+  const mobile = isLikelyMobileDevice();
+  const preferredVideo: MediaTrackConstraints | boolean = mobile
+    ? { facingMode: { ideal: "environment" } }
+    : true;
+
+  try {
+    return await mediaDevices.getUserMedia({
+      audio: false,
+      video: preferredVideo,
+    });
+  } catch (preferredError) {
+    const errorName =
+      preferredError instanceof DOMException ? preferredError.name : "";
+    let lastCameraError = preferredError;
+
+    // Do not repeat a camera request after the user or browser denied access.
+    if (
+      ["NotAllowedError", "PermissionDeniedError", "SecurityError"].includes(
+        errorName,
+      )
+    ) {
+      throw preferredError;
+    }
+
+    // A preferred rear camera or the system-default webcam can be busy while
+    // another camera remains available. Try each discovered camera explicitly.
+    let cameras: MediaDeviceInfo[] = [];
+    try {
+      cameras = (await mediaDevices.enumerateDevices()).filter(
+        (device) => device.kind === "videoinput" && Boolean(device.deviceId),
+      );
+    } catch {
+      // The generic fallback below can still succeed when enumeration is hidden.
+    }
+
+    if (mobile) {
+      cameras.sort((left, right) => {
+        const rearCameraPattern = /back|rear|environment/i;
+        return (
+          Number(rearCameraPattern.test(right.label)) -
+          Number(rearCameraPattern.test(left.label))
+        );
+      });
+    }
+
+    for (const camera of cameras) {
+      try {
+        return await mediaDevices.getUserMedia({
+          audio: false,
+          video: { deviceId: { exact: camera.deviceId } },
+        });
+      } catch (candidateError) {
+        lastCameraError = candidateError;
+        const candidateErrorName =
+          candidateError instanceof DOMException ? candidateError.name : "";
+        if (
+          [
+            "NotAllowedError",
+            "PermissionDeniedError",
+            "SecurityError",
+          ].includes(candidateErrorName)
+        ) {
+          throw candidateError;
+        }
+      }
+    }
+
+    if (mobile) {
+      try {
+        return await mediaDevices.getUserMedia({ audio: false, video: true });
+      } catch (fallbackError) {
+        lastCameraError = fallbackError;
+      }
+    }
+
+    throw lastCameraError;
+  }
+}
+
 // Collector goes straight to the purok, opens the QR Scanner Modal, scans each household QR,
 // and marks Check (✓ Segregated) or X (✗ Not Segregated). The result goes directly to the
 // Purok Leader's Purok Members / Activity Log for Warning, Fine, or Suspension decisions.
@@ -26,12 +141,12 @@ export default function QrCollection({
   defaultOpen?: boolean;
 }) {
   const [modalOpen, setModalOpen] = useState(defaultOpen);
-  const [qr, setQr] = useState("");
   const [identified, setIdentified] = useState<IdentifiedBin | null>(null);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "error" | "info">("info");
   const [busy, setBusy] = useState(false);
   const [camera, setCamera] = useState(false);
+  const [cameraStarting, setCameraStarting] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const stream = useRef<MediaStream | null>(null);
@@ -41,89 +156,108 @@ export default function QrCollection({
   const lookupVersion = useRef(0);
   const lookup = useRef<AbortController | null>(null);
 
-  const canUseBarcodeDetector =
-    typeof window !== "undefined" && Boolean((window as any).BarcodeDetector);
-
   function openScannerModal() {
     setModalOpen(true);
-    if (
-      canUseBarcodeDetector &&
-      typeof navigator !== "undefined" &&
-      typeof navigator.mediaDevices?.getUserMedia === "function" &&
-      !identifiedRef.current
-    ) {
-      setCamera(true);
-    }
   }
 
-  function changeQr(value: string, keepMessage = false) {
+  function resetScan(keepMessage = false) {
     if (submitting.current) return;
     lookupVersion.current++;
     lookup.current?.abort();
     lookup.current = null;
     identifiedRef.current = null;
     setIdentified(null);
-    qrRef.current = value;
-    setQr(value);
+    qrRef.current = "";
     setBusy(false);
     if (!keepMessage) setMessage("");
     setCamera(false);
   }
 
+  function stopCamera() {
+    setCamera(false);
+    setCameraStarting(false);
+    stopMediaStream(stream.current);
+    stream.current = null;
+    if (video.current) video.current.srcObject = null;
+  }
+
+  function startCamera() {
+    if (busy || cameraStarting) return;
+    resetScan();
+    setMessageTone("info");
+    setMessage("Requesting camera access...");
+    setCamera(true);
+  }
+
   function closeModal() {
     if (submitting.current) return;
-    setCamera(false);
+    if (cameraStarting) setMessage("");
+    stopCamera();
     setModalOpen(false);
   }
 
   useEffect(() => {
-    if (defaultOpen && canUseBarcodeDetector && typeof navigator?.mediaDevices?.getUserMedia === "function") {
-      setCamera(true);
-    }
     return () => {
       lookupVersion.current++;
       lookup.current?.abort();
       identifiedRef.current = null;
+      stopMediaStream(stream.current);
+      stream.current = null;
     };
-  }, [canUseBarcodeDetector, defaultOpen]);
+  }, []);
 
   useEffect(() => {
     if (!camera || !modalOpen) return;
-    let cancelled = false,
-      timer: number | undefined;
+    let cancelled = false;
+    let timer: number | undefined;
+    let activeStream: MediaStream | null = null;
     const Detector = (window as any).BarcodeDetector;
-    if (!Detector || typeof navigator?.mediaDevices?.getUserMedia !== "function") {
-      setMessageTone("info");
+    if (typeof navigator.mediaDevices?.getUserMedia !== "function") {
+      setMessageTone("error");
       setMessage(
-        "Live camera QR detection is not supported on this browser. Paste the QR code below or use Scan QR Photo.",
+        "Camera access requires HTTPS or localhost and a supported browser. Use Scan QR Image instead.",
       );
       setCamera(false);
       return;
     }
+    if (!Detector) {
+      setMessageTone("error");
+      setMessage(
+        "Automatic QR camera scanning is not supported by this browser. Use a current Chrome or Edge browser, or use Scan QR Image instead.",
+      );
+      setCamera(false);
+      return;
+    }
+    setCameraStarting(true);
     void (async () => {
       try {
-        const feed = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" } },
-          audio: false,
-        });
+        const feed = await requestAvailableCamera();
         if (cancelled) {
-          feed.getTracks().forEach((track) => track.stop());
+          stopMediaStream(feed);
           return;
         }
+        activeStream = feed;
         stream.current = feed;
         if (video.current) {
           video.current.srcObject = feed;
           await video.current.play();
         }
+        if (cancelled) return;
+        setCameraStarting(false);
+        setMessage("");
         const detector = new Detector({ formats: ["qr_code"] });
         const scan = async () => {
           if (cancelled) return;
           try {
-            if (video.current?.readyState === 4) {
+            if (
+              video.current &&
+              video.current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+              video.current.videoWidth > 0 &&
+              video.current.videoHeight > 0
+            ) {
               const results = await detector.detect(video.current);
               if (results[0]?.rawValue) {
-                changeQr(results[0].rawValue);
-                void identify();
+                void identify(results[0].rawValue);
                 return;
               }
             }
@@ -133,12 +267,11 @@ export default function QrCollection({
           if (!cancelled) timer = window.setTimeout(() => void scan(), 260);
         };
         void scan();
-      } catch {
+      } catch (error) {
         if (!cancelled) {
+          setCameraStarting(false);
           setMessageTone("error");
-          setMessage(
-            "Unable to access camera. Allow camera permission or paste the QR payload below.",
-          );
+          setMessage(cameraErrorMessage(error));
           setCamera(false);
         }
       }
@@ -146,8 +279,9 @@ export default function QrCollection({
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
-      stream.current?.getTracks().forEach((track) => track.stop());
-      stream.current = null;
+      stopMediaStream(activeStream);
+      if (stream.current === activeStream) stream.current = null;
+      if (video.current?.srcObject === activeStream) video.current.srcObject = null;
     };
   }, [camera, modalOpen]);
 
@@ -158,7 +292,7 @@ export default function QrCollection({
     const Detector = (window as any).BarcodeDetector;
     if (!Detector) {
       setMessageTone("error");
-      setMessage("QR image decoding requires Chrome/Edge/Android browser or pasting the QR code directly.");
+      setMessage("QR image decoding requires a current Chrome or Edge browser.");
       return;
     }
     try {
@@ -170,28 +304,29 @@ export default function QrCollection({
       if (!codes[0]?.rawValue) {
         setBusy(false);
         setMessageTone("error");
-        setMessage("No QR code detected in the selected image. Try a clearer photo or paste the QR code.");
+        setMessage("No QR code was detected in the selected image. Try a clearer or more tightly cropped photo.");
         return;
       }
-      changeQr(codes[0].rawValue);
-      await identify();
+      await identify(codes[0].rawValue);
     } catch {
       setBusy(false);
       setMessageTone("error");
-      setMessage("Could not read QR image. Try again or paste the QR payload.");
+      setMessage("Could not read the QR image. Try a clearer or more tightly cropped photo.");
     }
   }
 
-  async function identify() {
-    if (submitting.current || !qrRef.current.trim()) return;
-    const payload = qrRef.current.trim(),
-      version = ++lookupVersion.current;
+  async function identify(rawPayload: string) {
+    const payload = rawPayload.trim();
+    if (submitting.current || !payload) return;
+    const version = ++lookupVersion.current;
     lookup.current?.abort();
     const controller = new AbortController();
     lookup.current = controller;
     identifiedRef.current = null;
     setIdentified(null);
+    qrRef.current = payload;
     setCamera(false);
+    setCameraStarting(false);
     setBusy(true);
     setMessage("");
     try {
@@ -259,7 +394,7 @@ export default function QrCollection({
       });
       if (identifiedRef.current === record) {
         submitting.current = false;
-        changeQr("", true);
+        resetScan(true);
         setMessageTone("success");
         setMessage(
           `${record.bin.bin_code} · ${record.bin.full_name}: ${
@@ -374,13 +509,10 @@ export default function QrCollection({
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={busy || cameraStarting}
                   onClick={() => {
-                    if (camera) setCamera(false);
-                    else {
-                      changeQr("");
-                      setCamera(true);
-                    }
+                    if (camera) stopCamera();
+                    else startCamera();
                   }}
                   className={`flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-xs font-black transition disabled:opacity-50 ${
                     camera
@@ -389,7 +521,11 @@ export default function QrCollection({
                   }`}
                 >
                   <Camera className="h-4 w-4" />
-                  {camera ? "Stop Camera" : "Scan with Camera"}
+                  {cameraStarting
+                    ? "Starting Camera..."
+                    : camera
+                      ? "Stop Camera"
+                      : "Scan with Camera"}
                 </button>
 
                 <button
@@ -415,6 +551,7 @@ export default function QrCollection({
                 <div className="relative overflow-hidden rounded-2xl border-2 border-emerald-500 bg-slate-950">
                   <video
                     ref={video}
+                    autoPlay
                     muted
                     playsInline
                     className="h-64 w-full object-cover"
@@ -423,39 +560,12 @@ export default function QrCollection({
                     <div className="h-44 w-44 rounded-3xl border-2 border-emerald-400/90 shadow-[0_0_0_9999px_rgba(2,6,23,0.45)]" />
                   </div>
                   <p className="bg-slate-950/85 py-2 text-center text-[11px] font-bold text-emerald-300">
-                    Point camera at the Household QR Code...
+                    {cameraStarting
+                      ? "Allow camera access to start the preview..."
+                      : "Point camera at the Household QR Code..."}
                   </p>
                 </div>
               )}
-
-              {/* Manual / Hardware Scanner Input */}
-              <div className="flex flex-wrap gap-2">
-                <input
-                  aria-label="Household bin QR payload"
-                  value={qr}
-                  disabled={submitting.current}
-                  onChange={(e) => changeQr(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void identify();
-                    }
-                  }}
-                  className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm focus:border-emerald-500 focus:bg-white focus:outline-none"
-                  placeholder="Enter or paste QR code"
-                />
-                <button
-                  type="button"
-                  disabled={busy || !qr.trim()}
-                  onClick={() => void identify()}
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 disabled:bg-slate-300 disabled:text-slate-600"
-                >
-                  {busy && !bin ? (
-                    <RefreshCw className="h-4 w-4 animate-spin" />
-                  ) : null}
-                  Identify
-                </button>
-              </div>
 
               {/* Identified Household + Check (✓) / X (✗) Action Buttons */}
               {bin && (
@@ -563,9 +673,7 @@ export default function QrCollection({
                         type="button"
                         onClick={() => {
                           setMessage("");
-                          if (canUseBarcodeDetector && typeof navigator?.mediaDevices?.getUserMedia === "function") {
-                            setCamera(true);
-                          }
+                          startCamera();
                         }}
                         className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3 py-1.5 text-[11px] font-black text-white hover:bg-emerald-800"
                       >
